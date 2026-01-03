@@ -20,7 +20,7 @@ class Tts:
         self.verbose = self.params.get("verbose", None)
         self.kokoro_voice = self.params.get("kokoro_voice", None)
         self.kokoro_voice_speed = self.params.get("kokoro_voice_speed", None)
-        self.voice_to_clone = self.params.get("assets", None).get(
+        self.voice_to_clone = self.params.get("static", None).get(
             "voice_to_clone", None
         )
 

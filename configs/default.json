@@ -54,8 +54,8 @@
       "kokoro_voice": "af_nicole",
       "kokoro_voice_speed": 1.2,
       "kokoro_lang_code": "a",
-      "assets": {
-        "voice_to_clone": "assets/sofia_hellen.wav"
+      "static": {
+        "voice_to_clone": "static/sofia_hellen.wav"
       }
     }
   },
@@ -65,17 +65,17 @@
       "samplerate": 24000,
       "buffer_size": 960,
       "channels": 1,
-      "assets": {
-        "listening_sound": "assets/listening.wav",
-        "transition_sound": "assets/transition.wav"
+      "static": {
+        "listening_sound": "static/listening.wav",
+        "transition_sound": "static/transition.wav"
       }
     }
   },
   "LoginUi": {
     "params": {
       "window_title": "Aria",
-      "assets": {
-        "icon": "assets/aria_icon.png"
+      "static": {
+        "icon": "static/aria_icon.png"
       }
     }
   },
@@ -83,11 +83,11 @@
     "params": {
       "window_title": "Aria",
       "window_size": "750",
-      "assets": {
-        "icon": "assets/aria_icon.png",
-        "loading_gif": "assets/loading.gif",
-        "transition_gif": "assets/transition.gif",
-        "muted_mic_gif": "assets/muted_mic.gif"
+      "static": {
+        "icon": "static/aria_icon.png",
+        "loading_gif": "static/loading.gif",
+        "transition_gif": "static/transition.gif",
+        "muted_mic_gif": "static/muted_mic.gif"
       }
     }
   },

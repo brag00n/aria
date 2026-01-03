@@ -11,10 +11,10 @@ class Ap:
         self.samplerate = self.params.get("samplerate", None)
         self.buffer_size = self.params.get("buffer_size", None)
         self.channels = self.params.get("channels", None)
-        self.listening_sound_path = self.params.get("assets", None).get(
+        self.listening_sound_path = self.params.get("static", None).get(
             "listening_sound", None
         )
-        self.transition_sound_path = self.params.get("assets", None).get(
+        self.transition_sound_path = self.params.get("static", None).get(
             "transition_sound", None
         )
         self.sample_format = pyaudio.paInt16

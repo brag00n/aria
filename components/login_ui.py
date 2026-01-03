@@ -7,7 +7,7 @@ class LoginUi:
     def __init__(self, params=None, config_file=None, callback=None):
         self.params = params or {}
         self.window_title = self.params.get('window_title', None)
-        self.icon = self.params.get('assets', None).get('icon', None)
+        self.icon = self.params.get('static', None).get('icon', None)
         self.config_file = config_file
         self.callback = callback
         

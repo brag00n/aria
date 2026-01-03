@@ -9,10 +9,10 @@ class Ui:
         self.params = params or {}
         self.window_title = self.params.get('window_title', None)
         self.window_size = self.params.get('window_size', None)
-        self.icon = self.params.get('assets', None).get('icon', None)
-        self.loading_gif = self.params.get('assets', None).get('loading_gif', None)
-        self.transition_gif = self.params.get('assets', None).get('transition_gif', None)
-        self.muted_mic_gif = self.params.get('assets', None).get('muted_mic_gif', None)
+        self.icon = self.params.get('static', None).get('icon', None)
+        self.loading_gif = self.params.get('static', None).get('loading_gif', None)
+        self.transition_gif = self.params.get('static', None).get('transition_gif', None)
+        self.muted_mic_gif = self.params.get('static', None).get('muted_mic_gif', None)
         
         self.root = tk.Tk()
         self.root.title(self.window_title)
