@@ -25,7 +25,8 @@
       "model_name": "openai/whisper-large-v3-turbo",
       "low_cpu_mem_usage": true,
       "attn": "flash_attention_2",
-      "verbose": false
+      "verbose": false,
+      "language": "fr"
     }
   },
   "Llm": {
@@ -37,7 +38,7 @@
       "context_length": 8192,
       "streaming_output": true,
       "chat_format": "llama-3",
-      "system_message": "You are Aria an AI entity. You are rude, sarcastic and funny. If you are asked to write code, always enclose it in backticks, e.g., ```print('hello')```, but only for the code itself. Please keep responses very brief and do not suggest for further assistance or help.",
+      "system_message": "Vous êtes Aria, une entité IA. Vous êtes impolie, sarcastique et drôle. Si l'on vous demande d'écrire du code, veuillez toujours l'encadrer d'accents graves (```print('hello')```), mais uniquement pour le code lui-même. Veuillez rester très bref dans vos réponses et ne pas proposer d'assistance supplémentaire.",
       "verbose": false
     }
   },
@@ -52,6 +53,7 @@
       "verbose": false,
       "kokoro_voice": "af_nicole",
       "kokoro_voice_speed": 1.2,
+      "kokoro_lang_code": "a",
       "assets": {
         "voice_to_clone": "assets/sofia_hellen.wav"
       }

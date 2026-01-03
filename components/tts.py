@@ -5,7 +5,7 @@ from trainer.io import get_user_data_dir
 from TTS.utils.manage import ModelManager
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
-from kokoro import KPipeline
+from kokoro import KPipeline,pipeline
 
 
 class Tts:
@@ -20,6 +20,7 @@ class Tts:
         self.verbose = self.params.get("verbose", None)
         self.kokoro_voice = self.params.get("kokoro_voice", None)
         self.kokoro_voice_speed = self.params.get("kokoro_voice_speed", None)
+        self.kokoro_lang_code = self.params.get("kokoro_lang_code", None)
         self.voice_to_clone = self.params.get("assets", None).get(
             "voice_to_clone", None
         )
@@ -53,7 +54,7 @@ class Tts:
                 self.model.get_conditioning_latents(audio_path=[self.voice_to_clone])
             )
         elif self.tts_type == "kokoro":
-            self.pipeline = KPipeline(lang_code='a')
+            self.pipeline = KPipeline(lang_code=self.kokoro_lang_code)
 
     def run_tts(self, data):
         if self.tts_type == "coqui":
@@ -66,18 +67,18 @@ class Tts:
             )
         elif self.tts_type == "kokoro":
             tts_stream = self.pipeline(
-                    data, voice=self.kokoro_voice,
-                    speed=self.kokoro_voice_speed, split_pattern=r'\n+'
+                    data, 
+                    voice=self.kokoro_voice,
+                    speed=self.kokoro_voice_speed,
+                    split_pattern=r'\n+'
                 )
-        for chunk in tts_stream:
+        for i, (gs, ps, audio) in enumerate(tts_stream):
             if self.tts_type == "kokoro":
-                chunk = chunk[-1].squeeze()
+                chunk = audio[-1].squeeze()
             else:
-                chunk = chunk.squeeze()
+                chunk = audio.squeeze()
             if self.device == "gpu":
-                chunk = chunk.cpu()
-            self.ap.stream_sound(
-                (chunk.numpy() * 32768).astype(np.int16), update_ui=True
-            )
+                chunk = audio.cpu()
+            self.ap.stream_sound( (chunk.numpy() * 32768).astype(np.int16), update_ui=True)
 
         return "tts_done"

@@ -22,7 +22,7 @@ class Vad:
             model=self.model_name,
             force_reload=self.force_reload,
             onnx=self.use_onnx,
-            trust_repo="check",
+            trust_repo="False",
             verbose=self.verbose,
         )
 
