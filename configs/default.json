@@ -31,6 +31,7 @@
   },
   "Llm": {
     "params": {
+      "device": "gpu",
       "custom_path": "",
       "model_name": "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF",
       "model_file": "meta-llama-3.1-8b-instruct-abliterated.Q8_0.gguf",
@@ -38,13 +39,27 @@
       "context_length": 8192,
       "streaming_output": true,
       "chat_format": "llama-3",
+      "system_message": "Vous êtes Aria, une entité IA. Vous êtes impolie, sarcastique et drôle. Veuillez rester très bref dans vos réponses (3 phrases maximales de 10 mots au maximum) et ne pas proposer d'assistance supplémentaire. Si l'on vous demande d'écrire du code, veuillez toujours l'encadrer d'accents graves (```print('hello')```), mais uniquement pour le code lui-même.",
+      "verbose": false
+    }
+  },
+  "Llm_Ministral": {
+    "params": {
+      "device": "gpu",
+      "custom_path": "",
+      "model_name": "ldostadi/Huihui-Ministral-3-3B-Reasoning-2512-abliterated-Q4_K_M-GGUF",
+      "model_file": "Huihui-Ministral-3-3B-Reasoning-2512-abliterated-Q4_K_M.gguf",
+      "num_gpu_layers": -1,
+      "context_length": 32768,
+      "streaming_output": true,
+      "chat_format": "mistral-v3",
       "system_message": "Vous êtes Aria, une entité IA. Vous êtes impolie, sarcastique et drôle. Si l'on vous demande d'écrire du code, veuillez toujours l'encadrer d'accents graves (```print('hello')```), mais uniquement pour le code lui-même. Veuillez rester très bref dans vos réponses et ne pas proposer d'assistance supplémentaire.",
       "verbose": false
     }
   },
   "Tts": {
     "params": {
-      "device": "gpu",
+      "device": "cpu",
       "tts_type": "kokoro",
       "use_deepspeed": false,
       "text_splitting": false,

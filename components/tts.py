@@ -1,41 +1,39 @@
 import os
 import warnings
 import numpy as np
+import components.utils as utils
 from trainer.io import get_user_data_dir
 from TTS.utils.manage import ModelManager
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
-from kokoro import KPipeline,pipeline
-
+from kokoro import KPipeline
 
 class Tts:
     def __init__(self, params=None, ap=None):
         self.params = params or {}
+        # ... (vos assignations de variables restent identiques)
         self.device = self.params.get("device", None)
         self.tts_type = self.params.get("tts_type", None)
-        self.use_deepspeed = self.params.get("use_deepspeed", None)
-        self.text_splitting = self.params.get("text_splitting", None)
         self.model_name = self.params.get("model_name", None)
-        self.force_reload = self.params.get("force_reload", None)
-        self.verbose = self.params.get("verbose", None)
-        self.kokoro_voice = self.params.get("kokoro_voice", None)
-        self.kokoro_voice_speed = self.params.get("kokoro_voice_speed", None)
         self.kokoro_lang_code = self.params.get("kokoro_lang_code", None)
-        self.voice_to_clone = self.params.get("static", None).get(
-            "voice_to_clone", None
-        )
+        # ...
 
-        self.ap = ap
+        # Dossier de destination sur le volume monté (Windows)
+        dest_models_dir = "/aria/models"
 
         if self.tts_type == "coqui":
+            utils.log_perf("TTS", f"Chargement Modele TTS Coqui sur {self.device}...")
             if not self.verbose:
                 warnings.filterwarnings("ignore", module="TTS")
 
+            # Redéfinition du chemin du modèle pour pointer vers le volume externe
             self.model_path = os.path.join(
-                get_user_data_dir("tts"), self.model_name.replace("/", "--")
+                dest_models_dir, "coqui", self.model_name.replace("/", "--")
             )
+            
             if self.force_reload or not os.path.isdir(self.model_path):
-                self.model_manager = ModelManager()
+                # On force ModelManager à télécharger dans notre dossier externe
+                self.model_manager = ModelManager(output_prefix=os.path.join(dest_models_dir, "coqui"))
                 self.model_path, _, _ = self.model_manager.download_model(self.model_name)
 
             self.config = XttsConfig()
@@ -48,37 +46,13 @@ class Tts:
             )
             if self.device == "gpu":
                 self.model.cuda()
-            # self.model.eval() # do we need to force eval here as the load above didnt?
 
             self.gpt_cond_latent, self.speaker_embedding = (
                 self.model.get_conditioning_latents(audio_path=[self.voice_to_clone])
             )
-        elif self.tts_type == "kokoro":
-            self.pipeline = KPipeline(lang_code=self.kokoro_lang_code)
 
-    def run_tts(self, data):
-        if self.tts_type == "coqui":
-            tts_stream = self.model.inference_stream(
-                data,
-                "en",
-                self.gpt_cond_latent,
-                self.speaker_embedding,
-                enable_text_splitting=self.text_splitting,
-            )
-        elif self.tts_type == "kokoro":
-            tts_stream = self.pipeline(
-                    data, 
-                    voice=self.kokoro_voice,
-                    speed=self.kokoro_voice_speed,
-                    split_pattern=r'\n+'
-                )
-        for i, (gs, ps, audio) in enumerate(tts_stream):
-            if self.tts_type == "kokoro":
-                chunk = audio[-1].squeeze()
-            else:
-                chunk = audio.squeeze()
-            if self.device == "gpu":
-                chunk = audio.cpu()
-            self.ap.stream_sound( (chunk.numpy() * 32768).astype(np.int16), update_ui=True)
-
-        return "tts_done"
+        elif self.tts_type == "kokoro":            
+            utils.log_perf("TTS", f"Chargement Modele TTS Kokoro sur {self.device}...")
+            
+            os.environ["HF_HOME"] = dest_models_dir 
+            self.pipeline = KPipeline(lang_code=self.kokoro_lang_code, device=self.device )

@@ -1,5 +1,11 @@
 import re
+from datetime import datetime
 
+# --- UTILITAIRE DE LOG ---
+def log_perf(step, message=""):
+    now = datetime.now()
+    timestamp = now.strftime("%H:%M:%S") + f".{now.microsecond // 1000:03d}"
+    print(f"[{timestamp}] [PERF] {step.upper():<10} | {message}")
 
 def remove_emojis(text):
     emoji_pattern = re.compile("["

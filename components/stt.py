@@ -1,6 +1,7 @@
 import warnings
 import torch
 import transformers
+import components.utils as utils
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
 
@@ -27,6 +28,7 @@ class Stt:
             else torch.float32
         )
 
+        utils.log_perf("Stt", f"Chargement Modele STT {self.model_name} sur {self.device}...")
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             self.model_name,
             torch_dtype=torch_dtype,

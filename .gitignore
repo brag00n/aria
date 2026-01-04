@@ -161,3 +161,5 @@ cython_debug/
 temp/
 
 pulseaudio-1.1
+
+models/*
