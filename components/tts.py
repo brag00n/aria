@@ -1,38 +1,50 @@
+from email.mime import text
 import os
+import sys
 import warnings
 import numpy as np
+import time
 import components.utils as utils
 from trainer.io import get_user_data_dir
 from TTS.utils.manage import ModelManager
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
 from kokoro import KPipeline
+import soundfile as sf
 
 class Tts:
     def __init__(self, params=None, ap=None):
         self.params = params or {}
-        # ... (vos assignations de variables restent identiques)
-        self.device = self.params.get("device", None)
-        self.tts_type = self.params.get("tts_type", None)
+        
+        # Initialisation prioritaire
+        self.verbose = self.params.get("verbose", False)
+        self.device = self.params.get("device", "cpu")
+        self.tts_type = self.params.get("tts_type", "kokoro")
         self.model_name = self.params.get("model_name", None)
-        self.kokoro_lang_code = self.params.get("kokoro_lang_code", None)
-        # ...
+        self.force_reload = self.params.get("force_reload", False)
+        
+        self.voice_to_use = self.params.get("kokoro_voice", "ff_siwis")
+        self.voice_speed = self.params.get("kokoro_voice_speed", 1.0)
+        self.kokoro_lang_code = self.params.get("kokoro_lang_code", "f")
+        
+        static_params = self.params.get("static", {})
+        self.voice_to_clone = static_params.get("voice_to_clone", "static/sofia_hellen.wav")
 
-        # Dossier de destination sur le volume monté (Windows)
-        dest_models_dir = "/aria/models"
+        dest_models_dir = "/aria/tmp/models"
 
         if self.tts_type == "coqui":
             utils.log_perf("TTS", f"Chargement Modele TTS Coqui sur {self.device}...")
             if not self.verbose:
+                import transformers
+                transformers.logging.set_verbosity_error()
                 warnings.filterwarnings("ignore", module="TTS")
 
-            # Redéfinition du chemin du modèle pour pointer vers le volume externe
             self.model_path = os.path.join(
                 dest_models_dir, "coqui", self.model_name.replace("/", "--")
             )
-            
+
             if self.force_reload or not os.path.isdir(self.model_path):
-                # On force ModelManager à télécharger dans notre dossier externe
+                utils.log_perf("TTS", f"   Téléchargement du modèle Coqui...")
                 self.model_manager = ModelManager(output_prefix=os.path.join(dest_models_dir, "coqui"))
                 self.model_path, _, _ = self.model_manager.download_model(self.model_name)
 
@@ -42,17 +54,56 @@ class Tts:
             self.model.load_checkpoint(
                 self.config,
                 checkpoint_dir=self.model_path,
-                use_deepspeed=self.use_deepspeed,
+                use_deepspeed=self.params.get("use_deepspeed", False),
             )
-            if self.device == "gpu":
+            
+            if "cuda" in self.device or self.device == "gpu":
                 self.model.cuda()
 
-            self.gpt_cond_latent, self.speaker_embedding = (
-                self.model.get_conditioning_latents(audio_path=[self.voice_to_clone])
+            # On calcule les latents une seule fois ici
+            utils.log_perf("TTS", "   Calcul de l'empreinte vocale (clonage)...")
+            self.gpt_cond_latent, self.speaker_embedding = self.model.get_conditioning_latents(
+                audio_path=[self.voice_to_clone]
             )
 
-        elif self.tts_type == "kokoro":            
+        elif self.tts_type == "kokoro":         
             utils.log_perf("TTS", f"Chargement Modele TTS Kokoro sur {self.device}...")
+            os.environ["HF_HOME"] = dest_models_dir
+            stderr = sys.stderr
+            sys.stderr = open(os.devnull, 'w')
+            try:
+                self.pipeline = KPipeline(lang_code=self.kokoro_lang_code, device=self.device, repo_id='hexgrad/Kokoro-82M')
+            finally:
+                # On restaure le flux d'erreur standard immédiatement
+                sys.stderr.close()
+                sys.stderr = stderr
+
+    def run_tts_to_file(self, text, user_id="default"):
+        output_dir = "/aria/tmp/tts"
+        os.makedirs(output_dir, exist_ok=True)
+        file_path = os.path.join(output_dir, f"aria_res_{user_id}_{time.time_ns()}.wav")
+
+        try:
+            if self.tts_type == "kokoro":
+                generator = self.pipeline(text, voice=self.voice_to_use, speed=self.voice_speed, split_pattern=r'\n+')
+                for _, _, audio in generator:
+                    sf.write(file_path, audio, 24000)
+                    break
+
+            elif self.tts_type == "coqui":
+                # FIX: Utilisation de inference() au lieu de synthesize() pour éviter le double emploi des arguments
+                # C'est la méthode la plus robuste quand on possède déjà gpt_cond_latent
+                out = self.model.inference(
+                    text,
+                    "fr", # Langue française
+                    self.gpt_cond_latent,
+                    self.speaker_embedding,
+                    temperature=0.7, # Paramètres XTTS standard
+                )
+                sf.write(file_path, out["wav"], 24000)
+
+            return file_path
             
-            os.environ["HF_HOME"] = dest_models_dir 
-            self.pipeline = KPipeline(lang_code=self.kokoro_lang_code, device=self.device )
+        except Exception as e:
+            utils.log_perf("TTS", f"Erreur synthèse ({self.tts_type}) : {str(e)}")
+            return None
