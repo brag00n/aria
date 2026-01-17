@@ -32,13 +32,13 @@ utils.log_perf("app", "--- DEBUT Chargement de la configuration et des modeles..
 with open("configs/default.json", "r") as f:
     config = json.load(f)
 
+# On force l'usage de Ministral
 stt = Stt(config["Stt_Whisper"]["params"])
-llm = Llm(config["Llm_Ministral"]["params"])
+llm = Llm(config["Llm_Ministral"]["params"], all_config=config)
 tts = Tts(config["Tts_Kokoro"]["params"])
-
 utils.log_perf("app", "--- FIN Chargement de la configuration et des modeles.")
 
-# --- JAVASCRIPT TOTAL CDN & LOGS ---
+# --- JAVASCRIPT ---
 JS_COMBO = """
 async () => {
     if (window.ariaInitialized) return;
@@ -52,28 +52,34 @@ async () => {
     });
 
     try {
-        console.log("[HMI] Chargement des dépendances via CDN...");
+        console.log("[ARIA-CLIENT] Initialisation du système...");
         await loadScript("https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.min.js");
         await loadScript("https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js");
         ort.env.logLevel = "error";
         
         window.ariaInitialized = true;
-        
-        // ... (Logique de queue audio inchangée) ...
-        const logo = document.querySelector('#aria_logo');
         window.audioQueue = [];
         window.playedIds = new Set();
         window.isPlaying = false;
 
         async function playNext() {
-            if (window.audioQueue.length === 0) { window.isPlaying = false; return; }
+            if (window.audioQueue.length === 0) { 
+                window.isPlaying = false; 
+                return; 
+            }
             window.isPlaying = true;
             const chunk = window.audioQueue.shift();
-            console.log("[STREAM] Lecture du bloc : " + chunk.id);
+            console.log(`[ARIA-CLIENT] Lecture bloc audio: ${chunk.id}`);
             const audio = new Audio(chunk.data);
             audio.onended = playNext;
-            audio.onerror = () => playNext();
-            audio.play().catch(e => playNext());
+            audio.onerror = (e) => {
+                console.error(`[ARIA-CLIENT] Erreur lecture bloc ${chunk.id}:`, e);
+                playNext();
+            };
+            audio.play().catch(e => {
+                console.warn("[ARIA-CLIENT] Lecture bloquée par le navigateur:", e);
+                playNext();
+            });
         }
 
         const bridge = document.querySelector('#audio_url_bridge textarea');
@@ -85,6 +91,7 @@ async () => {
                     if (!val) return;
                     try {
                         const chunks = JSON.parse(val);
+                        console.log(`[ARIA-CLIENT] Réception de ${chunks.length} bloc(s) audio.`);
                         chunks.forEach(chunk => {
                             if (!window.playedIds.has(chunk.id)) {
                                 window.playedIds.add(chunk.id);
@@ -92,20 +99,23 @@ async () => {
                             }
                         });
                         if (!window.isPlaying) playNext();
-                    } catch(e) {}
+                    } catch(e) {
+                        console.error("[ARIA-CLIENT] Erreur parsing bridge:", e);
+                    }
                 }
             });
         }
 
-        // --- RESTAURATION DES PARAMÈTRES VAD ---
         const myVAD = await vad.MicVAD.new({
             modelURL: "/file=static/silero_v6.2/silero_vad.onnx",
             onSpeechStart: () => {
-                console.log("[VAD] Parole détectée");
+                console.log("[ARIA-VAD] Parole détectée...");
+                const logo = document.querySelector('#aria_logo');
                 if (logo) logo.classList.add('speaking');
             },
             onSpeechEnd: (audio) => {
-                console.log("[VAD] Fin de parole (envoi)");
+                console.log("[ARIA-VAD] Fin de parole.");
+                const logo = document.querySelector('#aria_logo');
                 if (logo) logo.classList.remove('speaking');
                 
                 const wavBuffer = vad.utils.encodeWAV(audio);
@@ -115,77 +125,108 @@ async () => {
                 const textarea = container ? container.querySelector('textarea') : null;
                 
                 if (textarea) {
-                    textarea.value = ""; 
                     textarea.value = base64Audio;
                     textarea.dispatchEvent(new Event('input', { bubbles: true }));
-                    
                     setTimeout(() => {
-                        const btn = document.getElementById('aria_trigger');
+                        const btn = document.querySelector('#aria_trigger');
                         if (btn) btn.click();
-                    }, 150);
+                    }, 50);
                 }
             },
-            // SEUILS RESTAURÉS ICI :
             positiveSpeechThreshold: 0.8,
             negativeSpeechThreshold: 0.4,
             minSpeechFrames: 3,
-            redemptionFrames: 20, // Optionnel: temps avant de couper après le dernier mot
+            redemptionFrames: 20,
         });
         
         myVAD.start();
-        console.log("[VAD] Système prêt avec seuils personnalisés.");
-
-    } catch (err) { 
-        console.error("[HMI ERROR]", err); 
-    }
+        console.log("[ARIA-CLIENT] Système prêt (VAD Actif).");
+    } catch (err) { console.error("[ARIA-ERROR] Initialisation échouée:", err); }
 }
 """
 
 # --- LOGIQUE SERVEUR ---
 def process_streaming_binaire(b64_audio, history):
-    if not b64_audio: yield history, ""; return
+    start_total = datetime.now()
+    if not b64_audio: 
+        yield history or [], ""
+        return
+    
     if history is None: history = []
+    
     try:
+
+        start_total = datetime.now()
+        utils.log_perf("app", "--- DEBUT Traitement (Stream Binaire)")
+        # 1. Reception et STT
         header, encoded = b64_audio.split(",", 1)
         audio_data = base64.b64decode(encoded)
         audio_seg = AudioSegment.from_file(io.BytesIO(audio_data)).set_frame_rate(16000).set_channels(1)
         samples = np.array(audio_seg.get_array_of_samples()).astype(np.float32) / 32768.0
         
         text_user = stt.transcribe_translate(samples)
-        history.append([text_user, ""])
+        utils.log_perf("app", f"   STT: reçu: '{text_user}' (Taille: {len(audio_data)} octets)")
+        
+        history.append({"role": "user", "content": text_user})
+        history.append({"role": "assistant", "content": "..."})
         yield history, ""
         
+        # 2. Appel LLM + TTS Streaming
+        utils.log_perf("app", f"   LLM: Début génération")
         response_gen = llm.get_answer_web(tts, text_user, "DefaultUser")
         chunk_count = 0
         stream_payload = []
         
         for text_update, audio_chunk_path in response_gen:
-            history[-1][1] = text_update
+            history[-1]["content"] = text_update
+            
+            payload_str = ""
             if audio_chunk_path and os.path.exists(audio_chunk_path):
                 chunk_count += 1
                 unique_id = f"bloc_{time.time_ns()}_{chunk_count}"
+                
+                # Lecture et encodage du son
                 with open(audio_chunk_path, "rb") as f:
-                    bin_data = f.read()
-                    b64_data = f"data:audio/wav;base64,{base64.b64encode(bin_data).decode('utf-8')}"
+                    raw_son = f.read()
+                    b64_data = f"data:audio/wav;base64,{base64.encodebytes(raw_son).decode('utf-8')}"
                 
-                # Log serveur pour le suivi de l'envoi
-                utils.log_perf("app", f"   [STREAM] Bloc #{chunk_count} envoyé")
-                
-                if not DEBUG_SAVE_WAV:
-                    try: os.remove(audio_chunk_path)
-                    except: pass
+                # Debug : Sauvegarde si activé
+                if DEBUG_SAVE_WAV:
+                    save_path = os.path.join(TMP_DIR, f"{unique_id}.wav")
+                    shutil.copy(audio_chunk_path, save_path)
+                    utils.log_perf("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) -> {unique_id}.wav")
+                else:
+                    utils.log_perf("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes)")
                 
                 stream_payload.append({"id": unique_id, "data": b64_data})
-                yield history, json.dumps(stream_payload)
-            else:
-                yield history, json.dumps(stream_payload)
+                payload_str = json.dumps(stream_payload)
                 
+                # Nettoyage immédiat du fichier temporaire original
+                try: os.remove(audio_chunk_path)
+                except: pass
+            
+            yield history, payload_str
+        
+        utils.log_perf("app", f"   TTS: FIN Traitement ({chunk_count} blocs son, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
+        utils.log_perf("app", f"   LLM: Réponse finale: '{history[-1]['content']}'")
+                
+        utils.log_perf("app", f"--- FIN Traitement ({chunk_count} blocs, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
     except Exception as e:
-        utils.log_perf("app", f"!!! ERREUR : {str(e)}")
+        utils.log_perf("app", f"!!! ERREUR CRITIQUE : {str(e)}")
         yield history, ""
 
 # --- UI GRADIO ---
 CSS = """
+#audio_input_box, #audio_url_bridge, #aria_trigger {
+    position: absolute;
+    top: -9999px;
+    left: -9999px;
+    height: 0px !important;
+    width: 0px !important;
+    overflow: hidden;
+    opacity: 0;
+}
+
 #aria_logo.speaking { 
     border: 4px solid #ff4b4b; 
     box-shadow: 0 0 20px #ff4b4b;
@@ -202,24 +243,25 @@ CSS = """
 with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
     gr.Markdown("# 🎙️ Aria Voice System")
     gr.Image(type="filepath", value="static/transition.gif", height="100", elem_id="aria_logo")
+    
     chatbot = gr.Chatbot(elem_id="aria_chatbot")
-    audio_url_bridge = gr.Textbox(visible=False, elem_id="audio_url_bridge")
+    
+    # Bridge technique (visibles pour le DOM mais cachés par CSS)
+    audio_url_bridge = gr.Textbox(elem_id="audio_url_bridge", visible=True)
+    audio_input = gr.Textbox(elem_id="audio_input_box", visible=True)
+    trigger_btn = gr.Button("Trigger", elem_id="aria_trigger", visible=True)
     
     with gr.Row():
         start_btn = gr.Button("🚀 ACTIVER MICRO & SON", variant="primary")
         
-    audio_input = gr.Textbox(visible=False, elem_id="audio_input_box")
-    trigger_btn = gr.Button("Trigger", visible=False, elem_id="aria_trigger")
-    
     start_btn.click(None, None, None, js=JS_COMBO)
     
     trigger_btn.click(
         fn=process_streaming_binaire, 
         inputs=[audio_input, chatbot], 
-        outputs=[chatbot, audio_url_bridge], 
-        show_progress="hidden",
-        queue=True
+        outputs=[chatbot, audio_url_bridge],
+        show_progress="hidden"
     )
 
 if __name__ == "__main__":
-    ariaHmi.launch(server_name="0.0.0.0", server_port=7860, allowed_paths=["static/"])
+    ariaHmi.launch(server_name="0.0.0.0", server_port=7860)

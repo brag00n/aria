@@ -1,0 +1,22 @@
+# Core & UI
+gradio==6.3.0
+pydub
+soundfile
+python-dotenv
+psutil
+
+# STT (Whisper Turbo)
+torch --index-url https://download.pytorch.org/whl/cu124
+transformers==4.57.6
+accelerate
+
+# LLM & MCP
+llama-cpp-python
+mcp==1.25.0
+uv==0.9.26
+httpx
+
+# TTS
+kokoro==0.9.4
+f5-tts
+onnxruntime-gpu==1.20.1

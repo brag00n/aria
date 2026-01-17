@@ -1,14 +1,8 @@
-from email.mime import text
 import os
 import sys
 import warnings
-import numpy as np
 import time
 import components.utils as utils
-from trainer.io import get_user_data_dir
-from TTS.utils.manage import ModelManager
-from TTS.tts.configs.xtts_config import XttsConfig
-from TTS.tts.models.xtts import Xtts
 from kokoro import KPipeline
 import soundfile as sf
 
@@ -34,6 +28,17 @@ class Tts:
 
         if self.tts_type == "coqui":
             utils.log_perf("TTS", f"Chargement Modele TTS Coqui sur {self.device}...")
+            
+            # --- IMPORTS TARDIFS (LAZY IMPORTS) ---
+            # Permet de démarrer Aria avec Kokoro même si Coqui/Transformers sont cassés
+            try:
+                from TTS.utils.manage import ModelManager
+                from TTS.tts.configs.xtts_config import XttsConfig
+                from TTS.tts.models.xtts import Xtts
+            except ImportError as e:
+                utils.log_perf("TTS", f"!!! ERREUR CRITIQUE COQUI : Incompatibilité Transformers. Utilisez Kokoro. {e}")
+                raise e
+
             if not self.verbose:
                 import transformers
                 transformers.logging.set_verbosity_error()
@@ -60,7 +65,6 @@ class Tts:
             if "cuda" in self.device or self.device == "gpu":
                 self.model.cuda()
 
-            # On calcule les latents une seule fois ici
             utils.log_perf("TTS", "   Calcul de l'empreinte vocale (clonage)...")
             self.gpt_cond_latent, self.speaker_embedding = self.model.get_conditioning_latents(
                 audio_path=[self.voice_to_clone]
@@ -69,12 +73,12 @@ class Tts:
         elif self.tts_type == "kokoro":         
             utils.log_perf("TTS", f"Chargement Modele TTS Kokoro sur {self.device}...")
             os.environ["HF_HOME"] = dest_models_dir
+            # Capture de stderr pour silence
             stderr = sys.stderr
             sys.stderr = open(os.devnull, 'w')
             try:
                 self.pipeline = KPipeline(lang_code=self.kokoro_lang_code, device=self.device, repo_id='hexgrad/Kokoro-82M')
             finally:
-                # On restaure le flux d'erreur standard immédiatement
                 sys.stderr.close()
                 sys.stderr = stderr
 
@@ -91,14 +95,12 @@ class Tts:
                     break
 
             elif self.tts_type == "coqui":
-                # FIX: Utilisation de inference() au lieu de synthesize() pour éviter le double emploi des arguments
-                # C'est la méthode la plus robuste quand on possède déjà gpt_cond_latent
                 out = self.model.inference(
                     text,
-                    "fr", # Langue française
+                    "fr", 
                     self.gpt_cond_latent,
                     self.speaker_embedding,
-                    temperature=0.7, # Paramètres XTTS standard
+                    temperature=0.7,
                 )
                 sf.write(file_path, out["wav"], 24000)
 

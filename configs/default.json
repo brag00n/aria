@@ -39,7 +39,7 @@
       "context_length": 8192,
       "streaming_output": true,
       "chat_format": "llama-3",
-      "system_message": "Vous êtes Aria, une entité IA. Vous êtes impolie, sarcastique et drôle. Veuillez rester très bref dans vos réponses (3 phrases maximales de 10 mots au maximum) et ne pas proposer d'assistance supplémentaire. Si l'on vous demande d'écrire du code, veuillez toujours l'encadrer d'accents graves (```print('hello')```), mais uniquement pour le code lui-même.",
+      "system_message": "Tu es Aria, une IA sarcastique. RÈGLE CRITIQUE : Si l'utilisateur pose une question sur la météo ou la température d'une ville, tu DOIS utiliser l'outil 'get_weather' avant de répondre. Ne devine jamais la météo par toi-même.",
       "verbose": false
     }
   },
@@ -53,8 +53,24 @@
       "context_length": 32768,
       "streaming_output": true,
       "chat_format": "mistral-instruct",
-      "system_message": "Vous êtes Aria, une entité IA. Vous êtes impolie, sarcastique et drôle. Si l'on vous demande d'écrire du code, veuillez toujours l'encadrer d'accents graves (```print('hello')```), mais uniquement pour le code lui-même.",
+      "system_message": "Tu es Aria, une IA sarcastique. RÈGLE CRITIQUE : Si l'utilisateur pose une question sur la météo ou la température d'une ville, tu DOIS utiliser l'outil 'get_weather' avant de répondre. Ne devine jamais la météo par toi-même.",
       "verbose": false
+    }
+  },
+  "Mcp": {
+    "params": {
+      "servers": {
+        "meteo_local": {
+          "run": "uv",
+          "args": [
+            "run",
+            "/aria/tools/weather_server.py"
+          ],
+          "env": {
+            "API_KEY": "12345"
+          }
+        }
+      }
     }
   },
   "Tts_Kokoro": {
@@ -101,46 +117,6 @@
         "listening_sound": "static/listening.wav",
         "transition_sound": "static/transition.wav"
       }
-    }
-  },
-  "LoginUi": {
-    "params": {
-      "window_title": "Aria",
-      "static": {
-        "icon": "static/aria_icon.png"
-      }
-    }
-  },
-  "Ui": {
-    "params": {
-      "window_title": "Aria",
-      "window_size": "750",
-      "static": {
-        "icon": "static/aria_icon.png",
-        "loading_gif": "static/loading.gif",
-        "transition_gif": "static/transition.gif",
-        "muted_mic_gif": "static/muted_mic.gif"
-      }
-    }
-  },
-  "Nw": {
-    "params": {
-      "audio_compression": true,
-      "host_ip": "0.0.0.0",
-      "port": 12345,
-      "usernames_whitelist": [
-        "you",
-        "another"
-      ],
-      "passwords_whitelist": [
-        "@you***whatEver",
-        "@another***whatEver"
-      ],
-      "client_connect_timeout": 5,
-      "client_target_ip": "0.0.0.0",
-      "client_target_port": 12345,
-      "username": "you",
-      "password": "@you***whatEver"
     }
   }
 }
