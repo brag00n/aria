@@ -17,10 +17,14 @@ protobuf==4.25.8
 git+https://github.com/huggingface/parler-tts.git
 
 # --- LLM & MCP ---
-llama-cpp-python
 mcp==1.25.0
 uv==0.9.26
 httpx
+# Pour connect LLM Studio
+openai==2.15.0
+# Pour connect local (Llama.cpp)
+llama-cpp-python==0.3.16
+huggingface_hub==0.36.0
 
 # --- Audio Utils & Fallbacks ---
 descript-audiotools==0.7.4

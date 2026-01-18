@@ -29,8 +29,9 @@
       "language": "fr"
     }
   },
-  "Llm_Llama": {
+  "Llm_Llama_local": {
     "params": {
+      "backend_type": "local",
       "device": "gpu",
       "custom_path": "",
       "model_name": "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF",
@@ -43,12 +44,29 @@
       "verbose": false
     }
   },
-  "Llm_Ministral": {
+  "Llm_Ministral_local": {
     "params": {
+      "backend_type": "local",
       "device": "cuda:0",
       "custom_path": "",
       "model_name": "ldostadi/Huihui-Ministral-3-3B-Reasoning-2512-abliterated-Q4_K_M-GGUF",
       "model_file": "huihui-ministral-3-3b-reasoning-2512-abliterated-q4_k_m.gguf",
+      "num_gpu_layers": -1,
+      "context_length": 32768,
+      "streaming_output": true,
+      "chat_format": "mistral-instruct",
+      "system_message": "Tu es Aria, une IA sarcastique. RÈGLE CRITIQUE : Si l'utilisateur pose une question sur la météo ou la température d'une ville, tu DOIS utiliser l'outil 'get_weather' avant de répondre. Ne devine jamais la météo par toi-même.",
+      "verbose": false
+    }
+  },
+  "Llm_Ministral_llmstudio": {
+    "params": {
+      "backend_type": "llm_studio",
+      "base_url": "http://192.168.1.44:1234/v1",
+      "device": "cuda:0",
+      "custom_path": "",
+      "model_name": "mistralai/ministral-3-14b-reasoning",
+      "model_file": "",
       "num_gpu_layers": -1,
       "context_length": 32768,
       "streaming_output": true,

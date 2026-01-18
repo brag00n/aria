@@ -34,7 +34,7 @@ with open("configs/default.json", "r") as f:
 
 # On force l'usage de Ministral
 stt = Stt(config["Stt_Whisper"]["params"])
-llm = Llm(config["Llm_Ministral"]["params"], all_config=config)
+llm = Llm(config["Llm_Ministral_llmstudio"]["params"], all_config=config)
 tts = Tts(config["Tts_Sherpa"]["params"])
 utils.log_perf("app", "--- FIN Chargement de la configuration et des modeles.")
 
@@ -146,7 +146,7 @@ async () => {
 """
 
 # --- LOGIQUE SERVEUR ---
-def process_streaming_binaire(b64_audio, history):
+async def process_streaming_binaire(b64_audio, history):
     start_total = datetime.now()
     if not b64_audio: 
         yield history or [], ""
@@ -177,7 +177,7 @@ def process_streaming_binaire(b64_audio, history):
         chunk_count = 0
         stream_payload = []
         
-        for text_update, audio_chunk_path in response_gen:
+        async for text_update, audio_chunk_path in response_gen:
             history[-1]["content"] = text_update
             
             payload_str = ""
