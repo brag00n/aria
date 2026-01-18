@@ -90,20 +90,16 @@
       }
     }
   },
-  "Tts_Coqui": {
+  "Tts_Sherpa": {
     "params": {
-      "device": "cuda:0",
-      "tts_type": "coqui",
-      "use_deepspeed": false,
-      "text_splitting": false,
-      "model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
-      "force_reload": false,
-      "verbose": true,
-      "kokoro_voice": "ff_siwis",
-      "kokoro_voice_speed": 1.2,
-      "kokoro_lang_code": "f",
+      "device": "cpu",
+      "tts_type": "sherpa",
+      "model_dir": "/aria/models/vits-piper-fr_FR-upmc-medium",
+      "speed": 0.8,
+      "noise_scale": 0.667,
+      "noise_scale_w": 0.8,
       "static": {
-        "voice_to_clone": "static/sofia_hellen.wav"
+        "voice_to_clone": "static/Hellena_science.wav"
       }
     }
   },

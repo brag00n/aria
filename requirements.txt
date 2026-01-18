@@ -1,22 +1,29 @@
-# Core & UI
+# --- Core & UI ---
 gradio==6.3.0
 pydub
 soundfile
 python-dotenv
 psutil
 
-# STT (Whisper Turbo)
+# --- STT (Whisper Turbo) & TTS (Parler) ---
+# Alignement sur CUDA 12.4
 torch --index-url https://download.pytorch.org/whl/cu124
-transformers==4.57.6
-accelerate
+torchaudio --index-url https://download.pytorch.org/whl/cu124
+transformers==4.46.1
+accelerate>=1.1.0
+sentencepiece
+protobuf==4.25.8
+# Installation via Git pour avoir les dernières optimisations multilingues
+git+https://github.com/huggingface/parler-tts.git
 
-# LLM & MCP
+# --- LLM & MCP ---
 llama-cpp-python
 mcp==1.25.0
 uv==0.9.26
 httpx
 
-# TTS
+# --- Audio Utils & Fallbacks ---
+descript-audiotools==0.7.4
 kokoro==0.9.4
-f5-tts
 onnxruntime-gpu==1.20.1
+librosa

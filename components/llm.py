@@ -31,6 +31,7 @@ class Llm:
         # Téléchargement/Chargement du modèle GGUF
         dest_models_dir = "/aria/tmp/models"
         try:
+            utils.log_perf("LLM", f"Téléchargement modèle {self.model_name} sur {dest_models_dir}...")
             model_path = hf_hub_download(repo_id=self.model_name, filename=self.model_file, local_dir=dest_models_dir)
         except Exception as e:
             utils.log_perf("LLM", f"Erreur téléchargement modèle: {e}")
@@ -39,6 +40,7 @@ class Llm:
         # Initialisation de Llama avec gestion explicite du GPU
         main_gpu = 0 if "cuda" in self.device or self.device == "gpu" else None
         
+        utils.log_perf("LLM", f"Chargement modele {self.model_name} sur {self.device}...")
         self.llm = Llama(
             model_path=model_path,
             n_gpu_layers=self.num_gpu_layers,
@@ -49,7 +51,6 @@ class Llm:
         )
 
         self.user_aware_messages = {}
-        utils.log_perf("LLM", f"Modèle chargé sur {self.device}.")
 
     def get_answer_web(self, tts, query, user):
         """Génère une réponse en gérant les outils MCP et le streaming TTS."""

@@ -35,7 +35,7 @@ with open("configs/default.json", "r") as f:
 # On force l'usage de Ministral
 stt = Stt(config["Stt_Whisper"]["params"])
 llm = Llm(config["Llm_Ministral"]["params"], all_config=config)
-tts = Tts(config["Tts_Kokoro"]["params"])
+tts = Tts(config["Tts_Sherpa"]["params"])
 utils.log_perf("app", "--- FIN Chargement de la configuration et des modeles.")
 
 # --- JAVASCRIPT ---
