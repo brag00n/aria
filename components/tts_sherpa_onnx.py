@@ -5,7 +5,7 @@ import urllib.request
 import numpy as np
 import soundfile as sf
 import sherpa_onnx
-from components.utils import log_perf, clean_text_for_tts 
+from components.utils import log_info, clean_text_for_tts 
 
 logger = logging.getLogger("aria.tts.sherpa")
 
@@ -34,7 +34,7 @@ class TtsSherpaOnnx:
         onnx_path = os.path.join(self.model_dir, "fr_FR-upmc-medium.onnx")
         
         if not os.path.exists(onnx_path):
-            log_perf("Sherpa-ONNX", f"📥 Modèle manquant. Téléchargement depuis GitHub...")
+            log_info("Sherpa-ONNX", f"📥 Modèle manquant. Téléchargement depuis GitHub...")
             os.makedirs(self.base_models_dir, exist_ok=True)
             
             archive_path = os.path.join(self.base_models_dir, f"{self.model_name}.tar.bz2")
@@ -42,7 +42,7 @@ class TtsSherpaOnnx:
             try:
                 # Téléchargement
                 urllib.request.urlretrieve(self.download_url, archive_path)
-                log_perf("Sherpa-ONNX", "📦 Extraction de l'archive...")
+                log_info("Sherpa-ONNX", "📦 Extraction de l'archive...")
                 
                 # Extraction
                 with tarfile.open(archive_path, "r:bz2") as tar:
@@ -50,14 +50,14 @@ class TtsSherpaOnnx:
                 
                 # Nettoyage
                 os.remove(archive_path)
-                log_perf("Sherpa-ONNX", "✅ Modèle installé avec succès.")
+                log_info("Sherpa-ONNX", "✅ Modèle installé avec succès.")
                 
             except Exception as e:
-                log_perf("Sherpa-ONNX", f"❌ ÉCHEC du téléchargement automatique : {e}")
+                log_info("Sherpa-ONNX", f"❌ ÉCHEC du téléchargement automatique : {e}")
                 raise
 
     def _load_model(self):
-        log_perf("Sherpa-ONNX", f"Chargement du moteur : {self.model_dir}")
+        log_info("Sherpa-ONNX", f"Chargement du moteur : {self.model_dir}")
         
         onnx_path = os.path.join(self.model_dir, "fr_FR-upmc-medium.onnx")
         tokens_path = os.path.join(self.model_dir, "tokens.txt")
@@ -81,7 +81,7 @@ class TtsSherpaOnnx:
             raise ValueError("Erreur de validation Sherpa-ONNX.")
 
         self.model_obj = sherpa_onnx.OfflineTts(tts_config)
-        log_perf("Sherpa-ONNX", "Identité Héléna prête.")
+        log_info("Sherpa-ONNX", "Identité Héléna prête.")
 
     def generate(self, text, output_path, *args, **kwargs):
         try:
@@ -95,5 +95,5 @@ class TtsSherpaOnnx:
             sf.write(output_path, samples, audio_data.sample_rate)
             return output_path
         except Exception as e:
-            log_perf("Sherpa-ONNX", f"ERREUR : {str(e)}")
+            log_info("Sherpa-ONNX", f"ERREUR : {str(e)}")
             return None

@@ -28,15 +28,15 @@ if os.path.exists(TMP_DIR):
 os.makedirs(TMP_DIR, mode=0o777, exist_ok=True)
 
 # --- INIT COMPOSANTS ---
-utils.log_perf("app", "--- DEBUT Chargement de la configuration et des modeles...")
+utils.log_info("app", "--- DEBUT Chargement de la configuration et des modeles...")
 with open("configs/default.json", "r") as f:
     config = json.load(f)
 
 # On force l'usage de Ministral
 stt = Stt(config["Stt_Whisper"]["params"])
-llm = Llm(config["Llm_Ministral_llmstudio"]["params"], all_config=config)
-tts = Tts(config["Tts_Sherpa"]["params"])
-utils.log_perf("app", "--- FIN Chargement de la configuration et des modeles.")
+llm = Llm(config["Llm_Ministral_ollama"]["params"], all_config=config)
+tts = Tts(config["Tts_Kokoro"]["params"])
+utils.log_info("app", "--- FIN Chargement de la configuration et des modeles.")
 
 # --- JAVASCRIPT ---
 JS_COMBO = """
@@ -157,7 +157,7 @@ async def process_streaming_binaire(b64_audio, history):
     try:
 
         start_total = datetime.now()
-        utils.log_perf("app", "--- DEBUT Traitement (Stream Binaire)")
+        utils.log_info("app", "--- DEBUT Traitement (Stream Binaire)")
         # 1. Reception et STT
         header, encoded = b64_audio.split(",", 1)
         audio_data = base64.b64decode(encoded)
@@ -165,19 +165,19 @@ async def process_streaming_binaire(b64_audio, history):
         samples = np.array(audio_seg.get_array_of_samples()).astype(np.float32) / 32768.0
         
         text_user = stt.transcribe_translate(samples)
-        utils.log_perf("app", f"   STT: reçu: '{text_user}' (Taille: {len(audio_data)} octets)")
+        utils.log_info("app", f"   STT: reçu: '{text_user}' (Taille: {len(audio_data)} octets)")
         
         history.append({"role": "user", "content": text_user})
         history.append({"role": "assistant", "content": "..."})
         yield history, ""
         
         # 2. Appel LLM + TTS Streaming
-        utils.log_perf("app", f"   LLM: Début génération")
+        utils.log_info("app", f"   LLM: Début génération")
         response_gen = llm.get_answer_web(tts, text_user, "DefaultUser")
         chunk_count = 0
         stream_payload = []
         
-        async for text_update, audio_chunk_path in response_gen:
+        async for text_update, audio_chunk_path,textCleanedForAudio in response_gen:
             history[-1]["content"] = text_update
             
             payload_str = ""
@@ -194,9 +194,9 @@ async def process_streaming_binaire(b64_audio, history):
                 if DEBUG_SAVE_WAV:
                     save_path = os.path.join(TMP_DIR, f"{unique_id}.wav")
                     shutil.copy(audio_chunk_path, save_path)
-                    utils.log_perf("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) -> {unique_id}.wav")
+                    utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) -> {unique_id}.wav, text: '{textCleanedForAudio}'")
                 else:
-                    utils.log_perf("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes)")
+                    utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) text: '{textCleanedForAudio}'")
                 
                 stream_payload.append({"id": unique_id, "data": b64_data})
                 payload_str = json.dumps(stream_payload)
@@ -207,12 +207,12 @@ async def process_streaming_binaire(b64_audio, history):
             
             yield history, payload_str
         
-        utils.log_perf("app", f"   TTS: FIN Traitement ({chunk_count} blocs son, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
-        utils.log_perf("app", f"   LLM: Réponse finale: '{history[-1]['content']}'")
+        utils.log_info("app", f"   LLM: FIN Traitement ({chunk_count} blocs son, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
+        utils.log_info("app", f"   LLM: Réponse finale: '{history[-1]['content']}'")
                 
-        utils.log_perf("app", f"--- FIN Traitement ({chunk_count} blocs, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
+        utils.log_info("app", f"--- FIN Traitement ({chunk_count} blocs, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
     except Exception as e:
-        utils.log_perf("app", f"!!! ERREUR CRITIQUE : {str(e)}")
+        utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
         yield history, ""
 
 # --- UI GRADIO ---

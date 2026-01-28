@@ -6,7 +6,7 @@ from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-class McpManager:
+class Mcp:
     def __init__(self, mcp_params):
         self.params = mcp_params or {}
         self.servers_conf = self.params.get("servers", {})
@@ -17,14 +17,14 @@ class McpManager:
         
     def start(self):
         """Démarrage initial (mode local)."""
-        utils.log_perf("MCP", "Démarrage des services MCP...")
+        utils.log_info("MCP", "Démarrage des services MCP...")
         try:
             if self.loop.is_running():
                 asyncio.create_task(self._connect_all())
             else:
                 self.loop.run_until_complete(self._connect_all())
         except Exception as e:
-            utils.log_perf("MCP", f"❌ Erreur critique au démarrage: {e}")
+            utils.log_info("MCP", f"❌ Erreur critique au démarrage: {e}")
 
     async def _connect_all(self):
         for name, conf in self.servers_conf.items():
@@ -50,9 +50,9 @@ class McpManager:
                             "parameters": tool.inputSchema
                         }
                     })
-                utils.log_perf("MCP", f"✅ Serveur [{name}] prêt : {len(tools_resp.tools)} outils enregistrés.")
+                utils.log_info("MCP", f"✅ Serveur [{name}] prêt : {len(tools_resp.tools)} outils enregistrés.")
             except Exception as e:
-                utils.log_perf("MCP", f"❌ Échec de connexion au serveur [{name}]: {e}")
+                utils.log_info("MCP", f"❌ Échec de connexion au serveur [{name}]: {e}")
 
     async def get_tools_for_openai(self):
         """Récupère les schémas d'outils pour LM Studio."""
@@ -63,11 +63,11 @@ class McpManager:
     async def call_tool(self, tool_name, arguments):
         """Version asynchrone (utilisée par LM Studio) avec logs détaillés."""
         if tool_name not in self.tool_registry:
-            utils.log_perf("MCP", f"⚠️ Outil inconnu appelé : {tool_name}")
+            utils.log_info("MCP", f"⚠️ Outil inconnu appelé : {tool_name}")
             return f"Erreur : L'outil {tool_name} n'existe pas."
         
         # LOG : Entrée
-        utils.log_perf("MCP", f"🚀 APPEL OUTIL : [{tool_name}] | Paramètres : {json.dumps(arguments)}")
+        utils.log_info("MCP", f"🚀 APPEL OUTIL : [{tool_name}] | Paramètres : {json.dumps(arguments)}")
         
         session = self.tool_registry[tool_name]
         try:
@@ -77,11 +77,11 @@ class McpManager:
             response_text = result.content[0].text if result.content else "Aucune réponse"
             
             # LOG : Sortie
-            utils.log_perf("MCP", f"📥 RETOUR OUTIL : [{tool_name}] | Réponse : {response_text[:150]}...")
+            utils.log_info("MCP", f"📥 RETOUR OUTIL : [{tool_name}] | Réponse : {response_text[:150]}...")
             
             return response_text
         except Exception as e:
-            utils.log_perf("MCP", f"❌ ERREUR OUTIL : [{tool_name}] | Message : {str(e)}")
+            utils.log_info("MCP", f"❌ ERREUR OUTIL : [{tool_name}] | Message : {str(e)}")
             return f"Erreur lors de l'exécution de {tool_name}: {str(e)}"
 
     def get_tools_schema(self):
@@ -93,13 +93,13 @@ class McpManager:
         if tool_name not in self.tool_registry:
             return "Outil introuvable."
         
-        utils.log_perf("MCP", f"🚀 (Sync) APPEL OUTIL : [{tool_name}]")
+        utils.log_info("MCP", f"🚀 (Sync) APPEL OUTIL : [{tool_name}]")
         session = self.tool_registry[tool_name]
         try:
             result = self.loop.run_until_complete(session.call_tool(tool_name, arguments))
             res_text = result.content[0].text
-            utils.log_perf("MCP", f"📥 (Sync) RETOUR OUTIL : [{tool_name}] | {res_text[:100]}...")
+            utils.log_info("MCP", f"📥 (Sync) RETOUR OUTIL : [{tool_name}] | {res_text[:100]}...")
             return res_text
         except Exception as e:
-            utils.log_perf("MCP", f"❌ (Sync) ERREUR : {e}")
+            utils.log_info("MCP", f"❌ (Sync) ERREUR : {e}")
             return str(e)

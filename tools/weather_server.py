@@ -1,11 +1,11 @@
 from mcp.server.fastmcp import FastMCP
+import sys
 
-# Nom du serveur (doit correspondre à la conf default.json si utilisé en clé, 
-# mais ici c'est surtout pour les logs internes)
+# On garde le nom du serveur cohérent avec default.json
 mcp = FastMCP("meteo_local")
 
 def fetch_weather_logic(city: str):
-    """Logique isolée."""
+    """Logique isolée pour éviter les conflits d'annotations."""
     city_clean = city.lower().strip()
     data = {
         "paris": "Pluvieux, 12°C",
@@ -14,19 +14,21 @@ def fetch_weather_logic(city: str):
         "bordeaux": "Nuageux, 15°C",
         "toulouse": "Vent d'autan, 19°C"
     }
-    # Retourne une phrase complète pour qu'Héléna (TTS) la lise naturellement
-    return data.get(city_clean, f"Je n'ai pas d'information météo pour {city}.")
+    return data.get(city_clean, f"Je n'ai pas d'information météo précise pour {city}.")
 
-@mcp.tool()
+@mcp.tool(name="get_weather")
 def get_weather(city: str):
     """
-    Donne la météo pour une ville.
+    Donne la météo pour une ville française.
     
     Args:
-        city: Le nom de la ville (ex: Paris, Lyon).
+        city: Le nom de la ville (ex: Paris, Lyon, Toulouse).
     """
-    # Pas de "-> str" ici pour éviter le crash Pydantic v2
+    # Debug vers stderr (ne casse pas le flux JSON-RPC)
+    # sys.stderr.write(f"--- APPEL MCP RECU : {city} ---\n")
+    
     return fetch_weather_logic(city)
 
 if __name__ == "__main__":
-    mcp.run()
+    # Force le mode stdio pour la communication avec Aria
+    mcp.run(transport="stdio")

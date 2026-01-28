@@ -2,11 +2,11 @@ import re
 from datetime import datetime
 
 # --- UTILITAIRE DE LOG ---
-def log_perf(step, message=""):
+def log_info(step, message=""):
     """Affiche un log de performance avec timestamp précis."""
     now = datetime.now()
     timestamp = now.strftime("%H:%M:%S") + f".{now.microsecond // 1000:03d}"
-    print(f"[{timestamp}] [PERF] {step.upper():<10} | {message}")
+    print(f"[{timestamp}] [INFO] | {message} [{step.upper()}]")
 
 # --- CONVERSION CHIFFRES ROMAINS ---
 def roman_to_arabic(text):

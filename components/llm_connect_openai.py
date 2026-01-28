@@ -1,29 +1,36 @@
-# components/llm_connect_llmstudio.py
 import asyncio
 import json
 import components.utils as utils
 from .utils import clean_text_for_tts, remove_nonverbal_cues
-from .mcp_manager import McpManager
+from .mcp import Mcp
 
-class LlmConnectLlmStudio:
+class LlmConnectOpenai:
     def __init__(self, params, all_config=None):
+        self.params = params or {}
+        self.backend_type=self.params.get("backend_type", "local")
+        self.base_url = self.params.get("base_url", "http://localhost:1234/v1")
+        self.model_name = self.params.get("model_name", "local-model")
+        self.apikey = self.params.get("apikey", f"{self.backend_type}")
+        self.system_message = self.params.get("system_message", "")
+        self.verbose = self.params.get("verbose", False)
+
+        utils.log_info(f"LLM-{self.backend_type}", f"Initialisation du mode {self.backend_type} 🌐")
+        utils.log_info(f"LLM-{self.backend_type}", f"Utilisation du modele {self.model_name} via l'url {self.base_url}")
         try:
             from openai import AsyncOpenAI
         except ImportError:
-            utils.log_perf("LLM-STUDIO", "❌ Erreur: openai manquant. pip install openai")
+            utils.log_info(f"LLM-{self.backend_type}", "❌ Erreur: openai manquant. pip install openai")
             raise
-
-        self.params = params or {}
-        self.base_url = self.params.get("base_url", "http://localhost:1234/v1")
-        self.model_name = self.params.get("model_name", "local-model")
-        self.system_message = self.params.get("system_message", "")
         
-        self.client = AsyncOpenAI(base_url=self.base_url, api_key="lm-studio")
+        # Préparation de l'acces au modele
+        self.client = AsyncOpenAI(base_url=self.base_url, api_key=f"{self.apikey}")
         self.user_aware_messages = {}
 
+        # Préparation des outils
         self.mcp_manager = None
         if all_config and "Mcp" in all_config:
-            self.mcp_manager = McpManager(all_config["Mcp"]["params"])
+            self.mcp_manager = Mcp(all_config["Mcp"]["params"])
+        
 
     async def get_answer_web(self, tts, query, user):
         if user not in self.user_aware_messages:
@@ -31,10 +38,11 @@ class LlmConnectLlmStudio:
 
         self.user_aware_messages[user].append({"role": "user", "content": query})
 
-        # 1. Préparation des outils
-        tools = await self.mcp_manager.get_tools_for_openai() if self.mcp_manager else None
-
         try:
+
+            # 1. Préparation des outils
+            tools = await self.mcp_manager.get_tools_for_openai() if self.mcp_manager else None
+
             # 2. Premier passage : Détection d'outil
             response = await self.client.chat.completions.create(
                 model=self.model_name,
@@ -52,7 +60,7 @@ class LlmConnectLlmStudio:
                     name = tool_call.function.name
                     args = json.loads(tool_call.function.arguments)
                     
-                    utils.log_perf("LLM-STUDIO", f"🛠️ Action MCP : {name}({args})")
+                    utils.log_info(f"LLM-{self.backend_type}", f"🛠️ Action MCP : {name}({args})")
                     result = await self.mcp_manager.call_tool(name, args)
                     
                     self.user_aware_messages[user].append({
@@ -81,20 +89,21 @@ class LlmConnectLlmStudio:
                         txt = clean_text_for_tts(remove_nonverbal_cues(tts_buf)).strip()
                         if len(txt) > 2:
                             audio = tts.run_tts_to_file(txt, user_id=user)
-                            yield full_res, audio
+
+                            yield full_res, audio,txt
                             tts_buf = ""
                         else:
-                            yield full_res, None
+                            yield full_res, None, None
                     else:
-                        yield full_res, None
+                        yield full_res, None, None
 
             # Reste du buffer final
             txt_fin = clean_text_for_tts(remove_nonverbal_cues(tts_buf)).strip()
             if len(txt_fin) > 1:
-                yield full_res, tts.run_tts_to_file(txt_fin, user_id=user)
+                yield full_res, tts.run_tts_to_file(txt_fin, user_id=user), txt_fin
 
             self.user_aware_messages[user].append({"role": "assistant", "content": full_res})
 
         except Exception as e:
-            utils.log_perf("LLM-STUDIO", f"❌ Erreur : {e}")
+            utils.log_info(f"LLM-{self.backend_type}", f"❌ Erreur : {e}")
             yield "Oups, j'ai eu un souci avec mes outils.", None

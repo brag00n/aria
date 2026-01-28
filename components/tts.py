@@ -17,22 +17,22 @@ class Tts:
         # --- MOTEUR SHERPA-ONNX (HÉLÉNA PRO) ---
         if self.tts_type == "sherpa":
             try:
-                utils.log_perf("TTS", "Initialisation Sherpa-ONNX (Héléna)...")
+                utils.log_info("TTS", "Initialisation Sherpa-ONNX (Héléna)...")
                 from components.tts_sherpa_onnx import TtsSherpaOnnx
                 self.engine = TtsSherpaOnnx(device=self.device)
             except Exception as e:
-                utils.log_perf("TTS", f"Échec Sherpa-ONNX : {e}. Repli sur Kokoro...")
+                utils.log_info("TTS", f"Échec Sherpa-ONNX : {e}. Repli sur Kokoro...")
                 self.tts_type = "kokoro"
 
         # --- MOTEUR KOKORO (BACKUP STABLE) ---
         if self.tts_type == "kokoro":
             try:
-                utils.log_perf("TTS", "Chargement Kokoro-TTS...")
+                utils.log_info("TTS", "Chargement Kokoro-TTS...")
                 from kokoro import KPipeline
                 self.pipeline = KPipeline(lang_code='f', device=self.device, repo_id='hexgrad/Kokoro-82M')
                 self.voice = self.params.get("kokoro_voice", "ff_siwis")
             except Exception as e:
-                utils.log_perf("TTS", f"Erreur fatale TTS Kokoro : {e}")
+                utils.log_info("TTS", f"Erreur fatale TTS Kokoro : {e}")
 
     def run_tts_to_file(self, text, user_id="default"):
         """Génère un fichier audio unique via le moteur sélectionné."""
@@ -59,6 +59,6 @@ class Tts:
                     return file_path
                     
         except Exception as e:
-            utils.log_perf("TTS", f"Erreur run_tts_to_file ({self.tts_type}) : {e}")
+            utils.log_info("TTS", f"Erreur run_tts_to_file ({self.tts_type}) : {e}")
         
         return None
