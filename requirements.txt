@@ -1,33 +1,42 @@
-# --- Core & UI ---
+# --- INDEX POUR BINAIRES CUDA ---
+--index-url https://download.pytorch.org/whl/cu124
+
+# --- CORE & UI ---
 gradio==6.3.0
+gradio_client==2.0.3
 pydub
 soundfile
 python-dotenv
 psutil
 
-# --- STT (Whisper Turbo) & TTS (Parler) ---
-# Alignement sur CUDA 12.4
-torch --index-url https://download.pytorch.org/whl/cu124
-torchaudio --index-url https://download.pytorch.org/whl/cu124
+# --- ACCÉLÉRATEURS GPU ---
+torch==2.6.0
+xformers
+bitsandbytes
+accelerate==1.12.0
+ninja
+
+# --- STT & TTS ---
 transformers==4.46.1
-accelerate>=1.1.0
 sentencepiece
-protobuf==4.25.8
-# Installation via Git pour avoir les dernières optimisations multilingues
-git+https://github.com/huggingface/parler-tts.git
+protobuf
+sherpa-onnx==1.12.23
+#parler-tts @ git+https://github.com/huggingface/parler-tts.git
 
 # --- LLM & MCP ---
 mcp==1.25.0
-uv==0.9.26
+pydantic>=2.11.0
+pydantic_core>=2.27.0
 httpx
-# Pour connect LLM Studio
-openai==2.15.0
-# Pour connect local (Llama.cpp)
+openai>=1.50.0
 llama-cpp-python==0.3.16
-huggingface_hub==0.36.0
+huggingface_hub>=0.28.1
 
-# --- Audio Utils & Fallbacks ---
+# --- AUDIO UTILS (Versions forcées pour Python 3.12) ---
+librosa>=0.10.1
+numba>=0.59.0
+llvmlite>=0.42.0
 descript-audiotools==0.7.4
 kokoro==0.9.4
 onnxruntime-gpu==1.20.1
-librosa
+uv==0.9.26

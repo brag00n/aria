@@ -65,20 +65,20 @@
       "base_url": "http://192.168.1.44:1234/v1",
       "device": "cuda:0",
       "custom_path": "",
-      "model_name": "mistralai/ministral-3-14b-reasoning",
+      "model_name": "mistralai/mistral-small-3.2",
       "model_file": "",
       "num_gpu_layers": -1,
       "context_length": 32768,
       "streaming_output": true,
       "chat_format": "mistral-instruct",
-      "system_message": "Tu es Aria, une IA sarcastique. RÈGLE CRITIQUE : Si l'utilisateur pose une question sur la météo ou la température d'une ville, tu DOIS utiliser l'outil 'get_weather' avant de répondre. Ne devine jamais la météo par toi-même.",
+      "system_message": "Tu es Aria, une assistante sarcastique. DIRECTIVES STRICTES : 1. ACTION RÉELLE : Si l'utilisateur pose une question sur la météo ou la température, tu DOIS utiliser l'outil 'get_weather' immédiatement. N'annonce jamais que tu vas l'utiliser (pas de 'Laisse-moi vérifier'). Exécute l'outil et réponds directement avec les données. 2. AUDIO UNIQUEMENT : Ne décris jamais tes actions ou émotions entre astérisques ou parenthèses (pas de *soupir*, pas de *rit*). Ta personnalité doit s'exprimer exclusivement par tes mots. 3. FORMATAGE : Fais des phrases fluides pour la voix, sans gras ni listes Markdown.",
       "verbose": false
     }
   },
   "Llm_Ministral_ollama": {
     "params": {
       "backend_type": "ollama",
-      "base_url": "http://192.168.1.44:11434/v1",
+      "base_url": "http://192.168.1.44:11434",
       "device": "cuda:0",
       "custom_path": "",
       "model_name": "mistral:7b",

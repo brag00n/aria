@@ -29,28 +29,27 @@ def roman_to_arabic(text):
 
 # --- SIGNATURES REQUISES PAR LLM.PY ---
 def remove_nonverbal_cues(text):
-    """Supprime les indications de type *rit*."""
+    """Transforme les indications de type *rit* en "rit"."""
     if not text: return ""
-    # Supprime uniquement les astérisques simples (pas le gras **)
-    return re.sub(r'(?<!\*)\*[^*]+\*(?!\*)', '', text).strip()
+    # Remplace le texte entre astérisques simples par le même texte entre guillemets
+    # On utilise une expression régulière qui capture le contenu
+    return re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'"\1"', text).strip()
 
 def clean_text_for_tts(text):
-    """Nettoyage complet pour la voix."""
+    """Nettoyage complet pour la voix avec préservation du ton."""
     if not text: return ""
     
-    # 1. SUPPRESSION TOTALE DU CODE (Indispensable pour l'audio)
-    # Le flag DOTALL permet à '.' de matcher les retours à la ligne
+    # 1. SUPPRESSION TOTALE DU CODE
     text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
     text = re.sub(r'`.*?`', '', text)
     
-    # 2. NETTOYAGE DES ACTIONS (ex: *rit*)
+    # 2. TRANSFORMATION DES ACTIONS (*action* -> "action")
+    # On le fait AVANT de nettoyer le reste des astérisques
     text = remove_nonverbal_cues(text)
     
-    # 3. TRAITEMENT DU GRAS (On garde le texte, on enlève les **)
-    # On capture le contenu entre les astérisques pour le préserver
+    # 3. TRAITEMENT DU GRAS (On enlève juste les symboles)
     text = re.sub(r'\*\*\*(.*?)\*\*\*', r'\1', text)
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.*?)\*', r'\1', text)
     
     # 4. Autres nettoyages
     text = re.sub(r'#+\s+', '', text)
@@ -58,8 +57,8 @@ def clean_text_for_tts(text):
     text = roman_to_arabic(text)
     text = remove_emojis(text)
     
-    # 5. Nettoyage final des caractères Markdown résiduels
-    text = text.replace('*', '').replace('_', '').replace('`', '')
+    # 5. Nettoyage final (On ne touche pas aux guillemets qu'on vient d'ajouter)
+    text = text.replace('_', '').replace('`', '')
     return re.sub(r'\s+', ' ', text).strip()
 
 def remove_emojis(text):

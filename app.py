@@ -1,6 +1,44 @@
+from datetime import datetime
 import os
+import sys
+import pathlib
+
+def checkpoint(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}")
+    
+checkpoint("1. Avant OS ENV")
+
+# --- VARIABLES D'ENVIRONNEMENT (CRITIQUE) ---
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['HF_HUB_OFFLINE'] = '1'
+os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
+os.environ['GRADIO_SERVER_NAME'] = '0.0.0.0'
+
+# --- ACTIVATION DU CACHE CUDA (SPECIFIQUE LINUX/DOCKER) ---
+if os.name != 'nt':  # On ne le fait PAS si c'est Windows ('nt')
+    cuda_cache_dir = "/aria/.cuda_cache"
+    try:
+        pathlib.Path(cuda_cache_dir).mkdir(parents=True, exist_ok=True)
+        os.environ['CUDA_CACHE_PATH'] = cuda_cache_dir
+        os.environ['CUDA_CACHE_MAXSIZE'] = '2147483648' 
+        checkpoint("1.5. Cache CUDA configuré (Linux Only)")
+    except Exception as e:
+        print(f"Erreur cache CUDA: {e}")
+else:
+    checkpoint("1.5. Utilisation du cache CUDA natif Windows")
+
+checkpoint("2. Avant Imports torch")
+import torch
+checkpoint("3. Torch chargé")
+import transformers
+checkpoint("4. Transformers chargé")
+import gradio as gr
+checkpoint("5. Gradio chargé")
+
 import warnings
 import logging
+
+#from prototypes.test_llm_mcp.test_llm_mcp import CONFIG_FILE
 
 # --- SILENCE AUX WARNINGS (AVANT TOUT IMPORT) ---
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -9,33 +47,40 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*symlinks.*")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
-import gradio as gr
+#import gradio as gr
+checkpoint("6. Avant imports numpy")
 import numpy as np
+checkpoint("6. numpy chargé")
 import base64, io, json, shutil, time, re
-from datetime import datetime
+checkpoint("6. base64, io, json, shutil, time, re chargé")
 from pydub import AudioSegment
+checkpoint("6. AudioSegment chargé")
 from components.stt import Stt
 from components.llm import Llm
 from components.tts import Tts
+checkpoint("6. Stt, Llm, Tts chargés")
+
 import components.utils as utils
+checkpoint("6. utils chargés")
 
 # --- CONFIGURATION ---
 DEBUG_SAVE_WAV = False
-TMP_DIR = "/aria/tmp/tts"
+_TMP_DIR = "/aria/tmp/tts"
+_CONFIG_FILE = "configs/default.json"
 
-if os.path.exists(TMP_DIR):
-    shutil.rmtree(TMP_DIR)
-os.makedirs(TMP_DIR, mode=0o777, exist_ok=True)
+if os.path.exists(_TMP_DIR):
+    shutil.rmtree(_TMP_DIR)
+os.makedirs(_TMP_DIR, mode=0o777, exist_ok=True)
 
 # --- INIT COMPOSANTS ---
 utils.log_info("app", "--- DEBUT Chargement de la configuration et des modeles...")
-with open("configs/default.json", "r") as f:
+with open(_CONFIG_FILE, "r") as f:
     config = json.load(f)
 
 # On force l'usage de Ministral
 stt = Stt(config["Stt_Whisper"]["params"])
-llm = Llm(config["Llm_Ministral_ollama"]["params"], all_config=config)
-tts = Tts(config["Tts_Kokoro"]["params"])
+llm = Llm(config["Llm_Ministral_lmstudio"]["params"], all_config=config)
+tts = Tts(config["Tts_Sherpa"]["params"])
 utils.log_info("app", "--- FIN Chargement de la configuration et des modeles.")
 
 # --- JAVASCRIPT ---
@@ -192,7 +237,7 @@ async def process_streaming_binaire(b64_audio, history):
                 
                 # Debug : Sauvegarde si activé
                 if DEBUG_SAVE_WAV:
-                    save_path = os.path.join(TMP_DIR, f"{unique_id}.wav")
+                    save_path = os.path.join(_TMP_DIR, f"{unique_id}.wav")
                     shutil.copy(audio_chunk_path, save_path)
                     utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) -> {unique_id}.wav, text: '{textCleanedForAudio}'")
                 else:

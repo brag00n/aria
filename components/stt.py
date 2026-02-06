@@ -34,7 +34,9 @@ class Stt:
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=self.low_cpu_mem_usage,
             use_safetensors=True,
-            attn_implementation=self.attn,
+            #attn_implementation=self.attn,
+            # Force l'utilisation de SDPA (natif dans PyTorch) au lieu de FlashAttention 2
+            attn_implementation="sdpa",
             device_map=self.device,
         )
 

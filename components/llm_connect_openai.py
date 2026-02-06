@@ -23,7 +23,7 @@ class LlmConnectOpenai:
             raise
         
         # Préparation de l'acces au modele
-        self.client = AsyncOpenAI(base_url=self.base_url, api_key=f"{self.apikey}")
+        self.client = AsyncOpenAI(base_url=self.base_url, api_key=f"{self.apikey}",timeout=60.0)
         self.user_aware_messages = {}
 
         # Préparation des outils
@@ -105,5 +105,6 @@ class LlmConnectOpenai:
             self.user_aware_messages[user].append({"role": "assistant", "content": full_res})
 
         except Exception as e:
-            utils.log_info(f"LLM-{self.backend_type}", f"❌ Erreur : {e}")
-            yield "Oups, j'ai eu un souci avec mes outils.", None
+            utils.log_info(f"LLM-{self.backend_type}", f"❌ Erreur : {str(e)}")
+            # On renvoie 3 valeurs au lieu de 2 pour correspondre à ce que app.py attend
+            yield f"Erreur LLM: {str(e)}", None, None
