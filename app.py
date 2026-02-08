@@ -10,7 +10,8 @@ checkpoint("1. Avant OS ENV")
 
 # --- VARIABLES D'ENVIRONNEMENT (CRITIQUE) ---
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
-os.environ['HF_HUB_OFFLINE'] = '1'
+os.environ['HF_HUB_OFFLINE'] = '0'
+os.environ["HF_HOME"] = "models/huggingface"
 os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
 os.environ['GRADIO_SERVER_NAME'] = '0.0.0.0'
 
