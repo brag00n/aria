@@ -1,59 +1,80 @@
-import warnings
-import torch
-import transformers
 import components.utils as utils
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
-
+from .stt_whisper import SttWhisper
+from .stt_fasterwhisper import SttFasterWhisper
 
 class Stt:
     def __init__(self, params=None):
         self.params = params or {}
-        self.device = self.params.get("device", None)
-        self.model_name = self.params.get("model_name", None)
-        self.low_cpu_mem_usage = self.params.get("low_cpu_mem_usage", None)
-        self.attn = self.params.get("attn", None)
-        self.verbose = self.params.get("verbose", None)
-        self.language = self.params.get("language", None)
+        # Choix du moteur : 'faster-whisper' par défaut pour la performance
+        self.engine_type = self.params.get("engine_type", "whisper")
 
-        if not self.verbose:
-            transformers.logging.set_verbosity_error()
-            warnings.filterwarnings("ignore", module="transformers")
+        if self.engine_type == "faster-whisper":
+            utils.log_info("STT", "Initialisation du moteur Faster-Whisper 🚀")
+            self.engine = SttFasterWhisper(self.params)
+        else:
+            utils.log_info("STT", "Initialisation du moteur Whisper (Hugging Face) 🤗")
+            self.engine = SttWhisper(self.params)
 
-        if self.device == "cpu":
-            self.attn = "sdpa"
+    def transcribe_translate(self, audio_path):
+        """Transcrit un fichier audio en texte via le moteur sélectionné."""
+        return self.engine.transcribe_translate(audio_path)
 
-        torch_dtype = (
-            torch.float16
-            if torch.cuda.is_available() and "cuda" in self.device
-            else torch.float32
-        )
+# import warnings
+# import torch
+# import transformers
+# import components.utils as utils
+# from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
-        utils.log_info("Stt", f"Chargement Modele STT {self.model_name} sur {self.device}...")
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            self.model_name,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=self.low_cpu_mem_usage,
-            use_safetensors=True,
-            #attn_implementation=self.attn,
-            # Force l'utilisation de SDPA (natif dans PyTorch) au lieu de FlashAttention 2
-            attn_implementation="sdpa",
-            device_map=self.device,
-        )
 
-        processor = AutoProcessor.from_pretrained(self.model_name)
-        self.pipe = pipeline(
-            "automatic-speech-recognition",
-            model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            max_new_tokens=128,
-            chunk_length_s=30,
-            batch_size=16,
-            return_timestamps=True,
-            torch_dtype=torch_dtype,
-        )
+# class Stt:
+#     def __init__(self, params=None):
+#         self.params = params or {}
+#         self.device = self.params.get("device", None)
+#         self.model_name = self.params.get("model_name", None)
+#         self.low_cpu_mem_usage = self.params.get("low_cpu_mem_usage", None)
+#         self.attn = self.params.get("attn", None)
+#         self.verbose = self.params.get("verbose", None)
+#         self.language = self.params.get("language", None)
 
-    def transcribe_translate(self, data):
-        data = self.pipe(data, generate_kwargs={"language": self.language})
-        data = data["text"][1:]
-        return data
+#         if not self.verbose:
+#             transformers.logging.set_verbosity_error()
+#             warnings.filterwarnings("ignore", module="transformers")
+
+#         if self.device == "cpu":
+#             self.attn = "sdpa"
+
+#         torch_dtype = (
+#             torch.float16
+#             if torch.cuda.is_available() and "cuda" in self.device
+#             else torch.float32
+#         )
+
+#         utils.log_info("Stt", f"Chargement Modele STT {self.model_name} sur {self.device}...")
+#         model = AutoModelForSpeechSeq2Seq.from_pretrained(
+#             self.model_name,
+#             torch_dtype=torch_dtype,
+#             low_cpu_mem_usage=self.low_cpu_mem_usage,
+#             use_safetensors=True,
+#             #attn_implementation=self.attn,
+#             # Force l'utilisation de SDPA (natif dans PyTorch) au lieu de FlashAttention 2
+#             attn_implementation="sdpa",
+#             device_map=self.device,
+#         )
+
+#         processor = AutoProcessor.from_pretrained(self.model_name)
+#         self.pipe = pipeline(
+#             "automatic-speech-recognition",
+#             model=model,
+#             tokenizer=processor.tokenizer,
+#             feature_extractor=processor.feature_extractor,
+#             max_new_tokens=128,
+#             chunk_length_s=30,
+#             batch_size=16,
+#             return_timestamps=True,
+#             torch_dtype=torch_dtype,
+#         )
+
+#     def transcribe_translate(self, data):
+#         data = self.pipe(data, generate_kwargs={"language": self.language})
+#         data = data["text"][1:]
+#         return data

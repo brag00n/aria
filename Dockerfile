@@ -70,6 +70,8 @@ ENV CUDA_VISIBLE_DEVICES=0
 # Chemins mis à jour pour le venv interne
 ENV LD_LIBRARY_PATH="/venv_internal/lib/python3.12/site-packages/nvidia/cudnn/lib:/venv_internal/lib/python3.12/site-packages/nvidia/cublas/lib:${LD_LIBRARY_PATH}"
 
+ENV UV_PROJECT_ENVIRONMENT=/venv_internal
+
 # Raccourci bashrc
 RUN echo 'source /venv_internal/bin/activate' >> ~/.bashrc
 

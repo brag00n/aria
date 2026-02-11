@@ -22,6 +22,7 @@ transformers==4.46.1
 sentencepiece
 protobuf
 sherpa-onnx==1.12.23
+faster-whisper==1.2.1
 #parler-tts @ git+https://github.com/huggingface/parler-tts.git
 
 # --- LLM & MCP ---

@@ -19,12 +19,29 @@
       "verbose": false
     }
   },
+  "Vad_Web": {
+    "params": {
+      "engine_type": "web",
+      "threshold": 0.015,
+      "min_silence_ms": 600
+    }
+  },
   "Stt_Whisper": {
     "params": {
       "device": "cuda:0",
       "model_name": "openai/whisper-large-v3-turbo",
       "low_cpu_mem_usage": true,
       "attn": "flash_attention_2",
+      "verbose": false,
+      "language": "fr"
+    }
+  },
+  "Stt_FasterWhisper": {
+    "params": {
+      "engine_type": "faster-whisper",
+      "device": "cuda",
+      "model_name": "deepdml/whisper-large-v3-turbo-ct2",
+      "low_cpu_mem_usage": true,
       "verbose": false,
       "language": "fr"
     }
