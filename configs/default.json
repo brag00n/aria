@@ -1,114 +1,172 @@
 {
-  "Mic": {
-    "params": {
-      "audio_device": "default",
-      "samplerate": 16000,
-      "buffer_size": 640,
-      "channels": 1
+  "active_modules": {
+    "vad": "Vad_Web",
+    "stt": "Stt_FasterWhisper",
+    "llm": "Llm_Ministral_lmstudio",
+    "tts": "Tts_Kokoro"
+  },
+  "vad": {
+    "Vad": {
+      "params": {
+        "samplerate": 16000,
+        "repo_or_dir": "snakers4/silero-vad",
+        "model_name": "silero_vad",
+        "force_reload": false,
+        "use_onnx": true,
+        "no_voice_wait_sec": 1,
+        "onnx_verbose": false,
+        "verbose": false
+      }
+    },
+    "Vad_Web": {
+      "params": {
+        "engine_type": "web",
+        "threshold": 0.015,
+        "min_silence_ms": 500
+      }
     }
   },
-  "Vad": {
-    "params": {
-      "samplerate": 16000,
-      "repo_or_dir": "snakers4/silero-vad",
-      "model_name": "silero_vad",
-      "force_reload": false,
-      "use_onnx": true,
-      "no_voice_wait_sec": 1,
-      "onnx_verbose": false,
-      "verbose": false
+  "stt": {
+    "Stt_Whisper": {
+      "params": {
+        "device": "cuda:0",
+        "model_name": "openai/whisper-large-v3-turbo",
+        "low_cpu_mem_usage": true,
+        "attn": "flash_attention_2",
+        "verbose": false,
+        "language": "fr"
+      }
+    },
+    "Stt_FasterWhisper": {
+      "params": {
+        "engine_type": "faster-whisper",
+        "device": "cuda",
+        "model_name": "deepdml/whisper-large-v3-turbo-ct2",
+        "low_cpu_mem_usage": true,
+        "verbose": false,
+        "language": "fr"
+      }
     }
   },
-  "Vad_Web": {
-    "params": {
-      "engine_type": "web",
-      "threshold": 0.015,
-      "min_silence_ms": 600
+  "llm": {
+    "Llm_Llama_local": {
+      "params": {
+        "backend_type": "local",
+        "device": "gpu",
+        "custom_path": "",
+        "model_name": "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF",
+        "model_file": "meta-llama-3.1-8b-instruct-abliterated.Q8_0.gguf",
+        "num_gpu_layers": -1,
+        "context_length": 8192,
+        "streaming_output": true,
+        "chat_format": "llama-3",
+        "system_message": "Tu es Aria, une IA sarcastique. R\u00c8GLE CRITIQUE : Si l'utilisateur pose une question sur la m\u00e9t\u00e9o ou la temp\u00e9rature d'une ville, tu DOIS utiliser l'outil 'get_weather' avant de r\u00e9pondre. Ne devine jamais la m\u00e9t\u00e9o par toi-m\u00eame.",
+        "verbose": false
+      }
+    },
+    "Llm_Ministral_local": {
+      "params": {
+        "backend_type": "local",
+        "device": "cuda:0",
+        "custom_path": "",
+        "model_name": "Ministral-8B-Instruct-2410-Q4_K_S",
+        "model_file": "huihui-ministral-3-3b-reasoning-2512-abliterated-q4_k_m.gguf",
+        "num_gpu_layers": -1,
+        "context_length": 32768,
+        "streaming_output": true,
+        "chat_format": "mistral-instruct",
+        "system_message": "Tu es Aria, une IA sarcastique. R\u00c8GLE CRITIQUE : Si l'utilisateur pose une question sur la m\u00e9t\u00e9o ou la temp\u00e9rature d'une ville, tu DOIS utiliser l'outil 'get_weather' avant de r\u00e9pondre. Ne devine jamais la m\u00e9t\u00e9o par toi-m\u00eame.",
+        "verbose": false
+      }
+    },
+    "Llm_Ministral_lmstudio": {
+      "params": {
+        "backend_type": "llm_studio",
+        "base_url": "http://192.168.1.44:1234/v1",
+        "device": "cuda:0",
+        "custom_path": "",
+        "model_name": "mistralai/mistral-small-3.2",
+        "model_file": "",
+        "num_gpu_layers": -1,
+        "context_length": 32768,
+        "streaming_output": true,
+        "chat_format": "mistral-instruct",
+        "system_message": "Tu es Aria, une assistante sarcastique. DIRECTIVES STRICTES : 1. ACTION R\u00c9ELLE : Si l'utilisateur pose une question sur la m\u00e9t\u00e9o ou la temp\u00e9rature, tu DOIS utiliser l'outil 'get_weather' imm\u00e9diatement. N'annonce jamais que tu vas l'utiliser (pas de 'Laisse-moi v\u00e9rifier'). Ex\u00e9cute l'outil et r\u00e9ponds directement avec les donn\u00e9es. 2. AUDIO UNIQUEMENT : Ne d\u00e9cris jamais tes actions ou \u00e9motions entre ast\u00e9risques ou parenth\u00e8ses (pas de *soupir*, pas de *rit*). Ta personnalit\u00e9 doit s'exprimer exclusivement par tes mots. 3. FORMATAGE : Fais des phrases fluides pour la voix, sans gras ni listes Markdown.",
+        "verbose": false
+      }
+    },
+    "Llm_Ministral_ollama": {
+      "params": {
+        "backend_type": "ollama",
+        "base_url": "http://192.168.1.44:11434",
+        "device": "cuda:0",
+        "custom_path": "",
+        "model_name": "mistral:7b",
+        "model_file": "",
+        "num_gpu_layers": -1,
+        "context_length": 32768,
+        "streaming_output": true,
+        "chat_format": "mistral-instruct",
+        "system_message": "Tu es Aria. R\u00e9ponds directement \u00e0 l'utilisateur de mani\u00e8re concise. Ne montre jamais les appels de fonctions techniques ou de JSON dans ta r\u00e9ponse finale. Tu dois utiliser des outils si ils sont pertinant dans la r\u00e9ponse. R\u00e9ponds uniquement avec du texte naturel.",
+        "verbose": false
+      }
     }
   },
-  "Stt_Whisper": {
-    "params": {
-      "device": "cuda:0",
-      "model_name": "openai/whisper-large-v3-turbo",
-      "low_cpu_mem_usage": true,
-      "attn": "flash_attention_2",
-      "verbose": false,
-      "language": "fr"
+  "tts": {
+    "Tts_Kokoro": {
+      "params": {
+        "device": "cpu",
+        "tts_type": "kokoro",
+        "use_deepspeed": false,
+        "text_splitting": false,
+        "model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
+        "force_reload": false,
+        "verbose": false,
+        "kokoro_voice": "ff_siwis",
+        "kokoro_voice_speed": 1.2,
+        "kokoro_lang_code": "f",
+        "static": {
+          "voice_to_clone": "static/sofia_hellen.wav"
+        }
+      }
+    },
+    "Tts_Sherpa": {
+      "params": {
+        "device": "cpu",
+        "tts_type": "sherpa",
+        "model_dir": "/aria/models/vits-piper-fr_FR-upmc-medium",
+        "speed": 0.8,
+        "noise_scale": 0.667,
+        "noise_scale_w": 0.8,
+        "static": {
+          "voice_to_clone": "static/Hellena_science.wav"
+        }
+      }
     }
   },
-  "Stt_FasterWhisper": {
-    "params": {
-      "engine_type": "faster-whisper",
-      "device": "cuda",
-      "model_name": "deepdml/whisper-large-v3-turbo-ct2",
-      "low_cpu_mem_usage": true,
-      "verbose": false,
-      "language": "fr"
+  "audio_processing": {
+    "Mic": {
+      "params": {
+        "audio_device": "default",
+        "samplerate": 16000,
+        "buffer_size": 640,
+        "channels": 1
+      }
+    },
+    "Ap": {
+      "params": {
+        "audio_device": "default",
+        "samplerate": 24000,
+        "buffer_size": 960,
+        "channels": 1,
+        "static": {
+          "listening_sound": "static/listening.wav",
+          "transition_sound": "static/transition.wav"
+        }
+      }
     }
   },
-  "Llm_Llama_local": {
-    "params": {
-      "backend_type": "local",
-      "device": "gpu",
-      "custom_path": "",
-      "model_name": "mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF",
-      "model_file": "meta-llama-3.1-8b-instruct-abliterated.Q8_0.gguf",
-      "num_gpu_layers": -1,
-      "context_length": 8192,
-      "streaming_output": true,
-      "chat_format": "llama-3",
-      "system_message": "Tu es Aria, une IA sarcastique. RÈGLE CRITIQUE : Si l'utilisateur pose une question sur la météo ou la température d'une ville, tu DOIS utiliser l'outil 'get_weather' avant de répondre. Ne devine jamais la météo par toi-même.",
-      "verbose": false
-    }
-  },
-  "Llm_Ministral_local": {
-    "params": {
-      "backend_type": "local",
-      "device": "cuda:0",
-      "custom_path": "",
-      "model_name": "Ministral-8B-Instruct-2410-Q4_K_S",
-      "model_file": "huihui-ministral-3-3b-reasoning-2512-abliterated-q4_k_m.gguf",
-      "num_gpu_layers": -1,
-      "context_length": 32768,
-      "streaming_output": true,
-      "chat_format": "mistral-instruct",
-      "system_message": "Tu es Aria, une IA sarcastique. RÈGLE CRITIQUE : Si l'utilisateur pose une question sur la météo ou la température d'une ville, tu DOIS utiliser l'outil 'get_weather' avant de répondre. Ne devine jamais la météo par toi-même.",
-      "verbose": false
-    }
-  },
-  "Llm_Ministral_lmstudio": {
-    "params": {
-      "backend_type": "llm_studio",
-      "base_url": "http://192.168.1.44:1234/v1",
-      "device": "cuda:0",
-      "custom_path": "",
-      "model_name": "mistralai/mistral-small-3.2",
-      "model_file": "",
-      "num_gpu_layers": -1,
-      "context_length": 32768,
-      "streaming_output": true,
-      "chat_format": "mistral-instruct",
-      "system_message": "Tu es Aria, une assistante sarcastique. DIRECTIVES STRICTES : 1. ACTION RÉELLE : Si l'utilisateur pose une question sur la météo ou la température, tu DOIS utiliser l'outil 'get_weather' immédiatement. N'annonce jamais que tu vas l'utiliser (pas de 'Laisse-moi vérifier'). Exécute l'outil et réponds directement avec les données. 2. AUDIO UNIQUEMENT : Ne décris jamais tes actions ou émotions entre astérisques ou parenthèses (pas de *soupir*, pas de *rit*). Ta personnalité doit s'exprimer exclusivement par tes mots. 3. FORMATAGE : Fais des phrases fluides pour la voix, sans gras ni listes Markdown.",
-      "verbose": false
-    }
-  },
-  "Llm_Ministral_ollama": {
-    "params": {
-      "backend_type": "ollama",
-      "base_url": "http://192.168.1.44:11434",
-      "device": "cuda:0",
-      "custom_path": "",
-      "model_name": "mistral:7b",
-      "model_file": "",
-      "num_gpu_layers": -1,
-      "context_length": 32768,
-      "streaming_output": true,
-      "chat_format": "mistral-instruct",
-      "system_message": "Tu es Aria. Réponds directement à l'utilisateur de manière concise. Ne montre jamais les appels de fonctions techniques ou de JSON dans ta réponse finale. Tu dois utiliser des outils si ils sont pertinant dans la réponse. Réponds uniquement avec du texte naturel.",
-      "verbose": false
-    }
-  },
-  "Mcp": {
+  "mcp": {
     "params": {
       "servers": {
         "meteo_local": {
@@ -121,48 +179,6 @@
             "API_KEY": "12345"
           }
         }
-      }
-    }
-  },
-  "Tts_Kokoro": {
-    "params": {
-      "device": "cpu",
-      "tts_type": "kokoro",
-      "use_deepspeed": false,
-      "text_splitting": false,
-      "model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
-      "force_reload": false,
-      "verbose": false,
-      "kokoro_voice": "ff_siwis",
-      "kokoro_voice_speed": 1.2,
-      "kokoro_lang_code": "f",
-      "static": {
-        "voice_to_clone": "static/sofia_hellen.wav"
-      }
-    }
-  },
-  "Tts_Sherpa": {
-    "params": {
-      "device": "cpu",
-      "tts_type": "sherpa",
-      "model_dir": "/aria/models/vits-piper-fr_FR-upmc-medium",
-      "speed": 0.8,
-      "noise_scale": 0.667,
-      "noise_scale_w": 0.8,
-      "static": {
-        "voice_to_clone": "static/Hellena_science.wav"
-      }
-    }
-  },
-  "Ap": {
-    "params": {
-      "audio_device": "default",
-      "samplerate": 24000,
-      "buffer_size": 960,
-      "channels": 1,
-      "static": {
-        "listening_sound": "static/listening.wav",
-        "transition_sound": "static/transition.wav"
       }
     }
   }

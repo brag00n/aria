@@ -75,15 +75,72 @@ if os.path.exists(_TMP_DIR):
 os.makedirs(_TMP_DIR, mode=0o777, exist_ok=True)
 
 # --- INIT COMPOSANTS ---
-utils.log_info("app", "--- DEBUT Chargement de la configuration et des modeles...")
+utils.log_info("app", "--- DEBUT Chargement de la configuration...")
 with open(_CONFIG_FILE, "r") as f:
     config = json.load(f)
 
-vad = Vad(config["Vad_Web"]["params"])
-stt = Stt(config["Stt_FasterWhisper"]["params"])
-llm = Llm(config["Llm_Ministral_lmstudio"]["params"], all_config=config)
-tts = Tts(config["Tts_Sherpa"]["params"])
-utils.log_info("app", "--- FIN Chargement de la configuration et des modeles.")
+# Extraction des modules actifs depuis la nouvelle section "active_modules"
+active_vad = config["active_modules"]["vad"]
+active_stt = config["active_modules"]["stt"]
+active_llm = config["active_modules"]["llm"]
+active_tts = config["active_modules"]["tts"]
+
+# Instanciation dynamique basée sur le fichier de config
+vad = Vad(config["vad"][active_vad]["params"])
+stt = Stt(config["stt"][active_stt]["params"])
+llm = Llm(config["llm"][active_llm]["params"], all_config=config)
+tts = Tts(config["tts"][active_tts]["params"])
+utils.log_info("app", f"--- FIN Chargement (VAD:{active_vad}, STT:{active_stt}, LLM:{active_llm}, TTS:{active_tts})")
+
+
+def save_config(new_config_str):
+    """Sauvegarde la nouvelle configuration JSON et recharge les composants si nécessaire."""
+    try:
+        new_data = json.loads(new_config_str)
+        with open(_CONFIG_FILE, "w") as f:
+            json.dump(new_data, f, indent=2)
+        return "✅ Configuration sauvegardée avec succès ! (Redémarrez pour appliquer)"
+    except Exception as e:
+        return f"❌ Erreur lors de la sauvegarde : {str(e)}"
+
+# --- LOGIQUE DE L'ONGLET PARAMÈTRES ---
+
+def get_current_params(category, module_name):
+    """Récupère dynamiquement le JSON des paramètres d'un module choisi"""
+    try:
+        # On extrait les paramètres de la catégorie (ex: 'llm') et du module (ex: 'Llm_Llama_local')
+        params = config.get(category, {}).get(module_name, {}).get("params", {})
+        return json.dumps(params, indent=2)
+    except Exception as e:
+        return "{}"
+
+def update_config_ui(vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json):
+    """Sauvegarde globale de la configuration modulaire"""
+    try:
+        # 1. Mise à jour des pointeurs de modules actifs
+        config["active_modules"] = {
+            "vad": vad_choix,
+            "stt": stt_choix,
+            "llm": llm_choix,
+            "tts": tts_choix
+        }
+
+        # 2. Injection des paramètres modifiés par l'utilisateur
+        config["vad"][vad_choix]["params"] = json.loads(vad_json)
+        config["stt"][stt_choix]["params"] = json.loads(stt_json)
+        config["llm"][llm_choix]["params"] = json.loads(llm_json)
+        config["tts"][tts_choix]["params"] = json.loads(tts_json)
+
+        # 3. Écriture physique sur le disque
+        with open(_CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=2)
+            
+        return "✅ Configuration sauvegardée ! Redémarrez le système pour appliquer les changements."
+    except json.JSONDecodeError as e:
+        return f"❌ Erreur de syntaxe JSON dans l'un des blocs : {str(e)}"
+    except Exception as e:
+        return f"❌ Erreur sauvegarde : {str(e)}"
+
 
 JS_COMBO = f"""
 async () => {{
@@ -191,21 +248,136 @@ CSS = """
 """
 
 with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
+
     gr.Markdown("# 🎙️ Aria Voice System")
+
     gr.Image(type="filepath", value="static/transition.gif", height="100", elem_id="aria_logo")
-    
-    chatbot = gr.Chatbot(elem_id="aria_chatbot")
-    
-    # Bridge technique (visibles pour le DOM mais cachés par CSS)
-    audio_url_bridge = gr.Textbox(elem_id="audio_url_bridge", visible=True)
-    audio_input = gr.Textbox(elem_id="audio_input_box", visible=True)
-    trigger_btn = gr.Button("Trigger", elem_id="aria_trigger", visible=True)
-    
-    with gr.Row():
-        start_btn = gr.Button("🚀 ACTIVER MICRO & SON", variant="primary")
-        
-    start_btn.click(None, None, None, js=JS_COMBO)
-    
+
+    with gr.Tabs():
+
+        # --- ONGLET PRINCIPAL (CHAT) ---
+        with gr.TabItem("💬 Interface Chat"):
+            
+            chatbot = gr.Chatbot(elem_id="aria_chatbot")
+            
+            # Bridge technique (visibles pour le DOM mais cachés par CSS)
+            audio_url_bridge = gr.Textbox(elem_id="audio_url_bridge", visible=True)
+            audio_input = gr.Textbox(elem_id="audio_input_box", visible=True)
+            trigger_btn = gr.Button("Trigger", elem_id="aria_trigger", visible=True)
+            
+            with gr.Row():
+                start_btn = gr.Button("🚀 ACTIVER MICRO & SON", variant="primary")
+                
+            start_btn.click(None, None, None, js=JS_COMBO)
+            
+        # --- NOUVEL ONGLET DE GESTION DES CONFIGS ---
+        # --- ONGLET DE GESTION DES CONFIGS ---
+        with gr.TabItem("⚙️ Paramètres"):
+            gr.Markdown("### 🛠️ Configuration Modulaire")
+            
+            # --- BLOC 1 : VAD (Détection de voix) ---
+            with gr.Group():
+                gr.Markdown("#### 🎤 Détection de Voix (VAD)")
+                # Liste déroulante : on prend les clés disponibles dans config['vad']
+                # Valeur par défaut : celle définie dans active_modules
+                vad_dd = gr.Dropdown(
+                    choices=list(config["vad"].keys()),
+                    value=config["active_modules"]["vad"],
+                    label="Moteur VAD actif"
+                )
+                # Zone de code : affiche les params du moteur sélectionné par défaut
+                vad_code = gr.Code(
+                    value=json.dumps(config["vad"][config["active_modules"]["vad"]]["params"], indent=2),
+                    language="json",
+                    label="Paramètres du VAD",
+                    lines=5
+                )
+                
+                # Événement : Quand on change le dropdown, on met à jour le code JSON
+                vad_dd.change(
+                    fn=lambda x: get_current_params("vad", x),
+                    inputs=[vad_dd],
+                    outputs=[vad_code]
+                )
+
+            # --- BLOC 2 : STT (Transcription) ---
+            with gr.Group():
+                gr.Markdown("#### 📝 Transcription (STT)")
+                stt_dd = gr.Dropdown(
+                    choices=list(config["stt"].keys()),
+                    value=config["active_modules"]["stt"],
+                    label="Moteur STT actif"
+                )
+                stt_code = gr.Code(
+                    value=json.dumps(config["stt"][config["active_modules"]["stt"]]["params"], indent=2),
+                    language="json",
+                    label="Paramètres du STT",
+                    lines=8
+                )
+                stt_dd.change(
+                    fn=lambda x: get_current_params("stt", x),
+                    inputs=[stt_dd],
+                    outputs=[stt_code]
+                )
+
+            # --- BLOC 3 : LLM (Cerveau) ---
+            with gr.Group():
+                gr.Markdown("#### 🧠 Intelligence (LLM)")
+                llm_dd = gr.Dropdown(
+                    choices=list(config["llm"].keys()),
+                    value=config["active_modules"]["llm"],
+                    label="Modèle LLM actif"
+                )
+                llm_code = gr.Code(
+                    value=json.dumps(config["llm"][config["active_modules"]["llm"]]["params"], indent=2),
+                    language="json",
+                    label="Paramètres du LLM (System prompt, URL...)",
+                    lines=10
+                )
+                llm_dd.change(
+                    fn=lambda x: get_current_params("llm", x),
+                    inputs=[llm_dd],
+                    outputs=[llm_code]
+                )
+
+            # --- BLOC 4 : TTS (Synthèse vocale) ---
+            with gr.Group():
+                gr.Markdown("#### 🗣️ Synthèse Vocale (TTS)")
+                tts_dd = gr.Dropdown(
+                    choices=list(config["tts"].keys()),
+                    value=config["active_modules"]["tts"],
+                    label="Moteur TTS actif"
+                )
+                tts_code = gr.Code(
+                    value=json.dumps(config["tts"][config["active_modules"]["tts"]]["params"], indent=2),
+                    language="json",
+                    label="Paramètres du TTS",
+                    lines=8
+                )
+                tts_dd.change(
+                    fn=lambda x: get_current_params("tts", x),
+                    inputs=[tts_dd],
+                    outputs=[tts_code]
+                )
+
+            # --- BOUTON DE SAUVEGARDE GLOBALE ---
+            gr.Markdown("---")
+            save_btn = gr.Button("💾 SAUVEGARDER TOUTE LA CONFIGURATION", variant="primary")
+            status_msg = gr.Markdown("")
+            
+            # Au clic, on envoie toutes les valeurs actuelles (dropdowns + codes)
+            save_btn.click(
+                fn=update_config_ui,
+                inputs=[
+                    vad_dd, vad_code,
+                    stt_dd, stt_code,
+                    llm_dd, llm_code,
+                    tts_dd, tts_code
+                ],
+                outputs=[status_msg]
+            )
+
+
     trigger_btn.click(
         fn=process_streaming_binaire, 
         inputs=[audio_input, chatbot], 
