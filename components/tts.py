@@ -17,7 +17,6 @@ class Tts:
         # --- MOTEUR SHERPA-ONNX (HÉLÉNA PRO) ---
         if self.tts_type == "sherpa":
             try:
-                utils.log_info("TTS", "Initialisation Sherpa-ONNX (Héléna)...")
                 from components.tts_sherpa_onnx import TtsSherpaOnnx
                 self.engine = TtsSherpaOnnx(device=self.device)
             except Exception as e:
@@ -27,7 +26,6 @@ class Tts:
         # --- MOTEUR KOKORO (BACKUP STABLE) ---
         if self.tts_type == "kokoro":
             try:
-                utils.log_info("TTS", "Initialisation Sherpa-ONNX...")
                 from components.tts_kokoro import TtsKokoro
                 self.engine = TtsKokoro(device=self.device)
             except Exception as e:

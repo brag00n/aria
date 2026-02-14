@@ -2,7 +2,7 @@
   "active_modules": {
     "vad": "Vad_Web",
     "stt": "Stt_FasterWhisper",
-    "llm": "Llm_Ministral_lmstudio",
+    "llm": "Llm_Ministral_local",
     "tts": "Tts_Kokoro"
   },
   "vad": {

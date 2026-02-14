@@ -15,5 +15,10 @@ class Llm:
             self.engine = LlmConnectLocal(self.params, all_config)
 
     async def get_answer_web(self, tts, query, user):
-        async for response, audio_path, text in self.engine.get_answer_web(tts, query, user):
-            yield response, audio_path, text
+        async for values in self.engine.get_answer_web(tts, query, user):
+            # Gestion flexible du nombre de valeurs (2 ou 3)
+            response = values[0]
+            audio_path = values[1]
+            text_for_tts = values[2] if len(values) > 2 else ""
+            
+            yield response, audio_path, text_for_tts

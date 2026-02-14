@@ -92,12 +92,12 @@ class LlmConnectLocal:
                 if any(p in token for p in [".", "!", "?", "\n"]):
                     txt = clean_text_for_tts(remove_nonverbal_cues(buffer)).strip()
                     if len(txt) > 2:
-                        yield full_text, tts.run_tts_to_file(txt, user_id=user)
+                        yield full_text, tts.run_tts_to_file(txt, user_id=user), txt
                         buffer = ""
                     else:
-                        yield full_text, None
+                        yield full_text, None, ""
                 else:
-                    yield full_text, None
+                    yield full_text, None, ""
         
         if buffer.strip():
             yield full_text, tts.run_tts_to_file(buffer, user_id=user)

@@ -1,12 +1,27 @@
 import re
 from datetime import datetime
+from collections import deque
+
+# On garde les 100 dernières lignes en mémoire vive
+LOG_BUFFER = deque(maxlen=100)
 
 # --- UTILITAIRE DE LOG ---
 def log_info(step, message=""):
     """Affiche un log de performance avec timestamp précis."""
     now = datetime.now()
     timestamp = now.strftime("%H:%M:%S") + f".{now.microsecond // 1000:03d}"
-    print(f"[{timestamp}] [INFO] | {message} [{step.upper()}]")
+    log_entry = f"[{timestamp}] [INFO] | {message} [{step.upper()}]"
+
+    # 1. Affichage Console (standard)
+    print(log_entry)
+
+    # 2. Stockage en Mémoire (nouveau)
+    LOG_BUFFER.append(log_entry)
+
+def get_logs_from_memory():
+    """Récupère les logs formatés pour l'affichage (récents en haut)."""
+    # On inverse la liste pour avoir les derniers logs en premier
+    return "\n".join(list(LOG_BUFFER))
 
 # --- CONVERSION CHIFFRES ROMAINS ---
 def roman_to_arabic(text):

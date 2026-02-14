@@ -3,10 +3,8 @@ import os
 import sys
 import pathlib
 
-def checkpoint(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}")
-    
-checkpoint("1. Avant OS ENV")
+import components.utils as utils
+utils.log_info("app", "--- DEBUT Chargement des librairies...")
 
 # --- VARIABLES D'ENVIRONNEMENT (CRITIQUE) ---
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
@@ -22,19 +20,18 @@ if os.name != 'nt':  # On ne le fait PAS si c'est Windows ('nt')
         pathlib.Path(cuda_cache_dir).mkdir(parents=True, exist_ok=True)
         os.environ['CUDA_CACHE_PATH'] = cuda_cache_dir
         os.environ['CUDA_CACHE_MAXSIZE'] = '2147483648' 
-        checkpoint("1.5. Cache CUDA configuré (Linux Only)")
+        utils.log_info("app","Cache CUDA configuré (Linux Only)")
     except Exception as e:
         print(f"Erreur cache CUDA: {e}")
 else:
-    checkpoint("1.5. Utilisation du cache CUDA natif Windows")
+    utils.log_info("app","Utilisation du cache CUDA natif Windows")
 
-checkpoint("2. Avant Imports torch")
 import torch
-checkpoint("3. Torch chargé")
+utils.log_info("app","Torch chargé")
 import transformers
-checkpoint("4. Transformers chargé")
+utils.log_info("app","Transformers chargé")
 import gradio as gr
-checkpoint("5. Gradio chargé")
+utils.log_info("app","Gradio chargé")
 
 import warnings
 import logging
@@ -49,21 +46,18 @@ warnings.filterwarnings("ignore", message=".*symlinks.*")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 #import gradio as gr
-checkpoint("6. Avant imports numpy")
 import numpy as np
-checkpoint("6. numpy chargé")
+utils.log_info("app","numpy chargé")
 import base64, io, json, shutil, time, re
-checkpoint("6. base64, io, json, shutil, time, re chargé")
+utils.log_info("app","base64, io, json, shutil, time, re chargé")
 from pydub import AudioSegment
-checkpoint("6. AudioSegment chargé")
+utils.log_info("app","AudioSegment chargé")
 from components.stt import Stt
 from components.llm import Llm
 from components.tts import Tts
 from components.vad import Vad
-checkpoint("6. Stt, Llm, Tts chargés")
+utils.log_info("app","Stt, Llm, Tts chargés")
 
-import components.utils as utils
-checkpoint("6. utils chargés")
 
 # --- CONFIGURATION ---
 DEBUG_SAVE_WAV = False
@@ -73,6 +67,8 @@ _CONFIG_FILE = "configs/default.json"
 if os.path.exists(_TMP_DIR):
     shutil.rmtree(_TMP_DIR)
 os.makedirs(_TMP_DIR, mode=0o777, exist_ok=True)
+
+utils.log_info("app", "--- FIN Chargement des librairies...")
 
 # --- INIT COMPOSANTS ---
 utils.log_info("app", "--- DEBUT Chargement de la configuration...")
@@ -92,6 +88,9 @@ llm = Llm(config["llm"][active_llm]["params"], all_config=config)
 tts = Tts(config["tts"][active_tts]["params"])
 utils.log_info("app", f"--- FIN Chargement (VAD:{active_vad}, STT:{active_stt}, LLM:{active_llm}, TTS:{active_tts})")
 
+def read_logs_memory():
+    """Appelle le buffer mémoire de utils"""
+    return utils.get_logs_from_memory()
 
 def save_config(new_config_str):
     """Sauvegarde la nouvelle configuration JSON et recharge les composants si nécessaire."""
@@ -114,7 +113,7 @@ def get_current_params(category, module_name):
     except Exception as e:
         return "{}"
 
-def update_config_ui(vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json):
+def update_config_ui(vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json):
     """Sauvegarde globale de la configuration modulaire"""
     try:
         # 1. Mise à jour des pointeurs de modules actifs
@@ -130,6 +129,7 @@ def update_config_ui(vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_js
         config["stt"][stt_choix]["params"] = json.loads(stt_json)
         config["llm"][llm_choix]["params"] = json.loads(llm_json)
         config["tts"][tts_choix]["params"] = json.loads(tts_json)
+        config["mcp"]["params"] = json.loads(mcp_json)
 
         # 3. Écriture physique sur le disque
         with open(_CONFIG_FILE, "w") as f:
@@ -245,13 +245,55 @@ CSS = """
     70% { box-shadow: 0 0 0 15px rgba(255, 75, 75, 0); }
     100% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0); }
 }
+
+#log_display textarea {
+    font-family: 'Courier New', monospace !important;
+    background-color: #0d1117 !important;
+    color: #33ff33 !important;
+    white-space: pre !important;      /* Désactive le retour à la ligne */
+    overflow-x: auto !important;      /* Active le slider horizontal */
+    overflow-y: auto !important;      /* Active le slider vertical */
+    height: 45vh !important;          /* Utilise 65% de la hauteur de l'écran */
+}
+
+/* Force le bouton à prendre toute la hauteur de son parent et s'aligner */
+#micro_btn_container {
+    height: 100% !important;
+    display: flex !important;
+    align-items: stretch !important;
+}
+
+#micro_btn {
+    height: 100% !important;
+    margin: 0 !important;
+}
 """
 
 with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
 
     gr.Markdown("# 🎙️ Aria Voice System")
 
-    gr.Image(type="filepath", value="static/transition.gif", height="100", elem_id="aria_logo")
+    with gr.Row(equal_height=True): # Force les colonnes à avoir la même hauteur
+        with gr.Column(scale=1):
+            gr.Markdown(
+                """
+                **Bienvenue sur l'interface de contrôle d'Aria !**  
+                Utilisez ce panneau pour configurer les différents modules (VAD, STT, LLM, TTS) et visualiser les logs en temps réel.  
+                Cliquez sur le bouton pour activer le microphone et commencer à interagir avec Aria.  
+                """
+            )
+        with gr.Column(scale=4): # Le champ image prend la majeure partie de la largeur
+            audio_input = gr.Image(
+                type="filepath", value="static/transition.gif", height="100", elem_id="aria_logo"
+            )
+        
+        with gr.Column(scale=1, elem_id="micro_btn_container"): # Le bouton à droite
+            mic_btn = gr.Button(
+                "🎙️ Activer Micro & Son", 
+                variant="primary",
+                elem_id="micro_btn"
+            )
+        mic_btn.click(None, None, None, js=JS_COMBO)
 
     with gr.Tabs():
 
@@ -265,10 +307,10 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
             audio_input = gr.Textbox(elem_id="audio_input_box", visible=True)
             trigger_btn = gr.Button("Trigger", elem_id="aria_trigger", visible=True)
             
-            with gr.Row():
-                start_btn = gr.Button("🚀 ACTIVER MICRO & SON", variant="primary")
+            # with gr.Row():
+            #     start_btn = gr.Button("🚀 ACTIVER MICRO & SON", variant="primary")
                 
-            start_btn.click(None, None, None, js=JS_COMBO)
+            # start_btn.click(None, None, None, js=JS_COMBO)
             
         # --- NOUVEL ONGLET DE GESTION DES CONFIGS ---
         # --- ONGLET DE GESTION DES CONFIGS ---
@@ -360,6 +402,18 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     outputs=[tts_code]
                 )
 
+                # --- BLOC 5 : MCP (Outils & Serveurs) ---
+            with gr.Group():
+                gr.Markdown("#### 🛠️ Outils MCP (Model Context Protocol)")
+                gr.Markdown("<small>Configurez ici vos serveurs d'outils (Météo, Bases de données, etc.)</small>")
+                
+                mcp_code = gr.Code(
+                    value=json.dumps(config["mcp"]["params"], indent=2),
+                    language="json",
+                    label="Configuration des serveurs MCP",
+                    lines=12
+                )
+
             # --- BOUTON DE SAUVEGARDE GLOBALE ---
             gr.Markdown("---")
             save_btn = gr.Button("💾 SAUVEGARDER TOUTE LA CONFIGURATION", variant="primary")
@@ -372,10 +426,50 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     vad_dd, vad_code,
                     stt_dd, stt_code,
                     llm_dd, llm_code,
-                    tts_dd, tts_code
+                    tts_dd, tts_code,
+                    mcp_code
                 ],
                 outputs=[status_msg]
             )
+
+        # --- ONGLET LOGS (RAM) ---
+        with gr.TabItem("📟 Logs Serveur"):
+            
+            with gr.Row():
+                    gr.Markdown("### Flux de logs en temps réel")
+                    auto_refresh = gr.Checkbox(label="Auto-refresh (1s)", value=True)
+                    refresh_logs_btn = gr.Button("🔄 Actualiser", size="sm")
+
+            # Utilisation de Textbox pour l'autoscroll et la mise en page
+            logs_output = gr.Textbox(
+                value="En attente d'activité...",
+                label=None, 
+                lines=25,          
+                max_lines=25,       # Doit être égal ou proche de lines pour forcer le scroll
+                interactive=False,
+                elem_id="log_display",
+                autoscroll=True     # Garde le focus sur la dernière ligne
+            )
+            
+            # Timer : Déclenche la mise à jour toutes les secondes
+            timer = gr.Timer(1)
+            
+            # Connexion du Timer à la lecture mémoire
+            timer.tick(
+                fn=read_logs_memory,
+                inputs=None,
+                outputs=[logs_output],
+                show_progress="hidden" # Cache la barre de chargement gênante
+            )
+            
+            # Gestion du checkbox pour activer/désactiver le timer
+            auto_refresh.change(
+                fn=lambda x: gr.Timer(active=x),
+                inputs=[auto_refresh],
+                outputs=[timer]
+            )
+            
+            refresh_logs_btn.click(fn=read_logs_memory, outputs=[logs_output])
 
 
     trigger_btn.click(
