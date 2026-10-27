@@ -23,6 +23,9 @@ WORKDIR /aria
 # 3. Installation et configuration de UV
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
+# Gros wheels (torch, cudnn...) : évite les timeouts réseau
+ENV UV_HTTP_TIMEOUT=600
+ENV UV_HTTP_RETRIES=5
 
 # 4. Création de l'environnement virtuel INTERNE (Performance Max)
 # On le place hors du répertoire /aria pour éviter la latence du montage Windows
@@ -31,7 +34,7 @@ ENV PATH="/venv_internal/bin:$PATH"
 
 # 5. Installation des dépendances lourdes dans l'environnement interne
 RUN uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-RUN uv pip install onnxruntime-gpu==1.20.1 sherpa-onnx==1.12.23 nvidia-cudnn-cu12==9.1.0.70
+RUN uv pip install onnxruntime-gpu==1.20.0 sherpa-onnx==1.12.28 nvidia-cudnn-cu12==9.1.0.70
 RUN uv pip install wheel setuptools
 
 ARG USE_REQ_LOCK=true
@@ -44,6 +47,9 @@ RUN if [ "$USE_REQ_LOCK" = "true" ] ; then \
         echo "Installation via requirements.txt" && \
         uv pip install -r requirements.txt; \
     fi
+
+# Paquets absents du requirements.lock (présents dans requirements.txt)
+RUN uv pip install "anthropic>=0.40.0" faster-whisper==1.2.1
 
 # Gestion optionnelle de Flash Attention (skip si échec de build)
 ARG BUILD_FLASH_ATTN=true
