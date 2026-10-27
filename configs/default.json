@@ -6,7 +6,7 @@
   "active_modules": {
     "vad": "Vad_Web",
     "stt": "Stt_FasterWhisper",
-    "llm": "Llm_Anthropic",
+    "llm": "Llm_gemma-4_local",
     "tts": "Tts_Sherpa"
   },
   "vad": {
@@ -45,6 +45,12 @@
         "engine_type": "faster-whisper",
         "device": "cpu",
         "model_name": "small",
+        "compute_type": "int8",
+        "device_index": 0,
+        "beam_size": 1,
+        "vad_filter": true,
+        "min_silence_duration_ms": 500,
+        "condition_on_previous_text": false,
         "low_cpu_mem_usage": true,
         "verbose": false
       }
@@ -105,7 +111,7 @@
         "model_name": "claude-haiku-5-5",
         "max_tokens": 2048,
         "streaming_output": true,
-        "system_message": "Tu es Aria, une assistante sarcastique. Si l'utilisateur pose une question sur la météo ou la température, utilise l'outil 'get_weather' puis réponds directement avec les données. Ne décris jamais tes actions entre astérisques ou parenthèses. Fais des phrases fluides pour la voix, sans gras ni listes Markdown.",
+        "system_message": "Tu es Aria, une assistante sarcastique. Si l'utilisateur pose une question sur la m\u00e9t\u00e9o ou la temp\u00e9rature, utilise l'outil 'get_weather' puis r\u00e9ponds directement avec les donn\u00e9es. Ne d\u00e9cris jamais tes actions entre ast\u00e9risques ou parenth\u00e8ses. Fais des phrases fluides pour la voix, sans gras ni listes Markdown.",
         "verbose": false
       }
     },
@@ -131,6 +137,7 @@
         "device": "cuda:0",
         "custom_path": "",
         "model_name": "hauhaucs/gemma-4-e2b-uncensored-hauhaucs-aggressive/gemma-4-e2b-uncensored-hauhaucs-aggressive-q6_k_p",
+        "hf_repo": "HauhauCS/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive",
         "model_file": "Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-Q6_K_P.gguf",
         "num_gpu_layers": -1,
         "context_length": 32768,
