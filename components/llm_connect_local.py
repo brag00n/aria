@@ -16,16 +16,24 @@ class LlmConnectLocal:
         self.verbose = self.params.get("verbose", False)
         self.num_gpu_layers = self.params.get("num_gpu_layers", -1)  # Charge tout sur GPU par défaut
         self.verbose=self.params.get("verbose", False)
-        
+        self.temperature=self.params.get("temperature", 0.80)
+        self.repeat_penalty=self.params.get("repeat_penalty", 1.0)
+
         model_file = self.params.get("model_file", "ministral-3b-instruct.Q4_K_M.gguf")
         model_path = os.path.join("/aria/models/llm", model_file)
         
         utils.log_info("LLM-LOCAL", f"Chargement du modèle : {model_file}")
+        stop_tokens = ["<end_of_turn>", "<start_of_turn>","</end_of_turn>", "</start_of_turn>", "user", "model"]
         self.llm = Llama(
             model_path=model_path,
+            stop=stop_tokens,
             n_gpu_layers=self.num_gpu_layers,         # Charge toutes les couches sur la VRAM
             n_ctx=self.context_length,
             chat_format=self.chat_format,
+            temp=self.temperature,
+            repeat_penalty=self.repeat_penalty,
+            min_p_len=0,
+            no_cuda_graphs=self.params.get("no_cuda_graphs", False),
             flash_attn=True,         # <--- L'optimisation qu'on a compilée
             n_batch=512,             # Augmente la vitesse de traitement du prompt
             verbose=self.verbose             # Garde True pour vérifier les logs au prochain démarrage

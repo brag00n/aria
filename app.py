@@ -64,7 +64,7 @@ utils.log_info("app","Stt, Llm, Tts chargés")
 DEBUG_SAVE_WAV = False
 _TMP_DIR = "/aria/tmp/tts"
 _CONFIG_FILE = "configs/default.json"
-JS_VISUALIZER_PATH = Path(__file__).parent / "audioDesign.js"
+JS_VISUALIZER_PATH = Path(__file__).parent / "static/audioDesign.js"
 
 if os.path.exists(_TMP_DIR):
     shutil.rmtree(_TMP_DIR)
@@ -333,11 +333,20 @@ CSS = """
     transition: all 0.3s ease;
 }
 
+#visualizer_wrapper {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    width: 100% !important;
+    margin-bottom: 20px;
+}
+
 #audio_visualizer.speaking {
-    border: 4px solid #ff4b4b; 
+    border: 4px solid #ffffff; 
     box-shadow: 0 0 20px #ff4b4b;
     transform: scale(1.1);
 
+    align-items: center !important;
     width: 100% !important;
     height: 100% !important;
     max-height: 100px;
@@ -357,26 +366,16 @@ CSS = """
 with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
 
     gr.Markdown("# 🎙️ Aria Voice System")
+    audio_input = gr.HTML(
+            f"""<canvas id="audio_visualizer" width="200" height="200"></canvas>""", elm_id="visualizer_wrapper"
+        )
 
-    with gr.Row(equal_height=True): # Force les colonnes à avoir la même hauteur
-        with gr.Column(scale=1):
-            gr.Markdown(
-                """
-                **Bienvenue sur l'interface de contrôle d'Aria !**  
-                Utilisez ce panneau pour configurer les différents modules (VAD, STT, LLM, TTS) et visualiser les logs en temps réel.  
-                Cliquez sur le bouton pour activer le microphone et commencer à interagir avec Aria.  
-                """
-            )
-        with gr.Column(scale=4): # Le champ image prend la majeure partie de la largeur
-            audio_input = gr.HTML(f"""<canvas id="audio_visualizer"></canvas>""", height="200", width="200")
-        
-        with gr.Column(scale=1, elem_id="micro_btn_container"): # Le bouton à droite
-            mic_btn = gr.Button(
-                "🎙️ Activer", 
-                variant="primary",
-                elem_id="micro_btn"
-            )
-        mic_btn.click(None, None, None, js=JS_COMBO)
+    mic_btn = gr.Button(
+        "🎙️ Activer Micro & Son", 
+        variant="primary",
+        elem_id="micro_btn"
+    )
+    mic_btn.click(None, None, None, js=JS_COMBO)
 
     with gr.Tabs():
 
