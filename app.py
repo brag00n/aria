@@ -48,7 +48,7 @@ logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 #import gradio as gr
 import numpy as np
 utils.log_info("app","numpy chargé")
-import base64, io, json, shutil, time, re
+import base64, io, json, shutil, time, re, threading
 utils.log_info("app","base64, io, json, shutil, time, re chargé")
 from pydub import AudioSegment
 utils.log_info("app","AudioSegment chargé")
@@ -57,7 +57,7 @@ from components.llm import Llm
 from components.tts import Tts
 from components.vad import Vad
 from components import visualizer
-from components.language import Language
+from components.language import Language, normalize
 utils.log_info("app","Stt, Llm, Tts chargés")
 
 
@@ -120,9 +120,22 @@ def get_current_params(category, module_name):
     except Exception as e:
         return "{}"
 
-def update_config_ui(vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json):
+def update_config_ui(global_json, vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json):
     """Sauvegarde globale de la configuration modulaire"""
     try:
+        # 0. Réglages généraux (langue...). Contrôlés AVANT toute écriture : une erreur ne laisse pas la config à moitié modifiée.
+        new_global = json.loads(global_json)
+        if not isinstance(new_global, dict):
+            return "❌ La section globale doit être un objet JSON"
+        lang = new_global.get("language")
+        if normalize(lang) is None:
+            return f"❌ Langue '{lang}' invalide : un code est attendu (ex. fr, en, es)"
+        if "default_language" in new_global and normalize(new_global["default_language"]) is None:
+            return f"❌ Langue de repli '{new_global['default_language']}' invalide : un code est attendu (ex. en)"
+        new_global["language"] = normalize(lang)
+        if "default_language" in new_global:
+            new_global["default_language"] = normalize(new_global["default_language"])
+        config["global"] = new_global
         # 1. Mise à jour des pointeurs de modules actifs
         config["active_modules"] = {
             "vad": vad_choix,
@@ -142,7 +155,7 @@ def update_config_ui(vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_js
         with open(_CONFIG_FILE, "w") as f:
             json.dump(config, f, indent=2)
             
-        return "✅ Configuration sauvegardée ! Redémarrez le système pour appliquer les changements."
+        return "✅ Configuration sauvegardée ! Cliquez sur « Redémarrer » pour appliquer les changements."
     except json.JSONDecodeError as e:
         return f"❌ Erreur de syntaxe JSON dans l'un des blocs : {str(e)}"
     except Exception as e:
@@ -251,9 +264,24 @@ async def process_streaming_binaire(b64_audio, history):
         utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
         yield history, ""
 
+def request_restart(confirmed=""):
+    """Demande de redémarrage depuis l'interface : tracée dans les logs, puis le serveur se termine dans 2 s.
+    Le conteneur est relancé par sa politique de redémarrage (docker-compose : restart: unless-stopped).
+    `confirmed` vient de la boîte de dialogue du navigateur : « Annuler » ne redémarre rien."""
+    if confirmed != "oui":
+        utils.log_info("app", f"Redémarrage annulé depuis l'interface (valeur reçue du navigateur : {confirmed!r})")
+        return "Redémarrage annulé."
+    utils.log_info("app", "🔄 REDÉMARRAGE DEMANDÉ depuis l'interface (onglet Paramètres)")
+    def _exit_later():
+        time.sleep(2)           # laisse le temps de répondre au navigateur et d'écrire le log
+        utils.log_info("app", "🔄 Arrêt du serveur Aria : le conteneur va le relancer")
+        os._exit(0)             # arrêt immédiat, sans attendre les threads (modèles chargés, serveur Gradio)
+    threading.Thread(target=_exit_later, daemon=True).start()
+    return "🔄 Redémarrage en cours... rechargez la page dans une vingtaine de secondes."
+
 # --- UI GRADIO ---
 CSS = """
-#audio_input_box, #audio_url_bridge, #aria_trigger {
+#audio_input_box, #audio_url_bridge, #aria_trigger, #restart_confirm_box {
     position: absolute;
     top: -9999px;
     left: -9999px;
@@ -334,6 +362,19 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
         # --- ONGLET DE GESTION DES CONFIGS ---
         with gr.TabItem("⚙️ Paramètres"):
             gr.Markdown("### 🛠️ Configuration Modulaire")
+
+            # --- BLOC 0 : RÉGLAGES GÉNÉRAUX (langue de tous les modules) ---
+            with gr.Group():
+                gr.Markdown("#### 🌍 Réglages généraux")
+                gr.Markdown("<small>`language` : code de la langue de toute la chaîne (STT, LLM, TTS), ex. `fr`, `en`, `es`. "
+                            "`default_language` : langue de repli si un module ne gère pas la langue demandée. "
+                            "Les modules actifs se choisissent plus bas.</small>")
+                global_code = gr.Code(
+                    value=json.dumps(config.get("global", {}), indent=2, ensure_ascii=False),
+                    language="json",
+                    label="Réglages généraux",
+                    lines=4
+                )
             
             # --- BLOC 1 : VAD (Détection de voix) ---
             with gr.Group():
@@ -434,13 +475,16 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
 
             # --- BOUTON DE SAUVEGARDE GLOBALE ---
             gr.Markdown("---")
-            save_btn = gr.Button("💾 SAUVEGARDER TOUTE LA CONFIGURATION", variant="primary")
+            with gr.Row():
+                save_btn = gr.Button("💾 SAUVEGARDER TOUTE LA CONFIGURATION", variant="primary", scale=4)
+                restart_btn = gr.Button("🔄 Redémarrer", variant="stop", scale=1)
             status_msg = gr.Markdown("")
             
             # Au clic, on envoie toutes les valeurs actuelles (dropdowns + codes)
             save_btn.click(
                 fn=update_config_ui,
                 inputs=[
+                    global_code,
                     vad_dd, vad_code,
                     stt_dd, stt_code,
                     llm_dd, llm_code,
@@ -448,6 +492,17 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     mcp_code
                 ],
                 outputs=[status_msg]
+            )
+
+            # Redémarrage : le processus se termine et la politique « restart: unless-stopped » du conteneur le relance
+            # Champ texte caché par le CSS (comme les ponts audio) : un gr.State reste côté serveur,
+            # le navigateur ne peut pas lui envoyer la réponse de la boîte de confirmation
+            restart_confirm = gr.Textbox(elem_id="restart_confirm_box", visible=True, value="")
+            restart_btn.click(
+                fn=request_restart,
+                inputs=[restart_confirm],
+                outputs=[status_msg],
+                js="() => [confirm('Redémarrer le serveur Aria ? Les conversations en cours seront coupées.') ? 'oui' : 'non']"
             )
 
         # --- ONGLET LOGS (RAM) ---
