@@ -199,6 +199,8 @@ log "Construction de l'image (la première fois : plusieurs minutes, plusieurs G
 run "${COMPOSE[@]}" "${COMPOSE_FILES[@]}" "${BUILD_ARGS[@]}"
 
 if [ "$START" = true ]; then
+  # Podman ne crée pas les dossiers montés (Docker, si)
+  [ "$DRY_RUN" = true ] || mkdir -p models
   log "Démarrage du conteneur..."
   run "${COMPOSE[@]}" "${COMPOSE_FILES[@]}" up -d
   log "Aria démarre (20 à 60 s) : http://localhost:7860"

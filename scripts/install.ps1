@@ -38,6 +38,13 @@ function Log($m)  { Write-Host "[aria] $m" -ForegroundColor Cyan }
 function Warn($m) { Write-Host "[aria] ATTENTION : $m" -ForegroundColor Yellow }
 function Die($m)  { Write-Host "[aria] ERREUR : $m" -ForegroundColor Red; exit 1 }
 function Have($n) { [bool](Get-Command $n -ErrorAction SilentlyContinue) }
+# Sonde : exécute une commande native en ignorant sa sortie ; renvoie son code de retour.
+# (Windows PowerShell 5.1 transforme tout message sur stderr en erreur fatale avec 'Stop', même redirigé vers $null.)
+function Probe {
+  param([string]$Exe, [string[]]$Arguments = @())
+  $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try { & $Exe @Arguments 2>&1 | Out-Null; return $LASTEXITCODE } finally { $ErrorActionPreference = $old }
+}
 function Run {
   param([string]$Exe, [string[]]$Arguments = @())
   Write-Host ("  > {0} {1}" -f $Exe, ($Arguments -join ' '))
@@ -88,11 +95,9 @@ if ($Engine -eq 'podman' -and -not $DryRun) {
 # --- Commande « compose » ------------------------------------------------------------------------------------------
 $compose = $null
 if ($Engine -eq 'docker') {
-  docker compose version *> $null
-  if ($LASTEXITCODE -eq 0) { $compose = @('docker', 'compose') } elseif (Have 'docker-compose') { $compose = @('docker-compose') }
+  if ((Probe 'docker' @('compose', 'version')) -eq 0) { $compose = @('docker', 'compose') } elseif (Have 'docker-compose') { $compose = @('docker-compose') }
 } else {
-  podman compose version *> $null
-  if ($LASTEXITCODE -eq 0) { $compose = @('podman', 'compose') } elseif (Have 'podman-compose') { $compose = @('podman-compose') }
+  if ((Probe 'podman' @('compose', 'version')) -eq 0) { $compose = @('podman', 'compose') } elseif (Have 'podman-compose') { $compose = @('podman-compose') }
 }
 if (-not $compose) {
   if (-not $InstallDeps) { Die "Aucun « compose » pour $Engine. Installez-le (docker compose / pip install podman-compose) ou relancez avec -InstallDeps." }
@@ -113,7 +118,7 @@ if ($Gpu) {
     $files += @('-f', 'docker-compose.gpu-docker.yml')
   } else {
     $hasCtk = $false
-    if (-not $DryRun) { podman machine ssh "command -v nvidia-ctk" *> $null; $hasCtk = ($LASTEXITCODE -eq 0) }
+    if (-not $DryRun) { $hasCtk = ((Probe 'podman' @('machine', 'ssh', 'command -v nvidia-ctk')) -eq 0) }
     if (-not $hasCtk) {
       if (-not $InstallDeps) {
         Die "NVIDIA Container Toolkit absent de la machine Podman. Relancez avec -InstallDeps, ou voir https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
@@ -148,6 +153,8 @@ $cmd = $compose[0]; $pre = @(); if ($compose.Count -gt 1) { $pre = $compose[1..(
 Run $cmd ($pre + $files + $buildArgs)
 
 if (-not $NoStart) {
+  # Podman ne crée pas les dossiers montés (Docker, si) : sans lui, « statfs ... models: no such file »
+  if (-not $DryRun -and -not (Test-Path 'models')) { New-Item -ItemType Directory -Path 'models' | Out-Null }
   Log "Démarrage du conteneur..."
   Run $cmd ($pre + $files + @('up', '-d'))
   Log "Aria démarre (20 à 60 s) : http://localhost:7860"
