@@ -29,15 +29,19 @@ class SttFasterWhisper:
             compute_type=compute_type,
             # Supprimez download_root ou mettez un chemin simple pour laisser 
             # faster-whisper gérer son cache proprement
-            device_index=0 if self.device == "cuda" else None
+            device_index=0
         )
 
     def transcribe_translate(self, audio_path):
         # beam_size=1 pour la vitesse, 5 pour la précision
         segments, info = self.model.transcribe(
             audio_path, 
-            beam_size=1, 
-            language="fr"
+            beam_size=1,
+            language="fr",
+            # Ignore les silences : évite les hallucinations ("Merci d'avoir regardé...") et gagne du temps
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 500},
+            condition_on_previous_text=False,
         )
         
         # Faster-Whisper renvoie un itérateur de segments

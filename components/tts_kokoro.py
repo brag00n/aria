@@ -1,39 +1,32 @@
-import os
 import logging
-import tarfile
-import urllib.request
-import numpy as np
 import soundfile as sf
-import sherpa_onnx
-from components.utils import log_info, clean_text_for_tts 
+from components.utils import log_info
 
-logger = logging.getLogger("aria.tts.sherpa")
+logger = logging.getLogger("aria.tts.kokoro")
 
 class TtsKokoro:
     def __init__(self, params=None, device=None):
         self.params = params or {}
-      
-        try:
-            log_info("TTS-Kokoro", "Chargement Kokoro-TTS...")
-            from kokoro import KPipeline
-            self.pipeline = KPipeline(lang_code='f', device=device, repo_id='hexgrad/Kokoro-82M')
-            self.voice = self.params.get("kokoro_voice", "ff_siwis")
-        except Exception as e:
-            log_info("TTS-Kokoro", f"Erreur fatale TTS Kokoro : {e}")
-
-        # Vérification et téléchargement avant chargement
-        self._ensure_model_exists()
+        self.device = device or self.params.get("device")
+        self.voice = self.params.get("kokoro_voice", "ff_siwis")
+        self.speed = self.params.get("kokoro_voice_speed", 1.1)
+        self.lang_code = self.params.get("kokoro_lang_code", "f")
+        self.pipeline = None
         self._load_model()
-
-    def _ensure_model_exists(self):
-        """Vérifie la présence du modèle ou le télécharge."""
 
     def _load_model(self):
         """Chargement du modèle Kokoro."""
+        try:
+            log_info("TTS-Kokoro", "Chargement Kokoro-TTS...")
+            from kokoro import KPipeline
+            self.pipeline = KPipeline(lang_code=self.lang_code, device=self.device, repo_id='hexgrad/Kokoro-82M')
+        except Exception as e:
+            log_info("TTS-Kokoro", f"Erreur fatale TTS Kokoro : {e}")
+            raise
 
     def generate(self, text, output_path, *args, **kwargs):
         try:
-            generator = self.pipeline(text, voice=self.voice, speed=1.1)
+            generator = self.pipeline(text, voice=self.voice, speed=self.speed)
             for _, _, audio in generator:
                 sf.write(output_path, audio, 24000)
                 return output_path
