@@ -66,7 +66,8 @@ SPEECH_STYLE_PROMPT = (
     "N'utilise ni liste, ni titre, ni symbole de mise en forme. "
     "Cela limite la longueur des phrases, pas celle de ta réponse."
 )
-ORPHAN_MAX = 20                # un bloc de moins de 20 caractères est fusionné avec le précédent...
+CODE_FENCE = "```"             # délimiteur de bloc de code markdown : son contenu n'est pas dit
+ORPHAN_MAX = 20               # un bloc de moins de 20 caractères est fusionné avec le précédent...
 MERGE_MAX = 110                # ...si le texte fusionné ne dépasse pas 110 caractères
 SPEECH_CLOSERS = "»”’\"')]"    # fermants qui restent collés à la ponctuation qui les précède : `point.»`
 SPACED_CLOSERS = "»”"          # fermants acceptés après une espace (typographie française : `point. »`)
@@ -145,6 +146,7 @@ class TtsQueue:
         self.user = user
         self.tag = tag
         self.pending = deque()
+        self.in_code = False           # dans un bloc ``` : le texte n'est pas lu
         self.count = 0
         self.total = 0.0
 
@@ -177,21 +179,46 @@ class TtsQueue:
         self._enqueue(text)
 
     def flush(self, buf):
-        """Fin du flux : envoie le reste du tampon au TTS (fusionné avec le bloc précédent s'il est trop court)."""
+        """Fin du flux : envoie le reste du tampon au TTS (fusionné avec le bloc précédent s'il est trop court).
+        Un bloc de code resté ouvert est ignoré."""
+        buf = self.feed(buf)
+        if self.in_code:
+            self.in_code = False       # flush est appelé à chaque tour de la boucle d'outils : on repart à zéro
+            return
         txt = clean_text_for_tts(remove_nonverbal_cues(buf)).strip()
         if len(txt) > 1:
             self.submit(txt)
 
+    def _speak(self, piece):
+        txt = clean_text_for_tts(remove_nonverbal_cues(piece)).strip()
+        if len(txt) > 2:
+            self.submit(txt)
+
     def feed(self, buf):
-        """Découpe buf en blocs à dire (voir next_speech_cut), les soumet, et renvoie le reste du buffer."""
+        """Découpe buf en blocs à dire (voir next_speech_cut), les soumet, et renvoie le reste du buffer.
+        Le code entre ``` n'est jamais lu : le découpage en phrases coupe un bloc en plusieurs morceaux, donc
+        l'état « dans un bloc de code » est suivi ici, d'un appel à l'autre (self.in_code)."""
         while True:
-            cut = next_speech_cut(buf, is_first=self.count == 0)
-            if cut is None:
-                return buf
-            piece, buf = buf[:cut], buf[cut:]
-            txt = clean_text_for_tts(remove_nonverbal_cues(piece)).strip()
-            if len(txt) > 2:
-                self.submit(txt)
+            if self.in_code:
+                end = buf.find(CODE_FENCE)
+                if end < 0:
+                    # On garde les ` de fin : la clôture peut arriver coupée entre deux jetons
+                    return buf[len(buf.rstrip("`")):][-2:]
+                buf, self.in_code = buf[end + len(CODE_FENCE):], False
+                continue
+            start = buf.find(CODE_FENCE)
+            if start < 0:
+                break
+            # Le texte avant le code se dit en entier, même sans ponctuation finale
+            before, buf, self.in_code = buf[:start], buf[start + len(CODE_FENCE):], True
+            while (cut := next_speech_cut(before, is_first=self.count == 0)) is not None:
+                self._speak(before[:cut])
+                before = before[cut:]
+            self._speak(before)
+        while (cut := next_speech_cut(buf, is_first=self.count == 0)) is not None:
+            self._speak(buf[:cut])
+            buf = buf[cut:]
+        return buf
 
     def pop_ready(self):
         """Blocs déjà synthétisés, en tête de file uniquement (ordre conservé)."""
