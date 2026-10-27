@@ -199,7 +199,6 @@ async def process_streaming_binaire(b64_audio, history):
         utils.log_info("app", f"   LLM: Début génération")
         response_gen = llm.get_answer_web(tts, text_user, "DefaultUser")
         chunk_count = 0
-        stream_payload = []
         first_text = False
         
         async for text_update, audio_chunk_path,textCleanedForAudio in response_gen:
@@ -227,8 +226,9 @@ async def process_streaming_binaire(b64_audio, history):
                 else:
                     utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) text: '{textCleanedForAudio}'")
                 
-                stream_payload.append({"id": unique_id, "data": b64_data})
-                payload_str = json.dumps(stream_payload)
+                # Un seul bloc par envoi : renvoyer la liste cumulée à chaque jeton saturait le navigateur
+                # (le client ignore une valeur vide et filtre les identifiants déjà vus)
+                payload_str = json.dumps([{"id": unique_id, "data": b64_data}])
                 
                 # Nettoyage immédiat du fichier temporaire original
                 try: os.remove(audio_chunk_path)
