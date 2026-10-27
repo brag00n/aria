@@ -1,0 +1,4 @@
+# Un script shell avec des fins de ligne Windows (CRLF) ne s'exécute pas sous Linux ("bash\r: not found")
+*.sh text eol=lf
+# Windows PowerShell 5.1 lit mieux les scripts avec des fins de ligne Windows
+*.ps1 text eol=crlf

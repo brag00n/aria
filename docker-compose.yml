@@ -3,8 +3,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Paramètres du build : scripts/install.sh ou scripts/install.ps1 les fixent par variables d'environnement
       args:
-        BUILD_FLASH_ATTN: "false"
+        BUILD_FLASH_ATTN: "${BUILD_FLASH_ATTN:-false}"
+        USE_REQ_LOCK: "${USE_REQ_LOCK:-true}"
+        LLAMA_CUDA: "${LLAMA_CUDA:-false}"
+        CUDA_ARCH: "${CUDA_ARCH:-}"
     image: aria:dev
     container_name: aria
     ports:

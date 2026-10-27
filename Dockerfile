@@ -51,6 +51,23 @@ RUN if [ "$USE_REQ_LOCK" = "true" ] ; then \
 # Paquets absents du requirements.lock (présents dans requirements.txt)
 RUN uv pip install "anthropic>=0.40.0" faster-whisper==1.2.1
 
+# Option : llama-cpp-python compilé avec CUDA (LLM local sur GPU). Désactivé par défaut : la version CPU du lock est conservée.
+# Placé après les installations ci-dessus pour que le build par défaut garde son cache.
+# Aucun GPU n'est requis pour compiler (nvcc est dans l'image), seulement pour exécuter.
+# CUDA_ARCH : architecture ciblée, ex. 89 (RTX Ada) ou "75;86". Vide = toutes les architectures (compilation bien plus longue).
+ARG LLAMA_CUDA=false
+ARG CUDA_ARCH=""
+RUN if [ "$LLAMA_CUDA" = "true" ] ; then \
+        echo "llama-cpp-python : compilation avec CUDA (architectures : ${CUDA_ARCH:-toutes})" && \
+        apt-get update && apt-get install -y cmake build-essential && rm -rf /var/lib/apt/lists/* && \
+        export CMAKE_ARGS="-DGGML_CUDA=on${CUDA_ARCH:+ -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH}}" \
+               FORCE_CMAKE=1 CUDA_HOME=/usr/local/cuda LIBRARY_PATH=/usr/local/cuda/lib64/stubs && \
+        uv pip install --reinstall-package llama-cpp-python --no-cache --no-binary llama-cpp-python \
+            "$(grep -i '^llama-cpp-python==' requirements.lock)"; \
+    else \
+        echo "llama-cpp-python : version CPU (LLAMA_CUDA=false)"; \
+    fi
+
 # Gestion optionnelle de Flash Attention (skip si échec de build)
 ARG BUILD_FLASH_ATTN=true
 RUN if [ "$BUILD_FLASH_ATTN" = "true" ] ; then \

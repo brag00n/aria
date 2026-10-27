@@ -1,0 +1,7 @@
+# Surcharge GPU pour Podman : donne le GPU NVIDIA au conteneur via CDI.
+# Prérequis : NVIDIA Container Toolkit et spécification CDI (sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml).
+# Utilisée par scripts/install.sh et scripts/install.ps1 avec --gpu / -Gpu.
+services:
+  aria:
+    devices:
+      - nvidia.com/gpu=all

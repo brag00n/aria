@@ -1,0 +1,12 @@
+# Surcharge GPU pour Docker : réserve le GPU NVIDIA pour le conteneur.
+# Prérequis : NVIDIA Container Toolkit configuré pour Docker (sudo nvidia-ctk runtime configure --runtime=docker).
+# Utilisée par scripts/install.sh et scripts/install.ps1 avec --gpu / -Gpu.
+services:
+  aria:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
