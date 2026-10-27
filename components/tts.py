@@ -48,15 +48,13 @@ class Tts:
     
     def get_javascript(self):
         return f"""
-
         try {{
-            // 2. Initialisation des variables globales pour le streaming audio
+            // 1. Initialisation des variables globales pour le streaming audio
             window.audioQueue = [];
             window.playedIds = new Set();
             window.isPlaying = false;
 
-
-            // 4. Logique de lecture audio (Streaming)
+            // 2. Logique de lecture audio (Streaming)
             async function playNext() {{
                 if (window.audioQueue.length === 0) {{ 
                     window.isPlaying = false; 
@@ -65,19 +63,30 @@ class Tts:
                 window.isPlaying = true;
                 const chunk = window.audioQueue.shift();
                 console.log(`[ARIA-CLIENT] Lecture bloc audio: ${{chunk.id}}`);
+                
                 const audio = new Audio(chunk.data);
+
+                // --- DÉCLENCHEMENT DE L'ANIMATION POUR LE VISUALISEUR ---
+                // On émet l'événement que audioDesign.js écoute pour lier le flux
+                const event = new CustomEvent('aria_audio_start', {{ 
+                    detail: {{ audioElement: audio }} 
+                }});
+                window.dispatchEvent(event);
+                // -------------------------------------------------------
+
                 audio.onended = playNext;
                 audio.onerror = (e) => {{
                     console.error(`[ARIA-CLIENT] Erreur lecture bloc ${{chunk.id}}:`, e);
                     playNext();
                 }};
+
                 audio.play().catch(e => {{
-                    console.warn("[ARIA-CLIENT] Lecture bloquée par le navigateur:", e);
+                    console.warn("[ARIA-CLIENT] Lecture bloquée par le navigateur (cliquez sur l'interface) :", e);
                     playNext();
                 }});
             }}
 
-            // 5. Surveillance du bridge pour les réponses TTS
+            // 3. Surveillance du bridge pour les réponses TTS
             const bridge = document.querySelector('#audio_url_bridge textarea');
             if (bridge) {{
                 const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;

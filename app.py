@@ -35,6 +35,7 @@ utils.log_info("app","Gradio chargé")
 
 import warnings
 import logging
+from pathlib import Path
 
 #from prototypes.test_llm_mcp.test_llm_mcp import CONFIG_FILE
 
@@ -63,6 +64,7 @@ utils.log_info("app","Stt, Llm, Tts chargés")
 DEBUG_SAVE_WAV = False
 _TMP_DIR = "/aria/tmp/tts"
 _CONFIG_FILE = "configs/default.json"
+JS_VISUALIZER_PATH = Path(__file__).parent / "audioDesign.js"
 
 if os.path.exists(_TMP_DIR):
     shutil.rmtree(_TMP_DIR)
@@ -87,6 +89,23 @@ stt = Stt(config["stt"][active_stt]["params"])
 llm = Llm(config["llm"][active_llm]["params"], all_config=config)
 tts = Tts(config["tts"][active_tts]["params"])
 utils.log_info("app", f"--- FIN Chargement (VAD:{active_vad}, STT:{active_stt}, LLM:{active_llm}, TTS:{active_tts})")
+
+# --- LOGIQUE DU VISUALISEUR ---
+
+def load_visualizer_js():
+    return JS_VISUALIZER_PATH.read_text(encoding='utf-8') if JS_VISUALIZER_PATH.exists() else ""
+
+# Paramètres basés sur ton preset "Test003"
+DEFAULT_VISUAL_PARAMS = {
+    "nb_rings": 9,
+    "res": 30,
+    "space": 0,
+    "gain": 3.4,
+    "width": 6.6,
+    "alpha_min": 0.0,
+    "alpha_max": 0.74
+}
+
 
 def read_logs_memory():
     """Appelle le buffer mémoire de utils"""
@@ -144,10 +163,29 @@ def update_config_ui(vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_js
 
 JS_COMBO = f"""
 async () => {{
-    // 1. Injection des fonctions du VAD
-    {vad.get_javascript()}
+    // 1. Initialisation des paramètres visuels (Preset Test003)
+    window.visualParams = {{ 
+        nbRings: {DEFAULT_VISUAL_PARAMS['nb_rings']}, 
+        resolution: {DEFAULT_VISUAL_PARAMS['res']}, 
+        spacing: {DEFAULT_VISUAL_PARAMS['space']}, 
+        gain: {DEFAULT_VISUAL_PARAMS['gain']}, 
+        stroke: {DEFAULT_VISUAL_PARAMS['width']}, 
+        alphaMin: {DEFAULT_VISUAL_PARAMS['alpha_min']}, 
+        alphaMax: {DEFAULT_VISUAL_PARAMS['alpha_max']} 
+    }};
 
-    // 2. Initialisation du streaming audio TTS
+    // 2. Lancement du script de rendu (audioDesign.js)
+    {load_visualizer_js()}
+
+    // 3. INDISPENSABLE : Écouter l'événement pour lier la voix d'Aria au visualiseur
+    window.addEventListener('aria_audio_start', (event) => {{
+        if (event.detail.audioElement) {{
+            setupAriaVisualizer(event.detail.audioElement);
+        }}
+    }});
+
+    // 4. Initialisation du VAD et du streaming audio TTS
+    {vad.get_javascript()}
     {tts.get_javascript()}
 }}
 """
@@ -162,29 +200,34 @@ async def process_streaming_binaire(b64_audio, history):
     if history is None: history = []
     
     try:
-
-        start_total = datetime.now()
         utils.log_info("app", "--- DEBUT Traitement (Stream Binaire)")
-        # 1. Reception et STT
+        
+        # 1. Réception et STT (Transcription)
         header, encoded = b64_audio.split(",", 1)
         audio_data = base64.b64decode(encoded)
         audio_seg = AudioSegment.from_file(io.BytesIO(audio_data)).set_frame_rate(16000).set_channels(1)
         samples = np.array(audio_seg.get_array_of_samples()).astype(np.float32) / 32768.0
         
+        # Transcription synchrone (Faster-Whisper)
+        utils.log_info("app", f"   STT: Audio reçu ({len(audio_data)} octets), début transcription...")
         text_user = stt.transcribe_translate(samples)
-        utils.log_info("app", f"   STT: reçu: '{text_user}' (Taille: {len(audio_data)} octets)")
+        utils.log_info("app", f"   STT: Transcription: '{text_user}'")
         
+        # --- MISE À JOUR UI IMMÉDIATE (STT) ---
+        # On affiche le texte de l'utilisateur et un message d'attente pour Aria
         history.append({"role": "user", "content": text_user})
-        history.append({"role": "assistant", "content": "..."})
-        yield history, ""
+        history.append({"role": "assistant", "content": "..."}) 
+        yield history, "" # L'utilisateur voit son texte ici sans attendre le LLM
         
         # 2. Appel LLM + TTS Streaming
         utils.log_info("app", f"   LLM: Début génération")
+        # On passe l'instance tts pour que le LLM puisse envoyer les phrases au fur et à mesure
         response_gen = llm.get_answer_web(tts, text_user, "DefaultUser")
         chunk_count = 0
         stream_payload = []
         
-        async for text_update, audio_chunk_path,textCleanedForAudio in response_gen:
+        async for text_update, audio_chunk_path, textCleanedForAudio in response_gen:
+            # Mise à jour progressive du texte d'Aria dans le chatbot
             history[-1]["content"] = text_update
             
             payload_str = ""
@@ -192,12 +235,13 @@ async def process_streaming_binaire(b64_audio, history):
                 chunk_count += 1
                 unique_id = f"bloc_{time.time_ns()}_{chunk_count}"
                 
-                # Lecture et encodage du son
+                # Lecture et encodage du morceau audio généré
                 with open(audio_chunk_path, "rb") as f:
                     raw_son = f.read()
+                    # Encodage en Base64 pour le pont JavaScript (audio_url_bridge)
                     b64_data = f"data:audio/wav;base64,{base64.encodebytes(raw_son).decode('utf-8')}"
                 
-                # Debug : Sauvegarde si activé
+                # Logique de log et sauvegarde debug
                 if DEBUG_SAVE_WAV:
                     save_path = os.path.join(_TMP_DIR, f"{unique_id}.wav")
                     shutil.copy(audio_chunk_path, save_path)
@@ -205,21 +249,28 @@ async def process_streaming_binaire(b64_audio, history):
                 else:
                     utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) text: '{textCleanedForAudio}'")
                 
+                # On ajoute ce chunk à la liste à envoyer au client
                 stream_payload.append({"id": unique_id, "data": b64_data})
                 payload_str = json.dumps(stream_payload)
                 
-                # Nettoyage immédiat du fichier temporaire original
-                try: os.remove(audio_chunk_path)
-                except: pass
+                # Nettoyage immédiat du fichier temporaire pour ne pas saturer le disque
+                try: 
+                    os.remove(audio_chunk_path)
+                except Exception as e:
+                    utils.log_info("app", f"Erreur nettoyage chunk : {e}")
             
+            # Envoi du texte mis à jour ET du chunk audio (si présent) à l'interface
             yield history, payload_str
         
-        utils.log_info("app", f"   LLM: FIN Traitement ({chunk_count} blocs son, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
+        # 3. Fin de traitement et logs de performance
+        total_duration = (datetime.now() - start_total).total_seconds()
+        utils.log_info("app", f"   LLM: FIN Traitement ({chunk_count} blocs son, Total: {total_duration:.3f}s)")
         utils.log_info("app", f"   LLM: Réponse finale: '{history[-1]['content']}'")
-                
-        utils.log_info("app", f"--- FIN Traitement ({chunk_count} blocs, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
+        utils.log_info("app", f"--- FIN GLOBALE Traitement (Total: {total_duration:.3f}s)")
+
     except Exception as e:
-        utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
+        utils.log_info("app", f"!!! ERREUR CRITIQUE DANS LE STREAM : {str(e)}")
+        # En cas d'erreur, on essaie de rendre l'historique pour ne pas bloquer l'UI
         yield history, ""
 
 # --- UI GRADIO ---
@@ -267,6 +318,40 @@ CSS = """
     height: 100% !important;
     margin: 0 !important;
 }
+
+/* Animation du liseré rouge pour le micro */
+@keyframes pulse-red {
+    0% { box-shadow: 0 0 0 0px rgba(255, 0, 0, 0.7); border-color: rgba(255, 0, 0, 1); }
+    70% { box-shadow: 0 0 0 15px rgba(255, 0, 0, 0); border-color: rgba(255, 0, 0, 0.5); }
+    100% { box-shadow: 0 0 0 0px rgba(255, 0, 0, 0); border-color: rgba(255, 0, 0, 1); }
+}
+
+.listening-active {
+    border: 3px solid red !important;
+    border-radius: 50%; /* Pour épouser la forme circulaire du visualiseur */
+    animation: pulse-red 1.5s infinite;
+    transition: all 0.3s ease;
+}
+
+#audio_visualizer.speaking {
+    border: 4px solid #ff4b4b; 
+    box-shadow: 0 0 20px #ff4b4b;
+    transform: scale(1.1);
+
+    width: 100% !important;
+    height: 100% !important;
+    max-height: 100px;
+    margin: auto;
+
+    display: block;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0.7); }
+    70% { box-shadow: 0 0 0 15px rgba(255, 75, 75, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0); }
+}
 """
 
 with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
@@ -283,13 +368,11 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                 """
             )
         with gr.Column(scale=4): # Le champ image prend la majeure partie de la largeur
-            audio_input = gr.Image(
-                type="filepath", value="static/transition.gif", height="100", elem_id="aria_logo"
-            )
+            audio_input = gr.HTML(f"""<canvas id="audio_visualizer"></canvas>""", height="200", width="200")
         
         with gr.Column(scale=1, elem_id="micro_btn_container"): # Le bouton à droite
             mic_btn = gr.Button(
-                "🎙️ Activer Micro & Son", 
+                "🎙️ Activer", 
                 variant="primary",
                 elem_id="micro_btn"
             )

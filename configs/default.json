@@ -1,7 +1,7 @@
 {
   "active_modules": {
     "vad": "Vad_Web",
-    "stt": "Stt_FasterWhisper",
+    "stt": "Stt_Whisper",
     "llm": "Llm_Ministral_local",
     "tts": "Tts_Kokoro"
   },
@@ -71,7 +71,7 @@
         "custom_path": "",
         "model_name": "Ministral-8B-Instruct-2410-Q4_K_S",
         "model_file": "huihui-ministral-3-3b-reasoning-2512-abliterated-q4_k_m.gguf",
-        "num_gpu_layers": -1,
+        "num_gpu_layers": 10,
         "context_length": 32768,
         "streaming_output": true,
         "chat_format": "mistral-instruct",

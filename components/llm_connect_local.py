@@ -14,6 +14,8 @@ class LlmConnectLocal:
         self.chat_format = self.params.get("chat_format", "mistral-instruct")
         self.context_length = self.params.get("context_length", 4096)
         self.verbose = self.params.get("verbose", False)
+        self.num_gpu_layers = self.params.get("num_gpu_layers", -1)  # Charge tout sur GPU par défaut
+        self.verbose=self.params.get("verbose", False)
         
         model_file = self.params.get("model_file", "ministral-3b-instruct.Q4_K_M.gguf")
         model_path = os.path.join("/aria/models/llm", model_file)
@@ -21,10 +23,12 @@ class LlmConnectLocal:
         utils.log_info("LLM-LOCAL", f"Chargement du modèle : {model_file}")
         self.llm = Llama(
             model_path=model_path,
-            n_gpu_layers=-1, 
-            chat_format=self.chat_format,
+            n_gpu_layers=self.num_gpu_layers,         # Charge toutes les couches sur la VRAM
             n_ctx=self.context_length,
-            verbose=self.verbose
+            chat_format=self.chat_format,
+            flash_attn=True,         # <--- L'optimisation qu'on a compilée
+            n_batch=512,             # Augmente la vitesse de traitement du prompt
+            verbose=self.verbose             # Garde True pour vérifier les logs au prochain démarrage
         )
 
         from .mcp import Mcp
