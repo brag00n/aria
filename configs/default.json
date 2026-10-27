@@ -178,6 +178,10 @@
       }
     }
   },
+  "visualizer": {
+    "maximize_in_frame": true,
+    "frame_size_px": 220
+  },
   "mcp": {
     "params": {
       "servers": {

@@ -56,6 +56,7 @@ from components.stt import Stt
 from components.llm import Llm
 from components.tts import Tts
 from components.vad import Vad
+from components import visualizer
 utils.log_info("app","Stt, Llm, Tts chargés")
 
 
@@ -144,6 +145,9 @@ def update_config_ui(vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_js
 
 JS_COMBO = f"""
 async () => {{
+    // 0. Visualiseur audio (isolé : une erreur ici n'empêche ni le VAD ni la lecture)
+    {visualizer.build_js(config.get('visualizer'))}
+
     // 1. Injection des fonctions du VAD
     {vad.get_javascript()}
 
@@ -253,17 +257,6 @@ CSS = """
     opacity: 0;
 }
 
-#aria_logo.speaking { 
-    border: 4px solid #ff4b4b; 
-    box-shadow: 0 0 20px #ff4b4b;
-    transform: scale(1.1);
-    animation: pulse 1.5s infinite;
-}
-@keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0.7); }
-    70% { box-shadow: 0 0 0 15px rgba(255, 75, 75, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0); }
-}
 
 #log_display textarea {
     font-family: 'Courier New', monospace !important;
@@ -288,12 +281,14 @@ CSS = """
 }
 """
 
+CSS += visualizer.css(config.get("visualizer"))
+
 with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
 
-    gr.Markdown("# 🎙️ Aria Voice System")
 
     with gr.Row(equal_height=True): # Force les colonnes à avoir la même hauteur
         with gr.Column(scale=1):
+            gr.Markdown("# 🎙️ Aria Voice System")
             gr.Markdown(
                 """
                 **Bienvenue sur l'interface de contrôle d'Aria !**  
@@ -301,10 +296,8 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                 Cliquez sur le bouton pour activer le microphone et commencer à interagir avec Aria.  
                 """
             )
-        with gr.Column(scale=4): # Le champ image prend la majeure partie de la largeur
-            audio_input = gr.Image(
-                type="filepath", value="static/transition.gif", height="100", elem_id="aria_logo"
-            )
+        with gr.Column(scale=4, elem_id="visualizer_col"): # Visualiseur audio : anneaux animés par la voix d'Aria
+            gr.HTML('<canvas id="audio_visualizer" width="400" height="100"></canvas>', elem_id="visualizer_wrapper")
         
         with gr.Column(scale=1, elem_id="micro_btn_container"): # Le bouton à droite
             mic_btn = gr.Button(

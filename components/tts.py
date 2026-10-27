@@ -66,6 +66,10 @@ class Tts:
                 const chunk = window.audioQueue.shift();
                 console.log(`[ARIA-CLIENT] Lecture bloc audio: ${{chunk.id}}`);
                 const audio = new Audio(chunk.data);
+
+                // Signale au visualiseur (static/audioDesign.js) qu'un bloc va être joué
+                window.dispatchEvent(new CustomEvent('aria_audio_start', {{ detail: {{ audioElement: audio }} }}));
+
                 audio.onended = playNext;
                 audio.onerror = (e) => {{
                     console.error(`[ARIA-CLIENT] Erreur lecture bloc ${{chunk.id}}:`, e);

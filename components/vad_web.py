@@ -50,12 +50,12 @@ class VadWeb:
                 window.myVAD = await vad.MicVAD.new({{
                     modelURL: "/file=static/silero_v6.2/silero_vad.onnx",
                     onSpeechStart: () => {{
-                        const logo = document.querySelector('#aria_logo');
-                        if (logo) logo.classList.add('speaking');
+                        const visualizer = document.getElementById('audio_visualizer');
+                        if (visualizer) visualizer.classList.add('speaking');
                     }},
                     onSpeechEnd: (audio) => {{
-                        const logo = document.querySelector('#aria_logo');
-                        if (logo) logo.classList.remove('speaking');
+                        const visualizer = document.getElementById('audio_visualizer');
+                        if (visualizer) visualizer.classList.remove('speaking');
                         
                         const wavBuffer = vad.utils.encodeWAV(audio);
                         const base64Audio = "data:audio/wav;base64," + vad.utils.arrayBufferToBase64(wavBuffer);
