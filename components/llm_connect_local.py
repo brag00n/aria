@@ -20,6 +20,15 @@ class LlmConnectLocal:
         model_path = os.path.join(models_dir, model_file)
         n_gpu_layers = self.params.get("num_gpu_layers", -1)
 
+        # Fichier absent : téléchargement depuis Hugging Face si "hf_repo" est renseigné (ex. "owner/nom-GGUF")
+        hf_repo = self.params.get("hf_repo")
+        if hf_repo and not os.path.isfile(model_path):
+            from huggingface_hub import hf_hub_download
+            os.makedirs(models_dir, exist_ok=True)
+            utils.log_info("LLM-LOCAL", f"Modèle absent, téléchargement de {hf_repo}/{model_file} (plusieurs Go, patientez)...")
+            hf_hub_download(repo_id=hf_repo, filename=model_file, local_dir=models_dir)
+            utils.log_info("LLM-LOCAL", "Téléchargement terminé")
+
         # Réglages d'échantillonnage : ils se passent à la génération, pas au constructeur de Llama
         # (le constructeur les ignorerait sans erreur). Une valeur absente de la config n'est pas envoyée.
         self.gen_kwargs = {k: self.params[k] for k in ("temperature", "repeat_penalty", "stop") if k in self.params}
