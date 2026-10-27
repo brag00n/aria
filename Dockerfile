@@ -60,8 +60,10 @@ ARG CUDA_ARCH=""
 RUN if [ "$LLAMA_CUDA" = "true" ] ; then \
         echo "llama-cpp-python : compilation avec CUDA (architectures : ${CUDA_ARCH:-toutes})" && \
         apt-get update && apt-get install -y cmake build-essential && rm -rf /var/lib/apt/lists/* && \
+        ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 && \
         export CMAKE_ARGS="-DGGML_CUDA=on${CUDA_ARCH:+ -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH}}" \
-               FORCE_CMAKE=1 CUDA_HOME=/usr/local/cuda LIBRARY_PATH=/usr/local/cuda/lib64/stubs && \
+               FORCE_CMAKE=1 CUDA_HOME=/usr/local/cuda LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+               LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} && \
         uv pip install --reinstall-package llama-cpp-python --no-cache --no-binary llama-cpp-python \
             "$(grep -i '^llama-cpp-python==' requirements.lock)"; \
     else \
