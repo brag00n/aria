@@ -37,7 +37,7 @@ class SttFasterWhisper:
         segments, info = self.model.transcribe(
             audio_path, 
             beam_size=1,
-            language="fr",
+            language=self.params.get("language"),   # None = détection automatique
             # Ignore les silences : évite les hallucinations ("Merci d'avoir regardé...") et gagne du temps
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 500},

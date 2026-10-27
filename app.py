@@ -57,6 +57,7 @@ from components.llm import Llm
 from components.tts import Tts
 from components.vad import Vad
 from components import visualizer
+from components.language import Language
 utils.log_info("app","Stt, Llm, Tts chargés")
 
 
@@ -76,7 +77,12 @@ utils.log_info("app", "--- DEBUT Chargement de la configuration...")
 with open(_CONFIG_FILE, "r") as f:
     config = json.load(f)
 
-# Extraction des modules actifs depuis la nouvelle section "active_modules"
+# Section "global" : une langue unique pour tous les modules (components/language.py).
+# Migre aussi l'ancien "active_modules" placé à la racine de la config.
+language = Language.from_config(config)
+utils.log_info("LANG", f"Langue globale '{language.code}' (repli '{language.default}') | VAD : indépendant de la langue")
+
+# Extraction des modules actifs depuis la section "active_modules"
 active_vad = config["active_modules"]["vad"]
 active_stt = config["active_modules"]["stt"]
 active_llm = config["active_modules"]["llm"]
@@ -84,9 +90,9 @@ active_tts = config["active_modules"]["tts"]
 
 # Instanciation dynamique basée sur le fichier de config
 vad = Vad(config["vad"][active_vad]["params"])
-stt = Stt(config["stt"][active_stt]["params"])
-llm = Llm(config["llm"][active_llm]["params"], all_config=config)
-tts = Tts(config["tts"][active_tts]["params"])
+stt = Stt(config["stt"][active_stt]["params"], language=language)
+llm = Llm(config["llm"][active_llm]["params"], all_config=config, language=language)
+tts = Tts(config["tts"][active_tts]["params"], language=language)
 utils.log_info("app", f"--- FIN Chargement (VAD:{active_vad}, STT:{active_stt}, LLM:{active_llm}, TTS:{active_tts})")
 
 def read_logs_memory():

@@ -1,4 +1,8 @@
 {
+  "global": {
+    "language": "fr",
+    "default_language": "en"
+  },
   "active_modules": {
     "vad": "Vad_Web",
     "stt": "Stt_FasterWhisper",
@@ -33,8 +37,7 @@
         "model_name": "openai/whisper-large-v3-turbo",
         "low_cpu_mem_usage": true,
         "attn": "flash_attention_2",
-        "verbose": false,
-        "language": "fr"
+        "verbose": false
       }
     },
     "Stt_FasterWhisper": {
@@ -43,8 +46,7 @@
         "device": "cpu",
         "model_name": "small",
         "low_cpu_mem_usage": true,
-        "verbose": false,
-        "language": "fr"
+        "verbose": false
       }
     }
   },

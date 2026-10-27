@@ -4,12 +4,15 @@ from .llm_connect_local import LlmConnectLocal
 from .llm_connect_openai import LlmConnectOpenai
 
 class Llm:
-    def __init__(self, params=None, all_config=None):
+    def __init__(self, params=None, all_config=None, language=None):
         # Copie : on ne modifie pas le dict de la config, qui est réécrit tel quel par l'onglet Paramètres
         self.params = dict(params or {})
         self.params["system_message"] = (
             f"{self.params.get('system_message', '')}\n\n{utils.SPEECH_STYLE_PROMPT}".strip()
         )
+        if language is not None:
+            self.params["system_message"] += "\n\n" + language.llm_instruction()
+            utils.log_info("LANG", f"LLM : consigne de langue '{language.code}' ajoutée au message système")
         self.backend_type = self.params.get("backend_type", "local")
 
         if self.backend_type == "anthropic":

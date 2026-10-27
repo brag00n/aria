@@ -3,8 +3,11 @@ from .stt_whisper import SttWhisper
 from .stt_fasterwhisper import SttFasterWhisper
 
 class Stt:
-    def __init__(self, params=None):
-        self.params = params or {}
+    def __init__(self, params=None, language=None):
+        self.params = dict(params or {})
+        if language is not None:
+            # La langue globale l'emporte sur un éventuel "language" propre au module (None = détection automatique)
+            self.params["language"] = language.stt()
         # Choix du moteur : 'faster-whisper' par défaut pour la performance
         self.engine_type = self.params.get("engine_type", "whisper")
 

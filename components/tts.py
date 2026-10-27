@@ -3,37 +3,65 @@ import sys
 import time
 import soundfile as sf
 import components.utils as utils
+from components.language import Language
 
 class Tts:
-    def __init__(self, params=None):
+    """Voix d'Aria. Chaîne de repli, avec un log à chaque étape :
+    moteur demandé (Piper/Sherpa ou Kokoro) pour la langue globale -> l'autre moteur -> aucune voix (réponse écrite seule)."""
+
+    def __init__(self, params=None, language=None):
         self.params = params or {}
         self.device = self.params.get("device", "cuda:0")
         # Par défaut, on privilégie désormais 'sherpa' pour l'identité d'Héléna
         self.tts_type = self.params.get("tts_type", "sherpa")
         self.tmp_dir = utils.aria_path("tmp", "tts")
-        
+        self.language = language or Language("fr")
+        self.engine = None
         os.makedirs(self.tmp_dir, exist_ok=True)
 
-        # --- MOTEUR SHERPA-ONNX (HÉLÉNA PRO) ---
-        if self.tts_type == "sherpa":
-            try:
-                from components.tts_sherpa_onnx import TtsSherpaOnnx
-                self.engine = TtsSherpaOnnx(params=self.params, device=self.device)
-            except Exception as e:
-                utils.log_info("TTS", f"Échec Sherpa-ONNX : {e}. Repli sur Kokoro...")
-                self.tts_type = "kokoro"
+        order = ["sherpa", "kokoro"] if self.tts_type == "sherpa" else ["kokoro", "sherpa"]
+        utils.log_info("TTS", f"Langue '{self.language.code}' : ordre d'essai {' -> '.join(order)}")
+        for name in order:
+            engine = self._try_sherpa() if name == "sherpa" else self._try_kokoro()
+            if engine is not None:
+                self.engine, self.tts_type = engine, name
+                utils.log_info("TTS", f"✅ Voix '{name}' active pour la langue '{self.language.code}'")
+                break
+        if self.engine is None:
+            utils.log_info("TTS", f"❌ AUCUNE voix disponible pour la langue '{self.language.code}' : "
+                                  "Aria répondra par écrit seulement")
 
-        # --- MOTEUR KOKORO (BACKUP STABLE) ---
-        if self.tts_type == "kokoro":
-            try:
-                from components.tts_kokoro import TtsKokoro
-                self.engine = TtsKokoro(params=self.params, device=self.device)
-            except Exception as e:
-                utils.log_info("TTS", f"Échec Kokoro : {e}")
-                raise RuntimeError("Aucun moteur TTS disponible.")
+    def _try_sherpa(self):
+        """Voix Piper de la liste connue (téléchargée au besoin), ou None."""
+        model = self.language.piper_model(self.params.get("piper_models"))
+        if model is None:
+            utils.log_info("TTS", f"Piper : pas de modèle pour '{self.language.code}' -> repli")
+            return None
+        try:
+            from components.tts_sherpa_onnx import TtsSherpaOnnx
+            return TtsSherpaOnnx(params=self.params, device=self.device, model_name=model)
+        except Exception as e:
+            utils.log_info("TTS", f"Piper : échec du modèle '{model}' ({e}) -> repli")
+            return None
+
+    def _try_kokoro(self):
+        """Voix Kokoro pour la langue, ou None."""
+        code = self.language.kokoro_code()
+        if code is None:
+            utils.log_info("TTS", f"Kokoro : langue '{self.language.code}' non utilisable -> repli")
+            return None
+        code, voice = self.language.kokoro_voice(code, self.params.get("kokoro_voice"))
+        try:
+            from components.tts_kokoro import TtsKokoro
+            return TtsKokoro(params=self.params, device=self.device, lang_code=code, voice=voice)
+        except Exception as e:
+            utils.log_info("TTS", f"Kokoro : échec ({e}) -> repli")
+            return None
 
     def run_tts_to_file(self, text, user_id="default"):
-        """Génère un fichier audio unique via le moteur sélectionné."""
+        """Génère un fichier audio unique via le moteur sélectionné (None si aucune voix n'est disponible)."""
+        if self.engine is None:
+            return None
         file_path = os.path.join(self.tmp_dir, f"aria_res_{user_id}_{time.time_ns()}.wav")
 
         try:
