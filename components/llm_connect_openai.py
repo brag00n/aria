@@ -1,8 +1,9 @@
-import asyncio
 import json
 import components.utils as utils
-from .utils import clean_text_for_tts, remove_nonverbal_cues
+from .utils import StepTimer, TtsQueue
 from .mcp import Mcp
+
+MAX_TOOL_ROUNDS = 5
 
 class LlmConnectOpenai:
     def __init__(self, params, all_config=None):
@@ -21,90 +22,130 @@ class LlmConnectOpenai:
         except ImportError:
             utils.log_info(f"LLM-{self.backend_type}", "❌ Erreur: openai manquant. pip install openai")
             raise
-        
+
         # Préparation de l'acces au modele
         self.client = AsyncOpenAI(base_url=self.base_url, api_key=f"{self.apikey}",timeout=60.0)
         self.user_aware_messages = {}
 
         # Préparation des outils
         self.mcp_manager = None
-        if all_config and "Mcp" in all_config:
-            self.mcp_manager = Mcp(all_config["Mcp"]["params"])
-        
+        if all_config and "mcp" in all_config:
+            self.mcp_manager = Mcp(all_config["mcp"]["params"])
+
 
     async def get_answer_web(self, tts, query, user):
-        if user not in self.user_aware_messages:
-            self.user_aware_messages[user] = [{"role": "system", "content": self.system_message}]
+        tag = f"LLM-{self.backend_type}"
+        timer = StepTimer(tag)
+        queue = TtsQueue(tts, user, tag)
 
-        self.user_aware_messages[user].append({"role": "user", "content": query})
+        messages = self.user_aware_messages.setdefault(
+            user, [{"role": "system", "content": self.system_message}]
+        )
+        start_len = len(messages)
+        messages.append({"role": "user", "content": query})
 
         try:
-
             # 1. Préparation des outils
             tools = await self.mcp_manager.get_tools_for_openai() if self.mcp_manager else None
+            timer.mark("outils_mcp", f"{len(tools) if tools else 0} outil(s)")
 
-            # 2. Premier passage : Détection d'outil
-            response = await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=self.user_aware_messages[user],
-                tools=tools,
-                tool_choice="auto" if tools else None
-            )
+            full_res = ""
+            first_token = False
 
-            msg = response.choices[0].message
-            
-            # 3. Exécution de l'outil si nécessaire
-            if msg.tool_calls:
-                self.user_aware_messages[user].append(msg)
-                for tool_call in msg.tool_calls:
-                    name = tool_call.function.name
-                    args = json.loads(tool_call.function.arguments)
-                    
-                    utils.log_info(f"LLM-{self.backend_type}", f"🛠️ Action MCP : {name}({args})")
-                    result = await self.mcp_manager.call_tool(name, args)
-                    
-                    self.user_aware_messages[user].append({
+            # Une seule requête en streaming par tour : le texte est parlé au fil de l'eau,
+            # et un éventuel appel d'outil est reconstitué depuis les deltas.
+            for round_idx in range(MAX_TOOL_ROUNDS):
+                kwargs = {"model": self.model_name, "messages": messages, "stream": True}
+                if tools:
+                    kwargs["tools"] = tools
+
+                stream = await self.client.chat.completions.create(**kwargs)
+                timer.mark(f"requete_llm_{round_idx + 1}")
+
+                round_text = ""
+                tts_buf = ""
+                tool_calls = {}
+
+                async for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+
+                    for tc in (delta.tool_calls or []):
+                        slot = tool_calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+                        if tc.id:
+                            slot["id"] = tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                slot["name"] = tc.function.name
+                            if tc.function.arguments:
+                                slot["arguments"] += tc.function.arguments
+
+                    content = delta.content
+                    if not content:
+                        continue
+                    if not first_token:
+                        first_token = True
+                        timer.mark("premier_token")
+
+                    full_res += content
+                    round_text += content
+                    tts_buf += content
+
+                    tts_buf = queue.feed(tts_buf)  # synthèse en arrière-plan, le flux LLM continue
+
+                    ready = queue.pop_ready()
+                    for audio, spoken in ready:
+                        yield full_res, audio, spoken
+                    if not ready:
+                        yield full_res, None, None
+
+                # Reste du buffer de ce tour
+                queue.flush(tts_buf)
+
+                if not tool_calls:
+                    messages.append({"role": "assistant", "content": round_text})
+                    break
+
+                # Exécution des outils demandés, puis nouveau tour
+                calls = []
+                for idx in sorted(tool_calls):
+                    c = tool_calls[idx]
+                    calls.append({
+                        "id": c["id"] or f"call_{round_idx}_{idx}",
+                        "type": "function",
+                        "function": {"name": c["name"], "arguments": c["arguments"] or "{}"},
+                    })
+                messages.append({"role": "assistant", "content": round_text or None, "tool_calls": calls})
+
+                for call in calls:
+                    name = call["function"]["name"]
+                    try:
+                        args = json.loads(call["function"]["arguments"])
+                    except json.JSONDecodeError:
+                        args = {}
+                    utils.log_info(tag, f"🛠️ Action MCP : {name}({args})")
+                    if self.mcp_manager:
+                        result = await self.mcp_manager.call_tool(name, args)
+                    else:
+                        result = f"Erreur : aucun outil disponible pour {name}."
+                    timer.mark(f"outil_{name}")
+                    messages.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": call["id"],
                         "name": name,
                         "content": result
                     })
 
-            # 4. Passage final : Streaming de la réponse et du TTS
-            stream = await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=self.user_aware_messages[user],
-                stream=True
-            )
-
-            full_res = ""
-            tts_buf = ""
-            async for chunk in stream:
-                content = chunk.choices[0].delta.content
-                if content:
-                    full_res += content
-                    tts_buf += content
-                    
-                    if any(p in content for p in [".", "!", "?", "\n"]):
-                        txt = clean_text_for_tts(remove_nonverbal_cues(tts_buf)).strip()
-                        if len(txt) > 2:
-                            audio = tts.run_tts_to_file(txt, user_id=user)
-
-                            yield full_res, audio,txt
-                            tts_buf = ""
-                        else:
-                            yield full_res, None, None
-                    else:
-                        yield full_res, None, None
-
-            # Reste du buffer final
-            txt_fin = clean_text_for_tts(remove_nonverbal_cues(tts_buf)).strip()
-            if len(txt_fin) > 1:
-                yield full_res, tts.run_tts_to_file(txt_fin, user_id=user), txt_fin
-
-            self.user_aware_messages[user].append({"role": "assistant", "content": full_res})
+            timer.mark("fin_texte_llm")
+            # Blocs encore en cours de synthèse
+            async for audio, spoken in queue.drain():
+                yield full_res, audio, spoken
+            timer.mark("fin_generation", f"TTS cumulé {queue.total:.2f}s sur {queue.count} bloc(s)")
 
         except Exception as e:
-            utils.log_info(f"LLM-{self.backend_type}", f"❌ Erreur : {str(e)}")
+            utils.log_info(tag, f"❌ Erreur : {str(e)}")
+            # On retire les messages de ce tour pour ne pas laisser un historique incohérent
+            del messages[start_len:]
             # On renvoie 3 valeurs au lieu de 2 pour correspondre à ce que app.py attend
             yield f"Erreur LLM: {str(e)}", None, None

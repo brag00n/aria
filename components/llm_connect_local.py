@@ -16,12 +16,14 @@ class LlmConnectLocal:
         self.verbose = self.params.get("verbose", False)
         
         model_file = self.params.get("model_file", "ministral-3b-instruct.Q4_K_M.gguf")
-        model_path = os.path.join("/aria/models/llm", model_file)
-        
-        utils.log_info("LLM-LOCAL", f"Chargement du modèle : {model_file}")
+        models_dir = self.params.get("custom_path") or utils.aria_path("models", "llm")
+        model_path = os.path.join(models_dir, model_file)
+        n_gpu_layers = self.params.get("num_gpu_layers", -1)
+
+        utils.log_info("LLM-LOCAL", f"Chargement du modèle : {model_path}")
         self.llm = Llama(
             model_path=model_path,
-            n_gpu_layers=-1, 
+            n_gpu_layers=n_gpu_layers,
             chat_format=self.chat_format,
             n_ctx=self.context_length,
             verbose=self.verbose
@@ -29,8 +31,8 @@ class LlmConnectLocal:
 
         from .mcp import Mcp
         self.mcp = None
-        if all_config and "Mcp" in all_config:
-            self.mcp = Mcp(all_config["Mcp"]["params"])
+        if all_config and "mcp" in all_config:
+            self.mcp = Mcp(all_config["mcp"]["params"])
             self.mcp.start()
 
     async def get_answer_web(self, tts, query, user):

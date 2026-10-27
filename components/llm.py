@@ -8,7 +8,10 @@ class Llm:
         self.params = params or {}
         self.backend_type = self.params.get("backend_type", "local")
 
-        if self.backend_type in {"llm_studio", "ollama", "openai"}:
+        if self.backend_type == "anthropic":
+            from .llm_connect_anthropic import LlmConnectAnthropic
+            self.engine = LlmConnectAnthropic(self.params, all_config=all_config)
+        elif self.backend_type in {"llm_studio", "ollama", "openai"}:
             self.engine = LlmConnectOpenai(self.params, all_config=all_config)
         else:
             utils.log_info("LLM", "Initialisation du mode Local 🏠")

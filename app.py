@@ -15,7 +15,7 @@ os.environ['GRADIO_SERVER_NAME'] = '0.0.0.0'
 
 # --- ACTIVATION DU CACHE CUDA (SPECIFIQUE LINUX/DOCKER) ---
 if os.name != 'nt':  # On ne le fait PAS si c'est Windows ('nt')
-    cuda_cache_dir = "/aria/.cuda_cache"
+    cuda_cache_dir = utils.aria_path(".cuda_cache")
     try:
         pathlib.Path(cuda_cache_dir).mkdir(parents=True, exist_ok=True)
         os.environ['CUDA_CACHE_PATH'] = cuda_cache_dir
@@ -61,7 +61,7 @@ utils.log_info("app","Stt, Llm, Tts chargés")
 
 # --- CONFIGURATION ---
 DEBUG_SAVE_WAV = False
-_TMP_DIR = "/aria/tmp/tts"
+_TMP_DIR = utils.aria_path("tmp", "tts")
 _CONFIG_FILE = "configs/default.json"
 
 if os.path.exists(_TMP_DIR):
@@ -165,14 +165,27 @@ async def process_streaming_binaire(b64_audio, history):
 
         start_total = datetime.now()
         utils.log_info("app", "--- DEBUT Traitement (Stream Binaire)")
+        timer = utils.StepTimer("app")
         # 1. Reception et STT
         header, encoded = b64_audio.split(",", 1)
         audio_data = base64.b64decode(encoded)
         audio_seg = AudioSegment.from_file(io.BytesIO(audio_data)).set_frame_rate(16000).set_channels(1)
-        samples = np.array(audio_seg.get_array_of_samples()).astype(np.float32) / 32768.0
+        # Normalisation selon la largeur réelle des échantillons (le navigateur envoie du 32 bits, pas du 16 bits)
+        full_scale = float(1 << (8 * audio_seg.sample_width - 1))
+        samples = np.array(audio_seg.get_array_of_samples()).astype(np.float32) / full_scale
+        audio_sec = len(samples) / 16000
+        timer.mark("decodage_audio", f"audio de {audio_sec:.1f}s")
         
         text_user = stt.transcribe_translate(samples)
         utils.log_info("app", f"   STT: reçu: '{text_user}' (Taille: {len(audio_data)} octets)")
+        stt_dt = time.perf_counter() - timer.last
+        timer.mark("stt", f"{stt_dt / max(audio_sec, 0.01):.2f}x la durée de l'audio")
+        if not re.search(r"\w", text_user or ""):
+            # Rien d'exploitable (silence, bruit écarté par le filtre VAD) : on n'appelle pas le LLM,
+            # la passerelle rejette un message vide (erreur 400)
+            utils.log_info("app", "   STT: aucune parole détectée, enregistrement ignoré")
+            yield history, ""
+            return
         
         history.append({"role": "user", "content": text_user})
         history.append({"role": "assistant", "content": "..."})
@@ -183,13 +196,18 @@ async def process_streaming_binaire(b64_audio, history):
         response_gen = llm.get_answer_web(tts, text_user, "DefaultUser")
         chunk_count = 0
         stream_payload = []
+        first_text = False
         
         async for text_update, audio_chunk_path,textCleanedForAudio in response_gen:
             history[-1]["content"] = text_update
+            if text_update and not first_text:
+                first_text = True
+                timer.mark("premier_texte_llm")
             
             payload_str = ""
             if audio_chunk_path and os.path.exists(audio_chunk_path):
                 chunk_count += 1
+                timer.mark("premier_son_pret" if chunk_count == 1 else f"bloc_audio_{chunk_count}")
                 unique_id = f"bloc_{time.time_ns()}_{chunk_count}"
                 
                 # Lecture et encodage du son
@@ -216,6 +234,7 @@ async def process_streaming_binaire(b64_audio, history):
         
         utils.log_info("app", f"   LLM: FIN Traitement ({chunk_count} blocs son, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
         utils.log_info("app", f"   LLM: Réponse finale: '{history[-1]['content']}'")
+        timer.mark("fin_traitement")
                 
         utils.log_info("app", f"--- FIN Traitement ({chunk_count} blocs, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
     except Exception as e:

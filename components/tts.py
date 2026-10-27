@@ -10,7 +10,7 @@ class Tts:
         self.device = self.params.get("device", "cuda:0")
         # Par défaut, on privilégie désormais 'sherpa' pour l'identité d'Héléna
         self.tts_type = self.params.get("tts_type", "sherpa")
-        self.tmp_dir = "/aria/tmp/tts"
+        self.tmp_dir = utils.aria_path("tmp", "tts")
         
         os.makedirs(self.tmp_dir, exist_ok=True)
 
@@ -18,7 +18,7 @@ class Tts:
         if self.tts_type == "sherpa":
             try:
                 from components.tts_sherpa_onnx import TtsSherpaOnnx
-                self.engine = TtsSherpaOnnx(device=self.device)
+                self.engine = TtsSherpaOnnx(params=self.params, device=self.device)
             except Exception as e:
                 utils.log_info("TTS", f"Échec Sherpa-ONNX : {e}. Repli sur Kokoro...")
                 self.tts_type = "kokoro"
@@ -27,7 +27,7 @@ class Tts:
         if self.tts_type == "kokoro":
             try:
                 from components.tts_kokoro import TtsKokoro
-                self.engine = TtsKokoro(device=self.device)
+                self.engine = TtsKokoro(params=self.params, device=self.device)
             except Exception as e:
                 utils.log_info("TTS", f"Échec Kokoro : {e}")
                 raise RuntimeError("Aucun moteur TTS disponible.")

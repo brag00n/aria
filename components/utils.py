@@ -1,6 +1,20 @@
+import asyncio
+import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from collections import deque
+
+# Racine du projet : ARIA_ROOT si défini, /aria dans Docker, sinon le dossier du projet
+ARIA_ROOT = os.environ.get("ARIA_ROOT") or (
+    "/aria" if os.path.isdir("/aria")
+    else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+
+def aria_path(*parts):
+    """Construit un chemin absolu à partir de la racine du projet."""
+    return os.path.join(ARIA_ROOT, *parts)
 
 # On garde les 100 dernières lignes en mémoire vive
 LOG_BUFFER = deque(maxlen=100)
@@ -22,6 +36,164 @@ def get_logs_from_memory():
     """Récupère les logs formatés pour l'affichage (récents en haut)."""
     # On inverse la liste pour avoir les derniers logs en premier
     return "\n".join(list(LOG_BUFFER))
+
+class StepTimer:
+    """Chronomètre par étape : logue le temps depuis la précédente étape et depuis le début."""
+    def __init__(self, tag):
+        self.tag = tag
+        self.t0 = self.last = time.perf_counter()
+
+    def mark(self, step, extra=""):
+        now = time.perf_counter()
+        log_info(self.tag, f"⏱ {step} : +{now - self.last:.2f}s | cumul {now - self.t0:.2f}s{' | ' + extra if extra else ''}")
+        self.last = now
+
+# --- DÉCOUPAGE DU TEXTE EN BLOCS À DIRE ---
+SPEECH_STRONG = ".!?\n"        # fin de phrase : coupe toujours
+SPEECH_SOFT = ",;:—–"          # pause : coupe si le bloc a déjà assez de caractères
+FIRST_CHUNK_MIN = 25           # 1er bloc de la réponse : seuil bas pour démarrer la voix plus tôt
+CHUNK_MIN = 40                 # blocs suivants : au moins 40 caractères (évite "Eh bien," seul)
+CHUNK_MAX = 60                 # sans ponctuation au-delà de 60 caractères, on coupe au dernier espace
+ORPHAN_MAX = 20                # un bloc de moins de 20 caractères est fusionné avec le précédent...
+MERGE_MAX = 110                # ...si le texte fusionné ne dépasse pas 110 caractères
+SPEECH_CLOSERS = "»”’\"')]"    # fermants qui restent collés à la ponctuation qui les précède : `point.»`
+SPACED_CLOSERS = "»”"          # fermants acceptés après une espace (typographie française : `point. »`)
+                               # " et ' droits sont exclus : après une espace, ils peuvent OUVRIR une citation
+
+def _skip_closers(buf, j, closers=SPEECH_CLOSERS):
+    """Indice du premier caractère après les fermants commençant en j."""
+    while j < len(buf) and buf[j] in closers:
+        j += 1
+    return j
+
+def _boundary(buf, i):
+    """Frontière après la ponctuation en position i.
+    Renvoie l'indice de coupure, None s'il faut attendre la suite du flux, ou -1 s'il n'y a pas de frontière
+    ("3,5" : la ponctuation est suivie d'un caractère, pas d'une espace).
+    Un fermant `»` peut suivre la ponctuation après des espaces (`jardin. »`) : il reste dans le bloc.
+    Si le tampon s'arrête sur la ponctuation ou sur des espaces, on attend le caractère suivant pour savoir
+    si un fermant arrive : le résultat ne dépend ainsi pas du rythme d'arrivée du texte.
+    Le coût est d'un caractère de plus à attendre, et seulement en fin de tampon."""
+    n = len(buf)
+    j = _skip_closers(buf, i + 1)
+    if j >= n:
+        return None                    # fin de tampon : on attend la suite
+    if not buf[j].isspace():
+        return -1
+    k = j
+    while k < n and buf[k].isspace():
+        k += 1
+    if k >= n:
+        return None                    # le tampon s'arrête sur des espaces : un fermant peut suivre
+    if buf[k] in SPACED_CLOSERS:
+        return _skip_closers(buf, k, SPACED_CLOSERS)
+    return j
+
+def next_speech_cut(buf, is_first=False):
+    """Indice de coupure dans buf (texte à dire = buf[:cut]), ou None s'il faut attendre la suite.
+    Une ponctuation ne compte que si elle est suivie d'une espace (après d'éventuels fermants), ce qui évite
+    de couper dans "3,5" ou "3.5". Les fermants » " ) restent dans le bloc de la ponctuation qui les précède,
+    qu'ils la touchent (`point.»`) ou non (`point. »`).
+    Fin de phrase (. ! ?) en fin de tampon : on attend le caractère suivant, car ce peut être un chiffre
+    ("0." puis "6018") ou un fermant. Si le flux s'arrête là, l'appelant envoie le reste du tampon au TTS.
+    Le premier point de coupure rencontré l'emporte.
+    Le seuil des pauses (virgule...) est plus bas pour le premier bloc : FIRST_CHUNK_MIN au lieu de CHUNK_MIN."""
+    min_soft = FIRST_CHUNK_MIN if is_first else CHUNK_MIN
+    n = len(buf)
+    for i, ch in enumerate(buf):
+        if ch == "\n":
+            return i + 1
+        if ch in SPEECH_STRONG:
+            b = _boundary(buf, i)
+            if b is None:
+                return None
+            if b >= 0:
+                return b
+        elif ch in SPEECH_SOFT:
+            b = _boundary(buf, i)
+            if b is None:
+                if i + 1 >= min_soft:
+                    return None        # pause assez longue : on attend le caractère suivant avant de couper
+            elif b >= min_soft:        # b = -1 (pas de frontière) est toujours < min_soft
+                return b
+    if n >= CHUNK_MAX:
+        sp = buf.rfind(" ")
+        if sp > CHUNK_MIN:
+            return sp
+    return None
+
+# Un seul thread de synthèse : les blocs restent dans l'ordre et le modèle TTS n'est jamais appelé en parallèle
+_TTS_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts")
+
+class TtsQueue:
+    """Synthèse vocale dans un thread dédié, pendant que le LLM continue de générer.
+    Les blocs audio sont restitués dans l'ordre où le texte a été soumis."""
+    def __init__(self, tts, user, tag):
+        self.tts = tts
+        self.user = user
+        self.tag = tag
+        self.pending = deque()
+        self.count = 0
+        self.total = 0.0
+
+    def _run(self, n, text):
+        t = time.perf_counter()
+        audio = self.tts.run_tts_to_file(text, user_id=self.user)
+        dt = time.perf_counter() - t
+        self.total += dt
+        log_info(self.tag, f"⏱ tts_bloc_{n} : {dt:.2f}s pour {len(text)} caractères")
+        return audio
+
+    def _enqueue(self, text):
+        self.count += 1
+        cf = _TTS_EXECUTOR.submit(self._run, self.count, text)
+        # cf (concurrent.futures) sert à annuler un bloc pas encore démarré ; le future asyncio sert à l'attendre
+        self.pending.append((text, asyncio.wrap_future(cf, loop=asyncio.get_running_loop()), cf))
+
+    def submit(self, text):
+        """Lance la synthèse d'un bloc de texte sans attendre.
+        Un bloc orphelin (moins de ORPHAN_MAX caractères) est fusionné avec le précédent, mais seulement si
+        celui-ci n'a pas encore démarré sa synthèse : l'annuler ne coûte alors aucun temps. S'il est déjà en
+        cours ou terminé, l'orphelin est synthétisé seul (annuler ferait perdre son audio)."""
+        if len(text) < ORPHAN_MAX and self.pending:
+            prev_text, _, prev_cf = self.pending[-1]
+            if len(prev_text) + 1 + len(text) <= MERGE_MAX and prev_cf.cancel():
+                self.pending.pop()
+                self.count -= 1
+                log_info(self.tag, f"⏱ fusion du bloc orphelin ({len(text)} car.) avec le précédent ({len(prev_text)} car.)")
+                text = f"{prev_text} {text}"
+        self._enqueue(text)
+
+    def flush(self, buf):
+        """Fin du flux : envoie le reste du tampon au TTS (fusionné avec le bloc précédent s'il est trop court)."""
+        txt = clean_text_for_tts(remove_nonverbal_cues(buf)).strip()
+        if len(txt) > 1:
+            self.submit(txt)
+
+    def feed(self, buf):
+        """Découpe buf en blocs à dire (voir next_speech_cut), les soumet, et renvoie le reste du buffer."""
+        while True:
+            cut = next_speech_cut(buf, is_first=self.count == 0)
+            if cut is None:
+                return buf
+            piece, buf = buf[:cut], buf[cut:]
+            txt = clean_text_for_tts(remove_nonverbal_cues(piece)).strip()
+            if len(txt) > 2:
+                self.submit(txt)
+
+    def pop_ready(self):
+        """Blocs déjà synthétisés, en tête de file uniquement (ordre conservé)."""
+        out = []
+        while self.pending and self.pending[0][1].done():
+            text, fut, _ = self.pending.popleft()
+            out.append((fut.result(), text))
+        return out
+
+    async def drain(self):
+        """Attend les blocs restants, dans l'ordre."""
+        while self.pending:
+            text, fut, _ = self.pending.popleft()
+            yield await fut, text
 
 # --- CONVERSION CHIFFRES ROMAINS ---
 def roman_to_arabic(text):

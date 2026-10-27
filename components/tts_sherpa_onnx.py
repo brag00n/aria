@@ -5,7 +5,7 @@ import urllib.request
 import numpy as np
 import soundfile as sf
 import sherpa_onnx
-from components.utils import log_info, clean_text_for_tts 
+from components.utils import log_info, clean_text_for_tts, aria_path
 
 logger = logging.getLogger("aria.tts.sherpa")
 
@@ -14,7 +14,7 @@ class TtsSherpaOnnx:
         self.params = params or {}
         
         # Structure : /aria/models/sherpa/<nom_du_modele>
-        self.base_models_dir = "/aria/models/sherpa"
+        self.base_models_dir = aria_path("models", "sherpa")
         self.model_name = "vits-piper-fr_FR-upmc-medium"
         self.model_dir = self.params.get("model_dir", os.path.join(self.base_models_dir, self.model_name))
         
