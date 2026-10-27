@@ -3,7 +3,7 @@
     "vad": "Vad_Web",
     "stt": "Stt_FasterWhisper",
     "llm": "Llm_Anthropic",
-    "tts": "Tts_Kokoro"
+    "tts": "Tts_Sherpa"
   },
   "vad": {
     "Vad": {
@@ -146,7 +146,7 @@
       "params": {
         "device": "cpu",
         "tts_type": "sherpa",
-        "model_dir": "/aria/models/vits-piper-fr_FR-upmc-medium",
+        "model_dir": "/aria/models/sherpa/vits-piper-fr_FR-upmc-medium",
         "speed": 0.8,
         "noise_scale": 0.667,
         "noise_scale_w": 0.8,
