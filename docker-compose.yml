@@ -1,0 +1,28 @@
+services:
+  aria:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_FLASH_ATTN: "false"
+    image: aria:dev
+    container_name: aria
+    ports:
+      - "7860:7860"
+    # Les secrets (ANTHROPIC_API_KEY...) sont lus dans .env, jamais commités
+    env_file:
+      - .env
+    environment:
+      ARIA_ROOT: /aria
+    # GPU NVIDIA : désactivé (CDI non configuré dans la machine Podman).
+    # Pour l'activer avec podman : devices: ["nvidia.com/gpu=all"] ; avec docker : gpus: all
+    # Code monté directement depuis le dépôt local : pas besoin de reconstruire l'image.
+    # .env n'est volontairement PAS monté dans le conteneur.
+    volumes:
+      - ./app.py:/aria/app.py
+      - ./components:/aria/components
+      - ./configs:/aria/configs
+      - ./static:/aria/static
+      - ./tools:/aria/tools
+      - ./models:/aria/models
+    restart: unless-stopped
