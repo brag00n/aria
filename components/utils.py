@@ -53,7 +53,19 @@ SPEECH_STRONG = ".!?\n"        # fin de phrase : coupe toujours
 SPEECH_SOFT = ",;:—–"          # pause : coupe si le bloc a déjà assez de caractères
 FIRST_CHUNK_MIN = 25           # 1er bloc de la réponse : seuil bas pour démarrer la voix plus tôt
 CHUNK_MIN = 40                 # blocs suivants : au moins 40 caractères (évite "Eh bien," seul)
-CHUNK_MAX = 60                 # sans ponctuation au-delà de 60 caractères, on coupe au dernier espace
+CHUNK_SAFETY_MAX = 200         # filet de sécurité seulement : sans AUCUNE ponctuation au-delà de 200 caractères,
+                               # on coupe au dernier espace. Le découpage normal se fait sur la ponctuation ;
+                               # c'est la consigne de style donnée au LLM (SPEECH_STYLE_PROMPT) qui garde les phrases courtes.
+
+# Consigne ajoutée au message système de tous les moteurs LLM (voir components/llm.py)
+SPEECH_STYLE_PROMPT = (
+    "CONSIGNES DE STYLE (tes réponses sont lues à voix haute, phrase par phrase) : "
+    "écris des phrases courtes, de 15 mots au maximum, chacune terminée par un point, un point d'exclamation "
+    "ou un point d'interrogation. Mets une virgule à chaque pause naturelle. "
+    "Évite les incises longues et les énumérations sans virgules. "
+    "N'utilise ni liste, ni titre, ni symbole de mise en forme. "
+    "Cela limite la longueur des phrases, pas celle de ta réponse."
+)
 ORPHAN_MAX = 20                # un bloc de moins de 20 caractères est fusionné avec le précédent...
 MERGE_MAX = 110                # ...si le texte fusionné ne dépasse pas 110 caractères
 SPEECH_CLOSERS = "»”’\"')]"    # fermants qui restent collés à la ponctuation qui les précède : `point.»`
@@ -116,7 +128,7 @@ def next_speech_cut(buf, is_first=False):
                     return None        # pause assez longue : on attend le caractère suivant avant de couper
             elif b >= min_soft:        # b = -1 (pas de frontière) est toujours < min_soft
                 return b
-    if n >= CHUNK_MAX:
+    if n >= CHUNK_SAFETY_MAX:
         sp = buf.rfind(" ")
         if sp > CHUNK_MIN:
             return sp

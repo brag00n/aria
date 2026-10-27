@@ -5,7 +5,11 @@ from .llm_connect_openai import LlmConnectOpenai
 
 class Llm:
     def __init__(self, params=None, all_config=None):
-        self.params = params or {}
+        # Copie : on ne modifie pas le dict de la config, qui est réécrit tel quel par l'onglet Paramètres
+        self.params = dict(params or {})
+        self.params["system_message"] = (
+            f"{self.params.get('system_message', '')}\n\n{utils.SPEECH_STYLE_PROMPT}".strip()
+        )
         self.backend_type = self.params.get("backend_type", "local")
 
         if self.backend_type == "anthropic":
