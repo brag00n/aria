@@ -20,12 +20,18 @@ class LlmConnectLocal:
         model_path = os.path.join(models_dir, model_file)
         n_gpu_layers = self.params.get("num_gpu_layers", -1)
 
+        # Réglages d'échantillonnage : ils se passent à la génération, pas au constructeur de Llama
+        # (le constructeur les ignorerait sans erreur). Une valeur absente de la config n'est pas envoyée.
+        self.gen_kwargs = {k: self.params[k] for k in ("temperature", "repeat_penalty", "stop") if k in self.params}
+
         utils.log_info("LLM-LOCAL", f"Chargement du modèle : {model_path}")
         self.llm = Llama(
             model_path=model_path,
             n_gpu_layers=n_gpu_layers,
             chat_format=self.chat_format,
             n_ctx=self.context_length,
+            n_batch=self.params.get("n_batch", 512),            # vitesse de traitement du prompt
+            flash_attn=self.params.get("flash_attn", False),    # GPU de capacité 8.0+ seulement (Ampere, Ada...)
             verbose=self.verbose
         )
 
@@ -45,7 +51,8 @@ class LlmConnectLocal:
         response = self.llm.create_chat_completion(
             messages=messages,
             tools=self.mcp.get_tools_schema() if self.mcp else None,
-            tool_choice="auto" 
+            tool_choice="auto",
+            **self.gen_kwargs
         )
 
         choice = response["choices"][0]["message"]
@@ -72,12 +79,12 @@ class LlmConnectLocal:
                 })
 
             # ÉTAPE 3 : Génération finale avec les vraies données
-            final_stream = self.llm.create_chat_completion(messages=messages, stream=True)
+            final_stream = self.llm.create_chat_completion(messages=messages, stream=True, **self.gen_kwargs)
             async for chunk in self._stream_and_tts(final_stream, tts, user):
                 yield chunk
         else:
             # Réponse directe si aucun outil n'est requis
-            direct_stream = self.llm.create_chat_completion(messages=messages, stream=True)
+            direct_stream = self.llm.create_chat_completion(messages=messages, stream=True, **self.gen_kwargs)
             async for chunk in self._stream_and_tts(direct_stream, tts, user):
                 yield chunk
 
