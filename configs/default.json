@@ -248,6 +248,16 @@
           "headers": {
             "Authorization": "Bearer <TokenDomotique>"
           }
+        },
+        "recherche_web": {
+          "run": "uvx",
+          "args": [
+            "duckduckgo-mcp-server"
+          ],
+          "env": {
+            "DDG_REGION": "fr-fr",
+            "DDG_SAFE_SEARCH": "MODERATE"
+          }
         }
       }
     }
