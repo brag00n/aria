@@ -145,6 +145,10 @@ class LlmConnectOpenai:
                 yield full_res, audio, spoken
             timer.mark("fin_generation", f"TTS cumulé {queue.total:.2f}s sur {queue.count} bloc(s)")
 
+        except GeneratorExit:
+            # Réponse interrompue (bouton / mot-clé « stop ») : on retire ce tour, sans appel d'outil resté sans résultat
+            del messages[start_len:]
+            raise
         except Exception as e:
             utils.log_info(tag, f"❌ Erreur : {str(e)}")
             # On retire les messages de ce tour pour ne pas laisser un historique incohérent

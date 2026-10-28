@@ -53,11 +53,14 @@ class VadWeb:
                     onSpeechStart: () => {{
                         const visualizer = document.getElementById('audio_visualizer');
                         if (visualizer) visualizer.classList.add('speaking');
+                        // Parole pendant qu'Aria parle : on baisse sa voix pour que « stop » passe (components/tts.py)
+                        if (window.isPlaying && window.ariaDuck) window.ariaDuck();
                     }},
                     onVADMisfire: () => {{
                         // Bruit trop court pour être une phrase : on retire le liseré rouge, sinon il reste allumé
                         const visualizer = document.getElementById('audio_visualizer');
                         if (visualizer) visualizer.classList.remove('speaking');
+                        if (window.ariaUnduck) window.ariaUnduck();
                     }},
                     onSpeechEnd: (audio) => {{
                         const visualizer = document.getElementById('audio_visualizer');

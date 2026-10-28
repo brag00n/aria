@@ -47,15 +47,16 @@ def css():
 /* --- Micro/son par clic sur le cadre (components/mic_toggle.py) --- */
 #audio_visualizer { cursor: pointer; background-repeat: no-repeat; background-position: center; background-size: contain; background-color: transparent; }
 """ + "\n".join(rules) + """
-/* Pendant la réponse (état speaking), pas d'image : seules les courbes sont visibles */
-#audio_visualizer.state-speaking { background-image: none; }
+/* Pendant la réponse (speaking) : seules les courbes. Au repos hors conversation (idle) : cadre vide */
+#audio_visualizer.state-speaking, #audio_visualizer.state-idle { background-image: none; }
 """
 
 
-def js_toggle(init_js):
+def js_toggle(init_js, conversation=False):
     """JavaScript de l'interrupteur et des transitions d'état (exécuté au chargement de la page).
+    conversation : sessions de conversation activées -> pas d'icône tant qu'aucune conversation n'est ouverte.
     init_js : le JavaScript d'initialisation du son (VAD + lecture + visualiseur), exécuté au premier clic seulement."""
-    return """
+    return ("window.ariaConvEnabled = " + ("true" if conversation else "false") + ";" + """
 window.ariaInitAudio = async () => {
     if (window.ariaAudioReady) {
         // Réactivation après une coupure : le VAD existant reprend (ou est recréé si le micro a été libéré)
@@ -69,13 +70,15 @@ window.ariaInitAudio = async () => {
 (() => {
     if (window.ariaMic) return;
     const box = () => document.getElementById('audio_visualizer');
-    const A = window.ariaMic = { state: 'off', ready: false, busy: false };
+    const A = window.ariaMic = { state: 'off', ready: false, busy: false, convOpen: false, pendingClose: false };
+    // État de repos du cadre : aucune icône (idle) tant qu'aucune conversation n'est ouverte, sinon écoute
+    A.rest = () => (window.ariaConvEnabled && !A.convOpen) ? 'idle' : 'listening';
 
     A.set = (s) => {
         A.state = s;
         const el = box();
         if (!el) return;
-        el.classList.remove('state-off', 'state-listening', 'state-hearing', 'state-speaking');
+        el.classList.remove('state-off', 'state-idle', 'state-listening', 'state-hearing', 'state-speaking');
         el.classList.add('state-' + s);
         el.title = s === 'off' ? 'Cliquer pour activer le micro et le son' : 'Cliquer pour couper le micro et le son';
     };
@@ -98,10 +101,21 @@ window.ariaInitAudio = async () => {
     // Transitions pilotées par le VAD et par la lecture. Sans effet quand le micro est coupé.
     A.onPhrase = () => { if (A.state === 'listening') A.set('hearing'); };                         // 2 -> 3
     window.addEventListener('aria_audio_start', () => { if (A.state !== 'off') A.set('speaking'); });  // 3 -> 4
-    window.addEventListener('aria_audio_end',   () => { if (A.state === 'speaking') A.set('listening'); });  // 4 -> 2
+    window.addEventListener('aria_audio_end', () => {                                                // 4 -> 2
+        if (A.pendingClose) { A.pendingClose = false; A.convOpen = false; }   // clôture reçue pendant la réponse : appliquée à sa fin
+        if (A.state === 'speaking' || (A.state !== 'off' && A.state !== 'hearing')) A.set(A.rest());
+    });
+    // Ouverture / clôture de conversation décidées par le serveur (mots-clés dits ou écrits)
+    window.addEventListener('aria_conv_open', () => { A.convOpen = true; A.pendingClose = false; if (A.state !== 'off') A.set('hearing'); });
+    window.addEventListener('aria_conv_close', () => {
+        if (window.isPlaying) { A.pendingClose = true; return; }
+        A.convOpen = false; if (A.state !== 'off') A.set(A.rest());
+    });
+    // Phrase ignorée ou réponse arrêtée : retour au repos sans attendre le délai de sécurité
+    window.addEventListener('aria_idle', () => { if (A.state === 'hearing' || A.state === 'speaking') A.set(A.rest()); });
     // Le serveur n'a rien à dire (phrase vide ignorée, erreur) : on revient à l'écoute au lieu de rester sur « chargement »
     A.watchdog = setInterval(() => {
-        if (A.state === 'hearing' && Date.now() - (A.hearingSince || 0) > 60000) A.set('listening');
+        if (A.state === 'hearing' && Date.now() - (A.hearingSince || 0) > 60000) A.set(A.rest());
     }, 5000);
     const _set = A.set;
     A.set = (s) => { if (s === 'hearing') A.hearingSince = Date.now(); _set(s); };
@@ -113,7 +127,7 @@ window.ariaInitAudio = async () => {
             if (A.state === 'off') {
                 await A.startMic();
                 window.muteAria = false;
-                A.set('listening');
+                A.set(A.rest());
             } else {
                 // Coupe aussi la lecture en cours et vide la file : « désactivé » veut dire silence immédiat
                 window.muteAria = true;
@@ -132,4 +146,4 @@ window.ariaInitAudio = async () => {
     if (el) { el.addEventListener('click', A.toggle); A.set('off'); }
     else console.warn('[ARIA-MIC] cadre #audio_visualizer introuvable');
 })();
-"""
+""")

@@ -3,6 +3,47 @@
     "language": "fr",
     "default_language": "en"
   },
+  "conversation": {
+    "enabled": true,
+    "open_phrases": [
+      "bonjour aria",
+      "salut aria",
+      "hey aria",
+      "ok aria",
+      "aria",
+      "dis moi aria",
+      "dit moi aria",
+      "dis moi arya",
+      "dis moi area",
+      "dis moi ariane",
+      "dis moi maria",
+      "dis moi a ria",
+      "dis moi a rien",
+      "dis moi haria",
+      "dis moi arri\u00e8re",
+      "bonjour arya",
+      "bonjour area",
+      "bonjour ariane",
+      "bonjour a ria",
+      "bonjour maria",
+      "bonjour a rien"
+    ],
+    "close_phrases": [
+      "merci aria",
+      "bonne nuit",
+      "cloturons le sujet",
+      "au revoir aria",
+      "a bientot aria"
+    ],
+    "stop_phrases": [
+      "stop",
+      "tais toi",
+      "silence",
+      "arrete",
+      "ca suffit",
+      "chut"
+    ]
+  },
   "active_modules": {
     "vad": "Vad_Web",
     "stt": "Stt_FasterWhisper",

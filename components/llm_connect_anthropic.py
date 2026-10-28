@@ -119,6 +119,10 @@ class LlmConnectAnthropic:
                 yield full_res, audio, spoken
             timer.mark("fin_generation", f"TTS cumulé {queue.total:.2f}s sur {queue.count} bloc(s)")
 
+        except GeneratorExit:
+            # Réponse interrompue (bouton / mot-clé « stop ») : on retire ce tour, sans appel d'outil resté sans résultat
+            del history[start_len:]
+            raise
         except Exception as e:
             utils.log_info("LLM-anthropic", f"❌ Erreur : {type(e).__name__}: {str(e)[:300]}")
             # On retire les messages de ce tour pour ne pas laisser un historique incohérent

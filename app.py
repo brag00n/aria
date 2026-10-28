@@ -58,6 +58,7 @@ from components.tts import Tts
 from components.vad import Vad
 from components import visualizer, mic_toggle
 from components.language import Language, normalize
+from components.conversation import Conversation
 utils.log_info("app","Stt, Llm, Tts chargés")
 
 
@@ -93,6 +94,7 @@ vad = Vad(config["vad"][active_vad]["params"])
 stt = Stt(config["stt"][active_stt]["params"], language=language)
 llm = Llm(config["llm"][active_llm]["params"], all_config=config, language=language)
 tts = Tts(config["tts"][active_tts]["params"], language=language)
+conv = Conversation(config.get("conversation"))   # sessions de conversation + mots d'arrêt
 utils.log_info("app", f"--- FIN Chargement (VAD:{active_vad}, STT:{active_stt}, LLM:{active_llm}, TTS:{active_tts})")
 
 def read_logs_memory():
@@ -120,7 +122,7 @@ def get_current_params(category, module_name):
     except Exception as e:
         return "{}"
 
-def update_config_ui(global_json, vad_choix, vad_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json):
+def update_config_ui(global_json, vad_choix, vad_json, conv_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json):
     """Sauvegarde globale de la configuration modulaire"""
     try:
         # 0. Réglages généraux (langue...). Contrôlés AVANT toute écriture : une erreur ne laisse pas la config à moitié modifiée.
@@ -135,7 +137,15 @@ def update_config_ui(global_json, vad_choix, vad_json, stt_choix, stt_json, llm_
         new_global["language"] = normalize(lang)
         if "default_language" in new_global:
             new_global["default_language"] = normalize(new_global["default_language"])
+        # Conversation (mots-clés d'ouverture, de clôture et d'arrêt) : contrôlée AVANT toute écriture
+        new_conv = json.loads(conv_json)
+        if not isinstance(new_conv, dict):
+            return "❌ La section conversation doit être un objet JSON"
+        for key in ("open_phrases", "close_phrases", "stop_phrases"):
+            if key in new_conv and not (isinstance(new_conv[key], list) and all(isinstance(x, str) for x in new_conv[key])):
+                return f"❌ conversation.{key} doit être une liste de textes"
         config["global"] = new_global
+        config["conversation"] = new_conv
         # 1. Mise à jour des pointeurs de modules actifs
         config["active_modules"] = {
             "vad": vad_choix,
@@ -176,7 +186,7 @@ JS_COMBO = f"""
 """
 
 # JavaScript exécuté au chargement de la page : clic sur le cadre = micro et son activés / coupés
-JS_ON_LOAD = "() => {" + mic_toggle.js_toggle(JS_COMBO) + "}"
+JS_ON_LOAD = "() => {" + mic_toggle.js_toggle(JS_COMBO, conv.enabled) + "}"
 
 # --- LOGIQUE SERVEUR ---
 async def process_streaming_binaire(b64_audio, history):
@@ -210,17 +220,49 @@ async def process_streaming_binaire(b64_audio, history):
             # Rien d'exploitable (silence, bruit écarté par le filtre VAD) : on n'appelle pas le LLM,
             # la passerelle rejette un message vide (erreur 400)
             utils.log_info("app", "   STT: aucune parole détectée, enregistrement ignoré")
-            yield history, ""
+            yield history, ctl_payload("idle")
             return
 
-        
+        # Mots-clés : arrêt d'Aria, ouverture / clôture de conversation (components/conversation.py)
+        action = conv.classify(text_user, from_voice=True)
+        if action == "stop":
+            conv.request_stop()
+            yield history, ctl_payload("stop")
+            return
+        if action == "ignore":
+            utils.log_info("CONV", f"Hors conversation, phrase ignorée : '{text_user}'")
+            yield history, ctl_payload("idle")
+            return
+        if action == "open":
+            conv.begin()
+            yield history, ctl_payload("conv_open")      # l'icône du cadre apparaît (chargement) pendant que la réponse se prépare
+
         async for update in repondre(text_user, history, timer, start_total):
             yield update
+        if action == "close":
+            conv.end()
+            yield history, ctl_payload("conv_close")     # l'icône du cadre disparaît après la fin de la réponse
     except Exception as e:
         utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
         yield history, ""
 
+def ctl_payload(kind):
+    """Ordre de contrôle envoyé au navigateur par le pont audio : stop, idle, conv_open, conv_close."""
+    return json.dumps([{"id": f"ctl_{kind}_{time.time_ns()}", "ctl": kind}])
+
+
+STOP_NOTICE = "\n\n> ⏹️ Réponse interrompue\n\n"
+
+
 async def repondre(text_user, history, timer, start_total):
+    """Une seule réponse à la fois (verrou) ; l'arrêt, lui, ne passe jamais par le verrou."""
+    async with conv.lock:
+        conv.stop_requested = False
+        async for update in _generer(text_user, history, timer, start_total):
+            yield update
+
+
+async def _generer(text_user, history, timer, start_total):
     """Réponse d'Aria à un message de l'utilisateur (voix transcrite ou texte saisi) : texte en continu + blocs son."""
     history.append({"role": "user", "content": text_user})
     history.append({"role": "assistant", "content": "..."})
@@ -233,6 +275,13 @@ async def repondre(text_user, history, timer, start_total):
     first_text = False
     
     async for text_update, audio_chunk_path,textCleanedForAudio in response_gen:
+        if conv.stop_requested:
+            # Arrêt demandé (bouton, mot-clé dit ou écrit) : on coupe la génération, le navigateur coupe la lecture
+            await response_gen.aclose()
+            history[-1]["content"] = (text_update or "") + STOP_NOTICE
+            utils.log_info("CONV", "⏹️ Réponse interrompue")
+            yield history, ctl_payload("stop")
+            return
         history[-1]["content"] = text_update
         if text_update and not first_text:
             first_text = True
@@ -283,13 +332,27 @@ async def process_texte(text, history):
         return
     if history is None: history = []
     try:
+        action = conv.classify(text, from_voice=False)
+        if action == "stop":
+            conv.request_stop()
+            yield history, ctl_payload("stop"), ""
+            return
         utils.log_info("app", f"--- DEBUT Traitement (texte saisi) : '{text}'")
         timer = utils.StepTimer("app")
         async for hist, payload in repondre(text, history, timer, datetime.now()):
             yield hist, payload, ""
+        if action == "close":
+            conv.end()
+            yield history, ctl_payload("conv_close"), ""
     except Exception as e:
         utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
         yield history, "", ""
+
+
+def stop_aria():
+    """Bouton « Stop » : coupe la génération en cours ; le navigateur coupe aussi la lecture (JS du bouton + ordre « stop »)."""
+    conv.request_stop()
+    return ctl_payload("stop")
 
 
 def request_restart(confirmed=""):
@@ -369,8 +432,10 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
         with gr.TabItem("💬 Interface Chat"):
             
             chatbot = gr.Chatbot(elem_id="aria_chatbot")
-            text_input = gr.Textbox(elem_id="aria_text_input", show_label=False, lines=1, max_lines=4,
-                                    placeholder="Écrire un message à Aria puis Entrée (en plus de la voix)")
+            with gr.Row():
+                text_input = gr.Textbox(elem_id="aria_text_input", show_label=False, lines=1, max_lines=4, scale=8,
+                                        placeholder="Écrire un message à Aria puis Entrée (en plus de la voix)")
+                stop_btn = gr.Button("⏹ Stop", elem_id="aria_stop_btn", variant="stop", scale=1, min_width=90)
             
             # Bridge technique (visibles pour le DOM mais cachés par CSS)
             audio_url_bridge = gr.Textbox(elem_id="audio_url_bridge", visible=True)
@@ -423,6 +488,19 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     fn=lambda x: get_current_params("vad", x),
                     inputs=[vad_dd],
                     outputs=[vad_code]
+                )
+
+            # --- BLOC 1b : CONVERSATION (mots d'ouverture, de clôture et d'arrêt) ---
+            with gr.Group():
+                gr.Markdown("#### 💬 Conversation")
+                gr.Markdown("<small>`enabled` : active les sessions (Aria n'écoute que pendant une conversation, ouverte par un mot de "
+                            "`open_phrases` en début de phrase, fermée par un mot de `close_phrases`). `stop_phrases` : mots qui coupent "
+                            "Aria. Accents, majuscules et ponctuation sont ignorés.</small>")
+                conv_code = gr.Code(
+                    value=json.dumps(config.get("conversation", {}), indent=2, ensure_ascii=False),
+                    language="json",
+                    label="Paramètres de la conversation",
+                    lines=8
                 )
 
             # --- BLOC 2 : STT (Transcription) ---
@@ -510,6 +588,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                 inputs=[
                     global_code,
                     vad_dd, vad_code,
+                    conv_code,
                     stt_dd, stt_code,
                     llm_dd, llm_code,
                     tts_dd, tts_code,
@@ -575,14 +654,25 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
         fn=process_texte,
         inputs=[text_input, chatbot],
         outputs=[chatbot, audio_url_bridge, text_input],
-        show_progress="hidden"
+        show_progress="hidden",
+        concurrency_limit=None
+    )
+
+    stop_btn.click(
+        fn=stop_aria,
+        inputs=None,
+        outputs=[audio_url_bridge],
+        show_progress="hidden",
+        concurrency_limit=None,
+        js="() => { if (window.ariaStopAudio) window.ariaStopAudio(); }"     # coupe le son tout de suite, sans attendre le serveur
     )
 
     trigger_btn.click(
         fn=process_streaming_binaire, 
         inputs=[audio_input, chatbot], 
         outputs=[chatbot, audio_url_bridge],
-        show_progress="hidden"
+        show_progress="hidden",
+        concurrency_limit=None
     )
 
 if __name__ == "__main__":

@@ -84,6 +84,31 @@ class Tts:
             window.isPlaying = false;
 
 
+            // Arrêt d'Aria : vide la file, coupe le bloc en cours, rend la main à l'écoute (bouton, mot-clé, ordre du serveur)
+            window.ariaStopAudio = () => {{
+                window.audioQueue = [];
+                window.isPlaying = false;
+                try {{ (window.ariaCurrentAudio || {{}}).pause && window.ariaCurrentAudio.pause(); }} catch (e) {{}}
+                if (window.ariaUnduck) window.ariaUnduck();
+                window.dispatchEvent(new CustomEvent('aria_idle'));
+            }};
+
+            // Atténuation : dès que l'utilisateur parle pendant qu'Aria parle (haut-parleurs), sa voix baisse. Moins d'écho dans
+            // le micro, donc un « stop » est détecté sans attendre la fin de la lecture. Le volume revient quand le serveur
+            // répond, ou après 8 s si la parole détectée n'était pas pour Aria.
+            window.ariaDuck = () => {{
+                window.ariaDucked = true;
+                try {{ if (window.ariaCurrentAudio) window.ariaCurrentAudio.volume = 0.08; }} catch (e) {{}}
+                clearTimeout(window.ariaDuckTimer);
+                window.ariaDuckTimer = setTimeout(() => window.ariaUnduck && window.ariaUnduck(), 8000);
+                console.log('[ARIA-CLIENT] Parole détectée pendant la lecture : volume baissé');
+            }};
+            window.ariaUnduck = () => {{
+                window.ariaDucked = false;
+                clearTimeout(window.ariaDuckTimer);
+                try {{ if (window.ariaCurrentAudio) window.ariaCurrentAudio.volume = 1; }} catch (e) {{}}
+            }};
+
             // 4. Logique de lecture audio (Streaming)
             async function playNext() {{
                 // Son coupé par un clic sur le cadre (components/mic_toggle.py) : on jette ce qui reste
@@ -101,6 +126,7 @@ class Tts:
                 const chunk = window.audioQueue.shift();
                 console.log(`[ARIA-CLIENT] Lecture bloc audio: ${{chunk.id}}`);
                 const audio = new Audio(chunk.data);
+                audio.volume = window.ariaDucked ? 0.08 : 1;
                 window.ariaCurrentAudio = audio;
 
                 // Signale au visualiseur (static/audioDesign.js) qu'un bloc va être joué
@@ -127,11 +153,17 @@ class Tts:
                     set: function(val) {{
                         nativeSetter.call(this, val);
                         if (!val) return;
+                        if (window.ariaUnduck) window.ariaUnduck();     // le serveur a répondu : le volume revient
                         if (window.muteAria) return;     // réponse arrivée après la coupure du son : ignorée
                         try {{
                             const chunks = JSON.parse(val);
                             console.log(`[ARIA-CLIENT] Réception de ${{chunks.length}} bloc(s) audio.`);
                             chunks.forEach(chunk => {{
+                                // Ordres du serveur (sans son) : arrêt, rien à dire, ouverture / clôture de conversation
+                                if (chunk.ctl === 'stop') {{ window.ariaStopAudio(); return; }}
+                                if (chunk.ctl === 'idle') {{ window.dispatchEvent(new CustomEvent('aria_idle')); return; }}
+                                if (chunk.ctl === 'conv_open') {{ window.dispatchEvent(new CustomEvent('aria_conv_open')); return; }}
+                                if (chunk.ctl === 'conv_close') {{ window.dispatchEvent(new CustomEvent('aria_conv_close')); return; }}
                                 if (!window.playedIds.has(chunk.id)) {{
                                     window.playedIds.add(chunk.id);
                                     window.audioQueue.push(chunk);
