@@ -92,6 +92,8 @@
         "vad_filter": true,
         "min_silence_duration_ms": 500,
         "condition_on_previous_text": false,
+        "hotwords": "Aria",
+        "initial_prompt": "Bonjour Aria. Dis-moi Aria. Merci Aria.",
         "low_cpu_mem_usage": true,
         "verbose": false
       }

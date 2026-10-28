@@ -30,6 +30,9 @@ class SttFasterWhisper:
         self.vad_filter = self.params.get("vad_filter", True)
         self.min_silence_ms = self.params.get("min_silence_duration_ms", 500)
         self.condition_on_previous_text = self.params.get("condition_on_previous_text", False)
+        # Aide à la reconnaissance des mots rares (ex. « Aria ») : mots à favoriser et amorce de texte, vides par défaut
+        self.hotwords = self.params.get("hotwords") or None
+        self.initial_prompt = self.params.get("initial_prompt") or None
 
         utils.log_info("STT-FW", f"Chargement de {self.model_name} sur {self.device} ({compute_type})")
 
@@ -49,6 +52,8 @@ class SttFasterWhisper:
             vad_filter=self.vad_filter,
             vad_parameters={"min_silence_duration_ms": self.min_silence_ms},
             condition_on_previous_text=self.condition_on_previous_text,
+            hotwords=self.hotwords,
+            initial_prompt=self.initial_prompt,
         )
         
         # Faster-Whisper renvoie un itérateur de segments
