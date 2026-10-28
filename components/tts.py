@@ -119,7 +119,9 @@ class Tts:
 
             // 5. Surveillance du bridge pour les réponses TTS
             const bridge = document.querySelector('#audio_url_bridge textarea');
-            if (bridge) {{
+            // Le pont n'est branché qu'une fois : une réactivation du micro relance ce script, et la propriété ne peut pas être redéfinie
+            if (bridge && !window.ariaBridgeHooked) {{
+                window.ariaBridgeHooked = true;
                 const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
                 Object.defineProperty(bridge, 'value', {{
                     set: function(val) {{
