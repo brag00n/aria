@@ -212,60 +212,85 @@ async def process_streaming_binaire(b64_audio, history):
             utils.log_info("app", "   STT: aucune parole détectée, enregistrement ignoré")
             yield history, ""
             return
+
         
-        history.append({"role": "user", "content": text_user})
-        history.append({"role": "assistant", "content": "..."})
-        yield history, ""
-        
-        # 2. Appel LLM + TTS Streaming
-        utils.log_info("app", f"   LLM: Début génération")
-        response_gen = llm.get_answer_web(tts, text_user, "DefaultUser")
-        chunk_count = 0
-        first_text = False
-        
-        async for text_update, audio_chunk_path,textCleanedForAudio in response_gen:
-            history[-1]["content"] = text_update
-            if text_update and not first_text:
-                first_text = True
-                timer.mark("premier_texte_llm")
-            
-            payload_str = ""
-            if audio_chunk_path and os.path.exists(audio_chunk_path):
-                chunk_count += 1
-                timer.mark("premier_son_pret" if chunk_count == 1 else f"bloc_audio_{chunk_count}")
-                unique_id = f"bloc_{time.time_ns()}_{chunk_count}"
-                
-                # Lecture et encodage du son
-                with open(audio_chunk_path, "rb") as f:
-                    raw_son = f.read()
-                    b64_data = f"data:audio/wav;base64,{base64.encodebytes(raw_son).decode('utf-8')}"
-                
-                # Debug : Sauvegarde si activé
-                if DEBUG_SAVE_WAV:
-                    save_path = os.path.join(_TMP_DIR, f"{unique_id}.wav")
-                    shutil.copy(audio_chunk_path, save_path)
-                    utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) -> {unique_id}.wav, text: '{textCleanedForAudio}'")
-                else:
-                    utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) text: '{textCleanedForAudio}'")
-                
-                # Un seul bloc par envoi : renvoyer la liste cumulée à chaque jeton saturait le navigateur
-                # (le client ignore une valeur vide et filtre les identifiants déjà vus)
-                payload_str = json.dumps([{"id": unique_id, "data": b64_data}])
-                
-                # Nettoyage immédiat du fichier temporaire original
-                try: os.remove(audio_chunk_path)
-                except: pass
-            
-            yield history, payload_str
-        
-        utils.log_info("app", f"   LLM: FIN Traitement ({chunk_count} blocs son, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
-        utils.log_info("app", f"   LLM: Réponse finale: '{history[-1]['content']}'")
-        timer.mark("fin_traitement")
-                
-        utils.log_info("app", f"--- FIN Traitement ({chunk_count} blocs, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
+        async for update in repondre(text_user, history, timer, start_total):
+            yield update
     except Exception as e:
         utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
         yield history, ""
+
+async def repondre(text_user, history, timer, start_total):
+    """Réponse d'Aria à un message de l'utilisateur (voix transcrite ou texte saisi) : texte en continu + blocs son."""
+    history.append({"role": "user", "content": text_user})
+    history.append({"role": "assistant", "content": "..."})
+    yield history, ""
+    
+    # 2. Appel LLM + TTS Streaming
+    utils.log_info("app", f"   LLM: Début génération")
+    response_gen = llm.get_answer_web(tts, text_user, "DefaultUser")
+    chunk_count = 0
+    first_text = False
+    
+    async for text_update, audio_chunk_path,textCleanedForAudio in response_gen:
+        history[-1]["content"] = text_update
+        if text_update and not first_text:
+            first_text = True
+            timer.mark("premier_texte_llm")
+        
+        payload_str = ""
+        if audio_chunk_path and os.path.exists(audio_chunk_path):
+            chunk_count += 1
+            timer.mark("premier_son_pret" if chunk_count == 1 else f"bloc_audio_{chunk_count}")
+            unique_id = f"bloc_{time.time_ns()}_{chunk_count}"
+            
+            # Lecture et encodage du son
+            with open(audio_chunk_path, "rb") as f:
+                raw_son = f.read()
+                b64_data = f"data:audio/wav;base64,{base64.encodebytes(raw_son).decode('utf-8')}"
+            
+            # Debug : Sauvegarde si activé
+            if DEBUG_SAVE_WAV:
+                save_path = os.path.join(_TMP_DIR, f"{unique_id}.wav")
+                shutil.copy(audio_chunk_path, save_path)
+                utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) -> {unique_id}.wav, text: '{textCleanedForAudio}'")
+            else:
+                utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) text: '{textCleanedForAudio}'")
+            
+            # Un seul bloc par envoi : renvoyer la liste cumulée à chaque jeton saturait le navigateur
+            # (le client ignore une valeur vide et filtre les identifiants déjà vus)
+            payload_str = json.dumps([{"id": unique_id, "data": b64_data}])
+            
+            # Nettoyage immédiat du fichier temporaire original
+            try: os.remove(audio_chunk_path)
+            except: pass
+        
+        yield history, payload_str
+    
+    utils.log_info("app", f"   LLM: FIN Traitement ({chunk_count} blocs son, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
+    utils.log_info("app", f"   LLM: Réponse finale: '{history[-1]['content']}'")
+    timer.mark("fin_traitement")
+            
+    utils.log_info("app", f"--- FIN Traitement ({chunk_count} blocs, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
+
+
+async def process_texte(text, history):
+    """Message saisi au clavier : même chaîne que la voix, sans la reconnaissance vocale.
+    La réponse est lue à voix haute si le son est activé (clic sur le cadre), sinon elle reste écrite."""
+    text = (text or "").strip()
+    if not text:
+        yield history or [], "", ""
+        return
+    if history is None: history = []
+    try:
+        utils.log_info("app", f"--- DEBUT Traitement (texte saisi) : '{text}'")
+        timer = utils.StepTimer("app")
+        async for hist, payload in repondre(text, history, timer, datetime.now()):
+            yield hist, payload, ""
+    except Exception as e:
+        utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
+        yield history, "", ""
+
 
 def request_restart(confirmed=""):
     """Demande de redémarrage depuis l'interface : tracée dans les logs, puis le serveur se termine dans 2 s.
@@ -333,6 +358,8 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
         with gr.TabItem("💬 Interface Chat"):
             
             chatbot = gr.Chatbot(elem_id="aria_chatbot")
+            text_input = gr.Textbox(elem_id="aria_text_input", show_label=False, lines=1, max_lines=4,
+                                    placeholder="Écrire un message à Aria puis Entrée (en plus de la voix)")
             
             # Bridge technique (visibles pour le DOM mais cachés par CSS)
             audio_url_bridge = gr.Textbox(elem_id="audio_url_bridge", visible=True)
@@ -532,6 +559,13 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
 
 
     ariaHmi.load(None, None, None, js=JS_ON_LOAD)
+
+    text_input.submit(
+        fn=process_texte,
+        inputs=[text_input, chatbot],
+        outputs=[chatbot, audio_url_bridge, text_input],
+        show_progress="hidden"
+    )
 
     trigger_btn.click(
         fn=process_streaming_binaire, 
