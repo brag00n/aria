@@ -284,7 +284,8 @@ def clean_text_for_tts(text):
     text = remove_emojis(text)
     
     # 5. Nettoyage final (On ne touche pas aux guillemets qu'on vient d'ajouter)
-    text = text.replace('_', '').replace('`', '')
+    # Astérisques restants (gras coupé entre deux blocs, puces « * ») : sinon la voix dit « astérisque »
+    text = text.replace('*', ' ').replace('_', '').replace('`', '')
     return re.sub(r'\s+', ' ', text).strip()
 
 def remove_emojis(text):
