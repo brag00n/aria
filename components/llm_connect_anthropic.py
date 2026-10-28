@@ -11,7 +11,7 @@ class LlmConnectAnthropic:
         self.backend_type = "anthropic"
         self.model_name = self.params.get("model_name", "claude-haiku-5-5")
         self.base_url = self.params.get("base_url") or None
-        self.apikey = self.params.get("apikey") or os.environ.get("ANTHROPIC_API_KEY")
+        self.apikey = utils.expand_secrets(self.params.get("apikey") or "") or os.environ.get("ANTHROPIC_API_KEY")
         self.system_message = self.params.get("system_message", "")
         self.max_tokens = self.params.get("max_tokens", 2048)
         self.verbose = self.params.get("verbose", False)

@@ -5,6 +5,7 @@ import components.utils as utils
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 
 class Mcp:
     def __init__(self, mcp_params):
@@ -29,13 +30,18 @@ class Mcp:
     async def _connect_all(self):
         for name, conf in self.servers_conf.items():
             try:
-                server_params = StdioServerParameters(
-                    command=conf.get("run", "uv"),
-                    args=conf.get("args", []),
-                    env={**os.environ, **conf.get("env", {})}
-                )
-                
-                read, write = await self.stack.enter_async_context(stdio_client(server_params))
+                conf = utils.expand_secrets(conf, f"MCP {name}")   # tags <SECRET> -> valeurs du .env
+                if conf.get("url"):
+                    # Serveur distant (HTTP) : "url" et, au besoin, "headers" (ex. Authorization)
+                    read, write, _ = await self.stack.enter_async_context(
+                        streamablehttp_client(conf["url"], headers=conf.get("headers") or None))
+                else:
+                    server_params = StdioServerParameters(
+                        command=conf.get("run", "uv"),
+                        args=conf.get("args", []),
+                        env={**os.environ, **conf.get("env", {})}
+                    )
+                    read, write = await self.stack.enter_async_context(stdio_client(server_params))
                 session = await self.stack.enter_async_context(ClientSession(read, write))
                 await session.initialize()
                 

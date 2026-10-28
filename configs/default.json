@@ -242,6 +242,12 @@
           "env": {
             "API_KEY": "12345"
           }
+        },
+        "jeedomAlita": {
+          "url": "http://<IpDomotique>:1010/mcp",
+          "headers": {
+            "Authorization": "Bearer <TokenDomotique>"
+          }
         }
       }
     }

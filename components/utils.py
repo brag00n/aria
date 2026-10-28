@@ -291,3 +291,25 @@ def clean_text_for_tts(text):
 def remove_emojis(text):
     emoji_pattern = re.compile(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F900-\U0001F9FF\U00002702-\U000027B0]', flags=re.UNICODE)
     return emoji_pattern.sub(r'', text)
+
+
+SECRET_TAG = re.compile(r"<([A-Za-z_][A-Za-z0-9_]*)>")
+
+def expand_secrets(value, where=""):
+    """Remplace les tags <NOM> par la variable d'environnement NOM (définie dans .env), dans toute la structure.
+    Ex. "Bearer <secretAAA>" avec secretAAA=aaaaa dans .env -> "Bearer aaaaa".
+    Un tag sans variable correspondante est laissé tel quel (avertissement dans les logs, sans afficher de valeur).
+    La config d'origine n'est pas modifiée : le secret n'existe qu'en mémoire."""
+    if isinstance(value, dict):
+        return {k: expand_secrets(v, where) for k, v in value.items()}
+    if isinstance(value, list):
+        return [expand_secrets(v, where) for v in value]
+    if isinstance(value, str):
+        def repl(m):
+            secret = os.environ.get(m.group(1))
+            if secret is None:
+                log_info("SECRET", f"⚠️ Tag <{m.group(1)}> sans variable dans .env{' (' + where + ')' if where else ''}")
+                return m.group(0)
+            return secret
+        return SECRET_TAG.sub(repl, value)
+    return value
