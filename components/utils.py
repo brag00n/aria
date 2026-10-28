@@ -313,3 +313,9 @@ def expand_secrets(value, where=""):
             return secret
         return SECRET_TAG.sub(repl, value)
     return value
+
+
+def tool_notice(name):
+    """Ligne d'information « outil utilisé » insérée dans le texte du chat (citation markdown, stylée dans app.py).
+    Elle n'est ajoutée qu'au texte affiché : le texte envoyé à la synthèse vocale est tenu à part, donc elle n'est jamais lue."""
+    return f"\n\n> 🛠️ Outil utilisé : `{name}`\n\n"

@@ -125,6 +125,8 @@ class LlmConnectOpenai:
                     except json.JSONDecodeError:
                         args = {}
                     utils.log_info(tag, f"🛠️ Action MCP : {name}({args})")
+                    full_res += utils.tool_notice(name)            # affiché dans le chat, jamais lu à voix haute
+                    yield full_res, None, None
                     if self.mcp_manager:
                         result = await self.mcp_manager.call_tool(name, args)
                     else:

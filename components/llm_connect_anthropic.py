@@ -106,6 +106,8 @@ class LlmConnectAnthropic:
                     if block.type != "tool_use":
                         continue
                     utils.log_info("LLM-anthropic", f"🛠️ Action MCP : {block.name}({block.input})")
+                    full_res += utils.tool_notice(block.name)      # affiché dans le chat, jamais lu à voix haute
+                    yield full_res, None, None
                     result = await self.mcp_manager.call_tool(block.name, block.input)
                     timer.mark(f"outil_{block.name}")
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})

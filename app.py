@@ -320,6 +320,17 @@ CSS = """
 }
 
 
+/* Ligne d'information système dans le chat (ex. « Outil utilisé ») : couleur distincte, jamais lue à voix haute */
+#aria_chatbot blockquote {
+    color: #d97706 !important;
+    border-left: 3px solid #d97706 !important;
+    background: rgba(217, 119, 6, 0.08) !important;
+    margin: 4px 0 !important;
+    padding: 2px 10px !important;
+    font-size: 0.9em;
+}
+#aria_chatbot blockquote p, #aria_chatbot blockquote code { color: inherit !important; }
+
 #log_display textarea {
     font-family: 'Courier New', monospace !important;
     background-color: #0d1117 !important;
