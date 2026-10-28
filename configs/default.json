@@ -6,7 +6,7 @@
   "active_modules": {
     "vad": "Vad_Web",
     "stt": "Stt_FasterWhisper",
-    "llm": "Llm_gemma-4_local",
+    "llm": "Llm_Anthropic",
     "tts": "Tts_Sherpa"
   },
   "vad": {
