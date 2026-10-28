@@ -10,7 +10,8 @@ class VadWeb:
     def get_javascript(self):
         """Logique VAD 100% autonome et auto-exécutée."""
         return f"""
-        (async () => {{
+        // La promesse est exposée : le bouton micro attend que le VAD soit prêt (ou en échec) avant de changer d'état
+        window.ariaVadPromise = (async () => {{
 
             // 1. Verrouillage pour éviter les exécutions multiples
             if (window.ariaInitialized) {{
@@ -53,10 +54,17 @@ class VadWeb:
                         const visualizer = document.getElementById('audio_visualizer');
                         if (visualizer) visualizer.classList.add('speaking');
                     }},
+                    onVADMisfire: () => {{
+                        // Bruit trop court pour être une phrase : on retire le liseré rouge, sinon il reste allumé
+                        const visualizer = document.getElementById('audio_visualizer');
+                        if (visualizer) visualizer.classList.remove('speaking');
+                    }},
                     onSpeechEnd: (audio) => {{
                         const visualizer = document.getElementById('audio_visualizer');
                         if (visualizer) visualizer.classList.remove('speaking');
-                        
+                        // Phrase détectée : l'image passe à « chargement » jusqu'à la réponse d'Aria (components/mic_toggle.py)
+                        if (window.ariaMic) window.ariaMic.onPhrase();
+
                         const wavBuffer = vad.utils.encodeWAV(audio);
                         const base64Audio = "data:audio/wav;base64," + vad.utils.arrayBufferToBase64(wavBuffer);
                         

@@ -56,7 +56,7 @@ from components.stt import Stt
 from components.llm import Llm
 from components.tts import Tts
 from components.vad import Vad
-from components import visualizer
+from components import visualizer, mic_toggle
 from components.language import Language, normalize
 utils.log_info("app","Stt, Llm, Tts chargés")
 
@@ -163,7 +163,7 @@ def update_config_ui(global_json, vad_choix, vad_json, stt_choix, stt_json, llm_
 
 
 JS_COMBO = f"""
-async () => {{
+(async () => {{
     // 0. Visualiseur audio (isolé : une erreur ici n'empêche ni le VAD ni la lecture)
     {visualizer.build_js(config.get('visualizer'))}
 
@@ -172,8 +172,11 @@ async () => {{
 
     // 2. Initialisation du streaming audio TTS
     {tts.get_javascript()}
-}}
+}})()
 """
+
+# JavaScript exécuté au chargement de la page : clic sur le cadre = micro et son activés / coupés
+JS_ON_LOAD = "() => {" + mic_toggle.js_toggle(JS_COMBO) + "}"
 
 # --- LOGIQUE SERVEUR ---
 async def process_streaming_binaire(b64_audio, history):
@@ -302,20 +305,10 @@ CSS = """
     height: 45vh !important;          /* Utilise 65% de la hauteur de l'écran */
 }
 
-/* Force le bouton à prendre toute la hauteur de son parent et s'aligner */
-#micro_btn_container {
-    height: 100% !important;
-    display: flex !important;
-    align-items: stretch !important;
-}
-
-#micro_btn {
-    height: 100% !important;
-    margin: 0 !important;
-}
 """
 
 CSS += visualizer.css(config.get("visualizer"))
+CSS += mic_toggle.css()
 
 with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
 
@@ -327,19 +320,12 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                 """
                 **Bienvenue sur l'interface de contrôle d'Aria !**  
                 Utilisez ce panneau pour configurer les différents modules (VAD, STT, LLM, TTS) et visualiser les logs en temps réel.  
-                Cliquez sur le bouton pour activer le microphone et commencer à interagir avec Aria.  
+                Cliquez sur le cadre pour activer ou couper le microphone et le son.  
                 """
             )
         with gr.Column(scale=4, elem_id="visualizer_col"): # Visualiseur audio : anneaux animés par la voix d'Aria
             gr.HTML('<canvas id="audio_visualizer" width="400" height="100"></canvas>', elem_id="visualizer_wrapper")
         
-        with gr.Column(scale=1, elem_id="micro_btn_container"): # Le bouton à droite
-            mic_btn = gr.Button(
-                "🎙️ Activer Micro & Son", 
-                variant="primary",
-                elem_id="micro_btn"
-            )
-        mic_btn.click(None, None, None, js=JS_COMBO)
 
     with gr.Tabs():
 
@@ -544,6 +530,8 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
             
             refresh_logs_btn.click(fn=read_logs_memory, outputs=[logs_output])
 
+
+    ariaHmi.load(None, None, None, js=JS_ON_LOAD)
 
     trigger_btn.click(
         fn=process_streaming_binaire, 

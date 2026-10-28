@@ -86,14 +86,22 @@ class Tts:
 
             // 4. Logique de lecture audio (Streaming)
             async function playNext() {{
-                if (window.audioQueue.length === 0) {{ 
-                    window.isPlaying = false; 
-                    return; 
+                // Son coupé par un clic sur le cadre (components/mic_toggle.py) : on jette ce qui reste
+                if (window.muteAria) {{
+                    window.audioQueue = [];
+                    window.isPlaying = false;
+                    return;
+                }}
+                if (window.audioQueue.length === 0) {{
+                    window.isPlaying = false;
+                    window.dispatchEvent(new CustomEvent('aria_audio_end'));   // fin de la réponse : retour à l'écoute
+                    return;
                 }}
                 window.isPlaying = true;
                 const chunk = window.audioQueue.shift();
                 console.log(`[ARIA-CLIENT] Lecture bloc audio: ${{chunk.id}}`);
                 const audio = new Audio(chunk.data);
+                window.ariaCurrentAudio = audio;
 
                 // Signale au visualiseur (static/audioDesign.js) qu'un bloc va être joué
                 window.dispatchEvent(new CustomEvent('aria_audio_start', {{ detail: {{ audioElement: audio }} }}));
@@ -117,6 +125,7 @@ class Tts:
                     set: function(val) {{
                         nativeSetter.call(this, val);
                         if (!val) return;
+                        if (window.muteAria) return;     // réponse arrivée après la coupure du son : ignorée
                         try {{
                             const chunks = JSON.parse(val);
                             console.log(`[ARIA-CLIENT] Réception de ${{chunks.length}} bloc(s) audio.`);
