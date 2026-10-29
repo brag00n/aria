@@ -59,6 +59,7 @@ from components.vad import Vad
 from components import visualizer, mic_toggle
 from components.language import Language, normalize
 from components.conversation import Conversation
+from components import https
 utils.log_info("app","Stt, Llm, Tts chargés")
 
 
@@ -676,4 +677,5 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
     )
 
 if __name__ == "__main__":
-    ariaHmi.launch(server_name="0.0.0.0", server_port=7860)
+    # HTTPS optionnel (config "https") : nécessaire pour le micro depuis un autre poste ou un smartphone
+    ariaHmi.launch(server_name="0.0.0.0", server_port=7860, **https.launch_args(config.get("https")))

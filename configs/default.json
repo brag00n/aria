@@ -44,6 +44,12 @@
       "chut"
     ]
   },
+  "https": {
+    "enabled": true,
+    "hosts": [
+      "<IP_ADDRESS>"
+    ]
+  },
   "active_modules": {
     "vad": "Vad_Web",
     "stt": "Stt_FasterWhisper",
