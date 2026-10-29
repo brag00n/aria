@@ -70,6 +70,11 @@ class LlmConnectAnthropic:
                     kwargs["system"] = self.system_message
                 if tools:
                     kwargs["tools"] = tools
+                    if round_idx == MAX_TOOL_ROUNDS - 1:
+                        # Dernier tour autorisé : le modèle doit répondre avec ce qu'il a obtenu, sans nouvel appel d'outil
+                        # (les outils restent déclarés : l'API l'exige tant que l'historique contient des appels d'outils)
+                        kwargs["tool_choice"] = {"type": "none"}
+                        utils.log_info("LLM-anthropic", f"Tour {round_idx + 1} : limite d'outils atteinte, réponse demandée sans outil")
 
                 tts_buf = ""
                 async with self.client.messages.stream(**kwargs) as stream:

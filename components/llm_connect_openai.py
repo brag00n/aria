@@ -1,4 +1,5 @@
 import json
+import uuid
 import components.utils as utils
 from .utils import StepTimer, TtsQueue
 from .mcp import Mcp
@@ -56,8 +57,13 @@ class LlmConnectOpenai:
             # et un éventuel appel d'outil est reconstitué depuis les deltas.
             for round_idx in range(MAX_TOOL_ROUNDS):
                 kwargs = {"model": self.model_name, "messages": messages, "stream": True}
-                if tools:
+                # Dernier tour autorisé : plus d'outils, pour obliger le modèle à répondre avec ce qu'il a déjà obtenu
+                # (sinon la boucle s'arrête sur un appel d'outil et l'utilisateur n'a aucune réponse)
+                last_round = round_idx == MAX_TOOL_ROUNDS - 1
+                if tools and not last_round:
                     kwargs["tools"] = tools
+                elif last_round and round_idx > 0:
+                    utils.log_info(tag, f"Tour {round_idx + 1} : limite d'outils atteinte, réponse demandée sans outil")
 
                 stream = await self.client.chat.completions.create(**kwargs)
                 timer.mark(f"requete_llm_{round_idx + 1}")
@@ -65,10 +71,13 @@ class LlmConnectOpenai:
                 round_text = ""
                 tts_buf = ""
                 tool_calls = {}
+                finish_reason = None
 
                 async for chunk in stream:
                     if not chunk.choices:
                         continue
+                    if chunk.choices[0].finish_reason:
+                        finish_reason = chunk.choices[0].finish_reason
                     delta = chunk.choices[0].delta
 
                     for tc in (delta.tool_calls or []):
@@ -103,8 +112,17 @@ class LlmConnectOpenai:
                 # Reste du buffer de ce tour
                 queue.flush(tts_buf)
 
+                # Diagnostic : fin de tour et appels d'outils reçus (un modèle qui annonce « je cherche » sans appeler l'outil se voit ici)
+                utils.log_info(tag, f"Tour {round_idx + 1} : finish_reason={finish_reason}, "
+                                    f"{len(tool_calls)} appel(s) d'outil{' : ' + ', '.join(c['name'] for c in tool_calls.values()) if tool_calls else ''}")
+
                 if not tool_calls:
-                    messages.append({"role": "assistant", "content": round_text})
+                    # Pas de message assistant vide : certains modèles de conversation (Mistral, Ministral) refusent
+                    # un message sans texte ni appel d'outil, et l'historique conservé bloquerait toutes les requêtes suivantes
+                    if round_text.strip():
+                        messages.append({"role": "assistant", "content": round_text})
+                    elif messages[-1]["role"] == "user":
+                        messages.pop()             # tour sans réponse : on retire aussi la question, l'alternance reste correcte
                     break
 
                 # Exécution des outils demandés, puis nouveau tour
@@ -112,11 +130,12 @@ class LlmConnectOpenai:
                 for idx in sorted(tool_calls):
                     c = tool_calls[idx]
                     calls.append({
-                        "id": c["id"] or f"call_{round_idx}_{idx}",
+                        # Identifiant d'au moins 9 caractères : exigé par le modèle de conversation de Mistral Small 3.2
+                        "id": c["id"] if len(c["id"]) >= 9 else f"call{uuid.uuid4().hex[:9]}",
                         "type": "function",
                         "function": {"name": c["name"], "arguments": c["arguments"] or "{}"},
                     })
-                messages.append({"role": "assistant", "content": round_text or None, "tool_calls": calls})
+                messages.append({"role": "assistant", "content": round_text or "", "tool_calls": calls})
 
                 for call in calls:
                     name = call["function"]["name"]
