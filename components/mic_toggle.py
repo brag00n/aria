@@ -120,10 +120,23 @@ window.ariaInitAudio = async () => {
     const _set = A.set;
     A.set = (s) => { if (s === 'hearing') A.hearingSince = Date.now(); _set(s); };
 
+    // Message visible quand le micro est inutilisable (l'échec était silencieux)
+    A.warn = (msg) => {
+        console.error('[ARIA-MIC] ' + msg);
+        const el = box();
+        if (el) el.title = msg;
+        try { alert(msg); } catch (e) {}
+    };
+
     A.toggle = async () => {
         if (A.busy) return;
         A.busy = true;
         try {
+            if (A.state === 'off' && !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+                // http://IP:port : le navigateur ne propose pas le micro hors page sécurisée (HTTPS ou localhost)
+                A.warn('Micro indisponible : cette page n\\'est pas sécurisée. Ouvrez Aria en HTTPS (https://' + location.host + ') ou depuis localhost.');
+                return;
+            }
             if (A.state === 'off') {
                 await A.startMic();
                 window.muteAria = false;
