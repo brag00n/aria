@@ -3,6 +3,7 @@ import uuid
 import components.utils as utils
 from .utils import StepTimer, TtsQueue
 from .mcp import Mcp
+from . import history as history_mod
 
 MAX_TOOL_ROUNDS = 5
 
@@ -15,6 +16,7 @@ class LlmConnectOpenai:
         self.apikey = self.params.get("apikey", f"{self.backend_type}")
         self.system_message = self.params.get("system_message", "")
         self.verbose = self.params.get("verbose", False)
+        self.memory = (all_config or {}).get("memory")        # plafonds de l'historique (components/history.py)
 
         utils.log_info(f"LLM-{self.backend_type}", f"Initialisation du mode {self.backend_type} 🌐")
         utils.log_info(f"LLM-{self.backend_type}", f"Utilisation du modele {self.model_name} via l'url {self.base_url}")
@@ -42,6 +44,9 @@ class LlmConnectOpenai:
         messages = self.user_aware_messages.setdefault(
             user, [{"role": "system", "content": self.system_message}]
         )
+        # Historique borné AVANT d'ajouter la question (start_len, utilisé pour annuler un tour en erreur, reste exact)
+        history_mod.shorten_tool_results(messages, self.memory, first=1)
+        history_mod.trim(messages, self.memory, first=1)
         start_len = len(messages)
         messages.append({"role": "user", "content": query})
 

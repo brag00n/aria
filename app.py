@@ -60,6 +60,7 @@ from components import visualizer, mic_toggle
 from components.language import Language, normalize
 from components.conversation import Conversation
 from components import https
+from components import history as history_mod
 utils.log_info("app","Stt, Llm, Tts chargés")
 
 
@@ -123,7 +124,7 @@ def get_current_params(category, module_name):
     except Exception as e:
         return "{}"
 
-def update_config_ui(global_json, vad_choix, vad_json, conv_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json):
+def update_config_ui(global_json, vad_choix, vad_json, conv_json, memory_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json):
     """Sauvegarde globale de la configuration modulaire"""
     try:
         # 0. Réglages généraux (langue...). Contrôlés AVANT toute écriture : une erreur ne laisse pas la config à moitié modifiée.
@@ -145,8 +146,15 @@ def update_config_ui(global_json, vad_choix, vad_json, conv_json, stt_choix, stt
         for key in ("open_phrases", "close_phrases", "stop_phrases"):
             if key in new_conv and not (isinstance(new_conv[key], list) and all(isinstance(x, str) for x in new_conv[key])):
                 return f"❌ conversation.{key} doit être une liste de textes"
+        new_memory = json.loads(memory_json)
+        if not isinstance(new_memory, dict):
+            return "❌ La section mémoire doit être un objet JSON"
+        for key in ("max_exchanges", "max_chars", "tool_result_max_chars"):
+            if key in new_memory and not (isinstance(new_memory[key], int) and not isinstance(new_memory[key], bool) and new_memory[key] >= 0):
+                return f"❌ memory.{key} doit être un entier positif ou nul"
         config["global"] = new_global
         config["conversation"] = new_conv
+        config["memory"] = new_memory
         # 1. Mise à jour des pointeurs de modules actifs
         config["active_modules"] = {
             "vad": vad_choix,
@@ -242,6 +250,7 @@ async def process_streaming_binaire(b64_audio, history):
             yield update
         if action == "close":
             conv.end()
+            forget_context()                             # clôture : Aria oublie la conversation (réglage memory.reset_on_close)
             yield history, ctl_payload("conv_close")     # l'icône du cadre disparaît après la fin de la réponse
     except Exception as e:
         utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
@@ -344,10 +353,30 @@ async def process_texte(text, history):
             yield hist, payload, ""
         if action == "close":
             conv.end()
+            forget_context()
             yield history, ctl_payload("conv_close"), ""
     except Exception as e:
         utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
         yield history, "", ""
+
+
+def forget_context(force=False):
+    """Efface l'historique envoyé au LLM (pas le chat affiché). Automatique à la clôture d'une conversation si
+    memory.reset_on_close est vrai ; `force` pour le bouton « Nouvelle conversation »."""
+    if not (force or history_mod.settings(config.get("memory"))["reset_on_close"]):
+        return
+    store = getattr(llm.engine, "user_aware_messages", None)
+    if store is not None:
+        history_mod.reset(store)
+
+
+def new_conversation():
+    """Bouton « Nouvelle conversation » : Aria oublie tout, le chat est vidé, la conversation vocale se referme."""
+    conv.request_stop()
+    forget_context(force=True)
+    if conv.active:
+        conv.end()
+    return [], ctl_payload("conv_close")
 
 
 def stop_aria():
@@ -437,6 +466,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                 text_input = gr.Textbox(elem_id="aria_text_input", show_label=False, lines=1, max_lines=4, scale=8,
                                         placeholder="Écrire un message à Aria puis Entrée (en plus de la voix)")
                 stop_btn = gr.Button("⏹ Stop", elem_id="aria_stop_btn", variant="stop", scale=1, min_width=90)
+                new_btn = gr.Button("🧹 Nouvelle conversation", elem_id="aria_new_btn", scale=2, min_width=150)
             
             # Bridge technique (visibles pour le DOM mais cachés par CSS)
             audio_url_bridge = gr.Textbox(elem_id="audio_url_bridge", visible=True)
@@ -502,6 +532,16 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     language="json",
                     label="Paramètres de la conversation",
                     lines=8
+                )
+                gr.Markdown("#### 🧠 Mémoire (historique envoyé au LLM)")
+                gr.Markdown("<small>`reset_on_close` : la clôture d'une conversation efface l'historique. `max_exchanges` et `max_chars` : "
+                            "plafonds (les plus anciens échanges sont retirés). `tool_result_max_chars` : taille à laquelle un ancien "
+                            "résultat d'outil est raccourci. 0 = sans limite.</small>")
+                memory_code = gr.Code(
+                    value=json.dumps(config.get("memory", {}), indent=2, ensure_ascii=False),
+                    language="json",
+                    label="Paramètres de la mémoire",
+                    lines=6
                 )
 
             # --- BLOC 2 : STT (Transcription) ---
@@ -590,6 +630,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     global_code,
                     vad_dd, vad_code,
                     conv_code,
+                    memory_code,
                     stt_dd, stt_code,
                     llm_dd, llm_code,
                     tts_dd, tts_code,
@@ -666,6 +707,15 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
         show_progress="hidden",
         concurrency_limit=None,
         js="() => { if (window.ariaStopAudio) window.ariaStopAudio(); }"     # coupe le son tout de suite, sans attendre le serveur
+    )
+
+    new_btn.click(
+        fn=new_conversation,
+        inputs=None,
+        outputs=[chatbot, audio_url_bridge],
+        show_progress="hidden",
+        concurrency_limit=None,
+        js="() => { if (window.ariaStopAudio) window.ariaStopAudio(); }"
     )
 
     trigger_btn.click(

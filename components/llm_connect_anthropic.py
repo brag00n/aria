@@ -2,6 +2,7 @@ import os
 import components.utils as utils
 from .utils import TtsQueue, StepTimer
 from .mcp import Mcp
+from . import history as history_mod
 
 MAX_TOOL_ROUNDS = 5
 
@@ -28,6 +29,7 @@ class LlmConnectAnthropic:
 
         self.client = AsyncAnthropic(api_key=self.apikey, base_url=self.base_url, timeout=60.0)
         self.user_aware_messages = {}
+        self.memory = (all_config or {}).get("memory")      # plafonds de l'historique (components/history.py)
 
         self.mcp_manager = None
         if all_config and "mcp" in all_config:
@@ -49,6 +51,9 @@ class LlmConnectAnthropic:
 
     async def get_answer_web(self, tts, query, user):
         history = self.user_aware_messages.setdefault(user, [])
+        # Historique borné AVANT d'ajouter la question (start_len, utilisé pour annuler un tour en erreur, reste exact)
+        history_mod.shorten_tool_results(history, self.memory)
+        history_mod.trim(history, self.memory)
         start_len = len(history)
         history.append({"role": "user", "content": query})
         timer = StepTimer("LLM-anthropic")

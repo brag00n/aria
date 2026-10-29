@@ -44,6 +44,12 @@
       "chut"
     ]
   },
+  "memory": {
+    "reset_on_close": true,
+    "max_exchanges": 12,
+    "max_chars": 24000,
+    "tool_result_max_chars": 2000
+  },
   "https": {
     "enabled": true,
     "hosts": [
