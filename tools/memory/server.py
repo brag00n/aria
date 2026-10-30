@@ -1,9 +1,12 @@
 """Serveur MCP de mémoire à long terme d'Aria (stdio). Module autonome : aucune importation depuis Aria.
 
-Trois outils seulement (chaque outil de plus coûte du temps de prompt aux petits modèles) :
-  memoriser(fait, type, tags)      retient une information durable
-  rechercher_souvenir(question)    retrouve des souvenirs (question vide = les plus importants)
-  oublier(id)                      oublie un souvenir (archivé, jamais perdu en silence)
+Cinq outils pour le LLM (chaque outil de plus coûte du temps de prompt aux petits modèles) :
+  memoriser(fait, type, tags)                     retient une information durable de l'interlocuteur actif
+  rechercher_souvenir(question)                   retrouve ses souvenirs et ceux du foyer (question vide = les plus importants)
+  oublier(id)                                     oublie un souvenir (archivé, jamais perdu en silence)
+  identifier_interlocuteur(nom, complement)       désigne (ou crée) la personne qui parle
+  relier(personne_a, lien, personne_b)            mémorise un lien entre deux personnes
+Un outil caché au LLM (préfixe ui_), pour Aria seule : ui_etat(activer) -> interlocuteurs, actif et consigne du tour.
 
 Variables d'environnement :
   MEMORY_DIR         dossier des données (défaut : <ce dossier>/../../models/memory)
@@ -13,6 +16,7 @@ Variables d'environnement :
   MEMORY_LOG_TEXT    0 = ne pas consigner le texte des requêtes dans le journal d'activité (empreinte à la place)
   MEMORY_LOG_LEVEL   info (défaut) | debug
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -24,6 +28,7 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 import store as store_mod  # noqa: E402
 from activity import Activity  # noqa: E402
+from interlocuteur import Interlocuteurs  # noqa: E402
 
 DATA_DIR = Path(os.environ.get("MEMORY_DIR") or (HERE.parent.parent / "models" / "memory"))
 NAMESPACE = os.environ.get("MEMORY_NAMESPACE", "default")
@@ -32,6 +37,7 @@ activity = Activity(DATA_DIR / "logs",
                     log_text=os.environ.get("MEMORY_LOG_TEXT", "1") != "0",
                     level=os.environ.get("MEMORY_LOG_LEVEL", "info"))
 store = store_mod.Store(DATA_DIR, NAMESPACE, activity=activity)
+interlocuteurs = Interlocuteurs(store)
 
 mcp = FastMCP("memoire")
 
@@ -41,24 +47,38 @@ def _line(rec):
     return f"{rec['id']} [{rec['t']}] {rec['txt']}"
 
 
+@mcp.tool(name="identifier_interlocuteur")
+def identifier_interlocuteur(nom: str, complement: str = "") -> str:
+    """Désigne la personne qui parle (prénom, plus nom de famille ou surnom en cas d'homonyme). La crée si elle est inconnue."""
+    return interlocuteurs.identifier(nom, complement)
+
+
+@mcp.tool(name="relier")
+def relier(personne_a: str, lien: str, personne_b: str) -> str:
+    """Mémorise un lien entre deux personnes, par exemple Tiphaine, femme de, Olivier. « moi » désigne l'interlocuteur actuel."""
+    return interlocuteurs.relier(personne_a, lien, personne_b)
+
+
+@mcp.tool(name="ui_etat")
+def ui_etat(activer: str = "?") -> str:
+    """Réservé à l'interface d'Aria (non proposé au LLM). Renvoie en JSON les interlocuteurs, l'actif et la consigne du tour. activer: '?' ne change rien, '' = Inconnue, sinon l'identifiant de la personne."""
+    return json.dumps(interlocuteurs.etat(activer), ensure_ascii=False)
+
+
 @mcp.tool(name="memoriser")
 def memoriser(fait: str, type: str = "fait", tags: str = "") -> str:
-    """Retient une information durable sur l'utilisateur ou sa maison. type: fait, preference, tache ou ephemere. tags: mots séparés par des virgules."""
+    """Retient une information durable de l'interlocuteur actuel. type: fait, preference, tache, ephemere, ou foyer (concerne toute la maison). tags: mots séparés par des virgules."""
     status, rec = store.add(fait, type, tags, src="llm")
     if status == "added":
         return f"OK {rec['id']}"
     if status == "duplicate":
         return f"Déjà connu ({rec['id']}), renforcé."
-    if status == "locked":
-        return "Mémoire verrouillée, rien n'a été enregistré."
-    if status == "rate_limit":
-        return "Trop d'enregistrements d'affilée, réessaie dans une minute."
-    return "Rien à retenir."
+    return interlocuteurs.refus(status)
 
 
 @mcp.tool(name="rechercher_souvenir")
 def rechercher_souvenir(question: str = "", limite: int = 5) -> str:
-    """Cherche dans la mémoire ce que l'on sait de l'utilisateur. À appeler avant de répondre sur ses goûts, sa maison ou ses affaires."""
+    """Cherche ce que l'on sait de l'interlocuteur actuel et du foyer. À appeler avant de répondre sur ses goûts, sa maison, sa famille ou ses affaires."""
     results, fallback = store.search(question, limite, src="llm")
     if not results:
         return "Aucun souvenir."

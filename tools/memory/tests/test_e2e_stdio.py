@@ -45,7 +45,9 @@ class E2ETests(unittest.TestCase):
 
     def test_outils_exposes_courts_et_plats(self):
         tools, _ = asyncio.run(session_run(self.tmp, []))
-        self.assertEqual(sorted(t.name for t in tools), ["memoriser", "oublier", "rechercher_souvenir"])
+        # 5 outils pour le LLM + ui_etat, que mcp.py cache au LLM (préfixe ui_)
+        self.assertEqual(sorted(t.name for t in tools), ["identifier_interlocuteur", "memoriser", "oublier", "rechercher_souvenir",
+                                                         "relier", "ui_etat"])
         for tool in tools:
             self.assertLess(len(tool.description or ""), 200, tool.name)
             for prop in tool.inputSchema.get("properties", {}).values():
@@ -53,35 +55,50 @@ class E2ETests(unittest.TestCase):
 
     def test_aller_retour_et_persistance(self):
         _, first = asyncio.run(session_run(self.tmp, [
+            ("memoriser", {"fait": "Marion préfère 19 degrés", "type": "preference"}),         # interlocuteur inconnu : refusé
+            ("identifier_interlocuteur", {"nom": "Olivier"}),
             ("memoriser", {"fait": "Marion préfère 19 degrés dans sa chambre", "type": "preference"}),
             ("memoriser", {"fait": "Marion préfère 19 degrés dans sa chambre", "type": "preference"}),
             ("rechercher_souvenir", {"question": "quelle température préfère Marion ?"}),
+            ("relier", {"personne_a": "Tiphaine", "lien": "femme de", "personne_b": "moi"}),
+            ("ui_etat", {"activer": "?"}),
         ]))
-        self.assertTrue(first[0].startswith("OK m_"))
-        self.assertIn("Déjà connu", first[1])
-        self.assertIn("Marion préfère 19 degrés", first[2])
-        rid = first[0].split()[1]
+        self.assertIn("Interlocuteur inconnu", first[0])
+        self.assertIn("créé et actif", first[1])
+        self.assertTrue(first[2].startswith("OK m_"))
+        self.assertIn("Déjà connu", first[3])
+        self.assertIn("Marion préfère 19 degrés", first[4])
+        self.assertIn("Tiphaine est la femme de Olivier", first[5])
+        etat = json.loads(first[6])
+        self.assertEqual((etat["actif"], etat["liste"]), ("p1", [{"id": "p1", "label": "Olivier"}]))
+        rid = first[2].split()[1]
 
-        # Nouveau processus : les souvenirs doivent être relus depuis le disque
+        # Nouveau processus : les souvenirs sont relus, mais l'interlocuteur actif retombe sur Inconnue (Aria le resynchronise)
         _, second = asyncio.run(session_run(self.tmp, [
+            ("ui_etat", {"activer": "?"}),
+            ("rechercher_souvenir", {"question": "Marion"}),            # Inconnue : le privé est invisible
+            ("rechercher_souvenir", {"question": "Tiphaine"}),          # la relation est partagée
+            ("ui_etat", {"activer": "p1"}),
             ("rechercher_souvenir", {"question": "Marion"}),
             ("oublier", {"id": rid}),
             ("rechercher_souvenir", {"question": "Marion"}),
             ("oublier", {"id": "m_inconnu"}),
         ]))
-        self.assertIn(rid, second[0])
-        self.assertEqual(second[1], "Oublié.")
-        self.assertEqual(second[2], "Aucun souvenir.")
-        self.assertEqual(second[3], "Souvenir introuvable.")
+        self.assertEqual(json.loads(second[0])["actif"], "")
+        self.assertNotIn("Marion préfère", second[1])                  # le privé d'Olivier reste invisible (le repli ne montre que le partagé)
+        self.assertIn("femme de", second[2])
+        self.assertEqual(json.loads(second[3])["actif"], "p1")
+        self.assertIn(rid, second[4])
+        self.assertEqual(second[5], "Oublié.")
+        self.assertNotIn("Marion préfère", second[6])
+        self.assertEqual(second[7], "Souvenir introuvable.")
 
         activity = (self.tmp / "logs" / "activity.jsonl").read_text("utf-8").splitlines()
         events = [json.loads(l)["ev"] for l in activity]
-        self.assertIn("add", events)
-        self.assertIn("search", events)
-        self.assertIn("delete", events)
+        for expected in ("add", "search", "delete", "speaker", "add_refused", "person_add"):
+            self.assertIn(expected, events)
         archive = list((self.tmp / "default" / "archive").glob("*.jsonl"))
         self.assertTrue(archive and "Marion" in archive[0].read_text("utf-8"))
-
 
 if __name__ == "__main__":
     unittest.main()

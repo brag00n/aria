@@ -262,5 +262,96 @@ class RelationTests(Base):
         self.assertEqual(found[0]["rel"]["l"], "femme de")
 
 
+class OutilsTests(Base):
+    """Les réponses des outils vus par le LLM et l'état lu par Aria (couche interlocuteur.py)."""
+
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+
+    def test_etat_initial_inconnue(self):
+        etat = self.i.etat("?")
+        self.assertEqual(etat["actif"], "")
+        self.assertEqual(etat["liste"], [])
+        self.assertIn("Inconnue", etat["contexte"])
+        self.assertIn("à qui ai-je l'honneur", etat["contexte"])
+
+    def test_identifier_cree_et_active(self):
+        reponse = self.i.identifier("Olivier")
+        self.assertIn("créé et actif", reponse)
+        self.assertIn("questions", reponse)
+        etat = self.i.etat("?")
+        self.assertEqual(etat["actif"], "p1")
+        self.assertEqual(etat["liste"], [{"id": "p1", "label": "Olivier"}])
+        self.assertIn("Olivier", etat["contexte"])
+        self.assertNotIn("Inconnue", etat["contexte"])
+
+    def test_memorisation_apres_identification_dans_le_meme_tour(self):
+        self.i.identifier("Olivier")
+        status, rec = self.s.add("Aime le café serré", "préférence")
+        self.assertEqual((status, rec["o"]), ("added", "p1"))
+
+    def test_memoriser_refuse_tant_qu_inconnue(self):
+        status, _ = self.s.add("Aime le café serré", "préférence")
+        self.assertEqual(status, "unknown_speaker")
+        self.assertIn("Interlocuteur inconnu", self.i.refus(status))
+
+    def test_homonyme_n_active_personne(self):
+        self.i.identifier("Olivier", "Martin")
+        self.i.identifier("Olivier", "Dupont")
+        self.i.etat("")
+        reponse = self.i.identifier("Olivier")
+        self.assertIn("Plusieurs personnes", reponse)
+        self.assertEqual(self.s.active, "")
+
+    def test_activer_par_aria_et_identifiant_inconnu(self):
+        self.i.identifier("Olivier")
+        self.assertEqual(self.i.etat("")["actif"], "")
+        self.assertEqual(self.i.etat("p1")["actif"], "p1")
+        self.assertEqual(self.i.etat("p99")["actif"], "")          # identifiant inexistant : retombe sur Inconnue
+        self.assertEqual(self.i.etat("?")["actif"], "")
+
+    def test_changement_d_interlocuteur_signale(self):
+        self.i.identifier("Olivier")
+        self.assertIn("Changement d'interlocuteur", self.i.identifier("Tiphaine") + self.i.identifier("Olivier"))
+
+    def test_relier_avec_moi(self):
+        self.i.identifier("Olivier")
+        reponse = self.i.relier("Tiphaine", "femme de", "moi")
+        self.assertIn("Tiphaine est la femme de Olivier", reponse)
+        self.assertTrue(self.i.relier("Tiphaine", "femme de", "moi").startswith("Déjà connu"))      # idempotent
+        self.s.active = "p2"
+        found = self.s.search("Tiphaine femme", touch=False)[0]
+        self.assertEqual(found[0]["rel"]["l"], "femme de")
+
+    def test_relier_refuse_si_inconnue(self):
+        self.assertIn("Interlocuteur inconnu", self.i.relier("Tiphaine", "femme de", "Olivier"))
+
+    def test_relier_valide_les_entrees(self):
+        self.i.identifier("Olivier")
+        self.assertIn("Il manque", self.i.relier("", "femme de", "moi"))
+        self.assertIn("elle-même", self.i.relier("moi", "ami de", "Olivier"))
+
+    def test_relier_renseigne_les_identifiants_connus(self):
+        self.i.identifier("Olivier")
+        self.i.identifier("Tiphaine")
+        self.i.etat("p1")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        rec = next(r for r in self.s.records.values() if r["t"] == "relation")
+        self.assertEqual((rec["rel"]["ia"], rec["rel"]["ib"]), ("p2", "p1"))
+
+    def test_changement_enregistre_dans_le_journal_d_activite(self):
+        from activity import Activity
+        act = Activity(self.tmp / "logs")
+        s = store_mod.Store(self.tmp / "autre", "default", activity=act, clock=self.clock, lock_instance=False)
+        from interlocuteur import Interlocuteurs
+        Interlocuteurs(s).identifier("Olivier")
+        events = [json.loads(l) for l in (self.tmp / "logs" / "activity.jsonl").read_text("utf-8").splitlines()]
+        speakers = [e for e in events if e["ev"] == "speaker"]
+        self.assertEqual((speakers[0]["frm"], speakers[0]["to"], speakers[0]["src"]), ("", "p1", "llm"))
+
+
 if __name__ == "__main__":
     unittest.main()
