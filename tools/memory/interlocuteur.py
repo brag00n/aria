@@ -161,41 +161,58 @@ class Interlocuteurs:
         """Relations utiles pour répondre sur un lien indirect (« qui suis-je pour Tiphaine ? ») : celles des personnes citées dans
         la question et de l'interlocuteur actif, puis celles de leurs proches (un niveau de plus). Exemple : « Marion fille
         d'Olivier » + « Tiphaine femme d'Olivier » permettent de conclure sans deuxième recherche. Plafonné à `maximum` liens.
-        `deja` : identifiants déjà renvoyés par la recherche, qui ne sont pas répétés."""
+        `deja` : identifiants déjà renvoyés par la recherche, qui ne sont pas répétés.
+        Les personnes sont comparées par IDENTITÉ (voir `_ident`), pas par texte : « Marion Cousinier » dans un lien et « Marion »
+        en interlocuteur actif désignent la même personne."""
         relations = [r for r in self.store.records.values() if r["t"] == "relation" and r.get("rel")]
         if not relations:
             return []
-        wanted = set(self._names_in(question))
-        active = self.store.personnes.get(self.store.active)
-        if active:
-            wanted.add(key(active["nom"]))
+        wanted = self._names_in(question)
+        if self.store.active:
+            wanted.add("id:" + self.store.active)
         chosen, seen = [], set(deja)
         for _ in range(2):                                      # personnes citées, puis leurs proches
-            found = [r for r in relations if r["id"] not in seen
-                     and ({key(r["rel"].get("a", "")), key(r["rel"].get("b", ""))} & wanted)]
+            found = [r for r in relations if r["id"] not in seen and (self._ends(r) & wanted)]
             for r in found:
                 seen.add(r["id"])
                 chosen.append(r)
-                wanted.update({key(r["rel"].get("a", "")), key(r["rel"].get("b", ""))})
+                wanted |= self._ends(r)
             if not found:
                 break
         return chosen[:maximum]
 
+    def _ident(self, name):
+        """Identité stable d'un nom : « id:p3 » si une seule personne connue le porte (« Marion », « Marion Cousinier »,
+        un surnom), sinon le prénom seul (« nom:marion »), pour qu'une personne pas encore connue soit quand même
+        reconnue d'un lien à l'autre. Un nom ambigu (deux Marion) reste sur le prénom."""
+        found = self.store.personnes.find(name)
+        if len(found) == 1:
+            return "id:" + found[0]["id"]
+        first = key(name).split(" ")[0] if key(name) else ""
+        return ("nom:" + first) if first else ""
+
+    def _ends(self, rec):
+        """Identités des deux extrémités d'une relation (recalculées à la lecture : valables aussi pour les anciens liens)."""
+        rel = rec.get("rel") or {}
+        return {i for i in (self._ident(rel.get("a", "")), self._ident(rel.get("b", ""))) if i}
+
     def _names_in(self, question):
-        """Prénoms, noms et surnoms des personnes connues (et des extrémités de relations) cités dans la question."""
+        """Identités des personnes citées dans la question : prénoms et surnoms de personnes connues, et extrémités de liens."""
         words = set(key(question).split())
-        names = set()
+        wanted = set()
         for p in self.store.personnes.items:
             for field in ("nom", "surnom"):
                 if p[field] and key(p[field]) in words:
-                    names.add(key(p["nom"]))
+                    wanted.add("id:" + p["id"])
         for r in self.store.records.values():
             rel = r.get("rel")
             if rel:
                 for side in ("a", "b"):
-                    if key(rel.get(side, "")) in words:
-                        names.add(key(rel[side]))
-        return names
+                    name = rel.get(side, "")
+                    if key(name) and (set(key(name).split(" ")) & words):
+                        wanted.add(self._ident(name))
+        wanted.discard("")
+        return wanted
 
     def liste_json(self):
         return json.dumps(self.etat("?"), ensure_ascii=False)

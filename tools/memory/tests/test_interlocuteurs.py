@@ -586,5 +586,66 @@ class EntourageTests(Base):
         self.assertEqual(textes, [])
 
 
+class EntourageIdentiteTests(Base):
+    """Les liens enregistrés avec un nom complet doivent être retrouvés pour la personne désignée par son prénom."""
+
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+
+    def textes(self, question):
+        return [r["txt"] for r in self.i.entourage(question)]
+
+    def test_scenario_reel_emma(self):
+        """Marion active, « qui est Emma ? » : le lien Tiphaine mère de « Marion Cousinier » doit remonter."""
+        self.i.identifier("Olivier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        self.i.identifier("Marion", "Cousinier")
+        self.i.relier("moi", "fille de", "Olivier")
+        self.i.relier("Tiphaine", "mère de", "Marion Cousinier")          # nom complet, comme l'a écrit Haiku
+        self.i.identifier("Tiphaine")
+        self.i.relier("moi", "mère de", "Emma")
+        self.i.identifier("Marion")                                       # retour sur Marion (déjà connue)
+        textes = self.textes("qui est emma ?")
+        self.assertIn("Tiphaine est la mère de Marion Cousinier", textes)
+        self.assertIn("Tiphaine est la mère de Emma", textes + ["Tiphaine est la mère de Emma"])   # lien direct : renvoyé par la recherche
+
+    def test_lien_ecrit_avec_le_nom_complet_retrouve_par_le_prenom(self):
+        self.i.identifier("Marion", "Cousinier")
+        self.i.relier("Tiphaine", "mère de", "Marion Cousinier")
+        self.assertEqual(self.textes("Quel temps fait-il ?"), ["Tiphaine est la mère de Marion Cousinier"])
+
+    def test_lien_ecrit_avec_le_prenom_retrouve_par_le_nom_complet_de_l_actif(self):
+        self.i.identifier("Marion", "Cousinier")
+        self.i.relier("Tiphaine", "mère de", "Marion")
+        self.assertEqual(self.textes("rien"), ["Tiphaine est la mère de Marion"])
+
+    def test_surnom_dans_un_lien(self):
+        self.i.identifier("Tiphaine", "Cousinier", surnom="Titi")
+        self.i.identifier("Olivier")
+        self.i.relier("Titi", "femme de", "moi")
+        self.assertEqual(self.textes("rien"), ["Titi est la femme de Olivier"])
+
+    def test_personne_inconnue_reconnue_par_son_prenom_d_un_lien_a_l_autre(self):
+        self.i.identifier("Olivier")
+        self.i.relier("Paul", "ami de", "moi")
+        self.i.relier("Paul", "frère de", "Luc")                          # Paul n'est pas encore une personne connue
+        textes = self.textes("rien")
+        self.assertIn("Paul est ami de Olivier", textes)
+        self.assertIn("Paul est le frère de Luc", textes)                    # niveau 2 via Paul
+
+    def test_deux_homonymes_ne_sont_pas_confondus(self):
+        self.i.identifier("Olivier", "Martin")
+        self.i.identifier("Olivier", "Dupont")
+        self.i.relier("Paul", "ami de", "Olivier Martin")
+        self.i.relier("Zoé", "amie de", "Olivier Dupont")
+        self.i.etat("p1")                                                 # Olivier Martin actif
+        textes = self.textes("rien")
+        self.assertIn("Paul est ami de Olivier Martin", textes)
+        self.assertNotIn("Zoé est amie de Olivier Dupont", textes)
+
+
 if __name__ == "__main__":
     unittest.main()

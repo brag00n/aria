@@ -65,10 +65,9 @@ def article(lien):
     """« femme de » -> « la femme de » ; les liens inconnus sont gardés tels quels (« est collègue de »)."""
     words = lien.split()
     first = textproc.normalize(words[0]) if words else ""
-    if first in ("femme", "fille", "soeur", "mere", "amie", "voisine", "compagne"):
+    if first in ("femme", "fille", "soeur", "mere", "compagne"):
         return "la " + lien
-    if first == "collegue":
-        return "collègue " + " ".join(words[1:])
-    if first in ("mari", "fils", "pere", "frere", "ami", "voisin", "compagnon", "epoux"):
+    if first in ("mari", "fils", "pere", "frere", "compagnon", "epoux"):
         return "le " + lien
+    # « ami(e) de », « voisin(e) de », « collègue de » : tournure sans article (« Paul est ami de Olivier »)
     return lien
