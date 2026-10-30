@@ -60,6 +60,7 @@ from components import visualizer, mic_toggle
 from components.language import Language, normalize
 from components.conversation import Conversation
 from components import https
+from components import memory_tab
 from components import history as history_mod
 utils.log_info("app","Stt, Llm, Tts chargés")
 
@@ -764,6 +765,12 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
             
             refresh_logs_btn.click(fn=read_logs_memory, outputs=[logs_output])
 
+        # --- ONGLET MÉMOIRE (page de gestion du serveur de mémoire) : seulement si elle est activée dans la config ---
+        _memory_port = memory_tab.ui_port(config)
+        if _memory_port:
+            with gr.TabItem("🧠 Mémoire") as memory_tab_item:
+                gr.HTML(memory_tab.html(_memory_port))
+            memory_tab_item.select(None, None, None, js=memory_tab.js_reload())
 
     ariaHmi.load(None, None, None, js=JS_ON_LOAD)
 
