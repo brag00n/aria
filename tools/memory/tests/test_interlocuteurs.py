@@ -424,5 +424,54 @@ class SurnomEtGestionTests(Base):
         self.assertEqual(self.s.merge_persons("p1", "p99"), -1)
 
 
+class CompletionTests(Base):
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+
+    # ---- 1. compléter la personne active au lieu de créer un homonyme
+    def test_se_presenter_deux_fois_complete_la_fiche(self):
+        self.i.identifier("Tiphaine")
+        reponse = self.i.identifier("Tiphaine", "Cousinier", "Titi")
+        self.assertIn("fiche complétée", reponse)
+        self.assertEqual(len(self.s.personnes.items), 1)
+        person = self.s.personnes.get("p1")
+        self.assertEqual((person["compl"], person["surnom"]), ("Cousinier", "Titi"))
+        self.assertEqual(self.s.active, "p1")
+
+    def test_nom_complet_donne_d_un_coup_complete_aussi(self):
+        self.i.identifier("Tiphaine")
+        self.i.identifier("Tiphaine Cousinier")
+        self.assertEqual(len(self.s.personnes.items), 1)
+        self.assertEqual(self.s.personnes.get("p1")["compl"], "Cousinier")
+
+    def test_un_autre_nom_de_famille_reste_un_homonyme(self):
+        self.i.identifier("Tiphaine", "Cousinier")
+        self.i.identifier("Tiphaine", "Durand")
+        self.assertEqual(len(self.s.personnes.items), 2)
+        self.assertEqual(self.s.active, "p2")
+
+    def test_un_autre_prenom_est_une_autre_personne(self):
+        self.i.identifier("Tiphaine")
+        self.i.identifier("Marion")
+        self.assertEqual(len(self.s.personnes.items), 2)
+
+    def test_le_nom_complet_d_une_autre_personne_connue_l_active(self):
+        self.i.identifier("Tiphaine", "Cousinier")
+        self.i.identifier("Marion")
+        self.i.identifier("Marion", "Cousinier")           # complète Marion (active)
+        self.assertEqual(len(self.s.personnes.items), 2)
+        self.i.identifier("Tiphaine", "Cousinier")         # personne connue, différente de l'active : on bascule
+        self.assertEqual(self.s.active, "p1")
+        self.assertEqual(len(self.s.personnes.items), 2)
+
+    def test_redire_son_prenom_ne_change_rien(self):
+        self.i.identifier("Tiphaine")
+        self.assertIn("toujours actif", self.i.identifier("Tiphaine"))
+        self.assertEqual(len(self.s.personnes.items), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

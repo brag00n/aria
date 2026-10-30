@@ -68,6 +68,9 @@ class Interlocuteurs:
     # ------------------------------------------------------------------ outils du LLM
     def identifier(self, nom, complement="", surnom=""):
         """Outil identifier_interlocuteur : active la personne qui parle, la crée si besoin, signale les homonymes."""
+        completed = self._completer_actif(nom, complement, surnom)
+        if completed:
+            return completed
         status, person, candidates = self.store.personnes.resolve(nom, complement, surnom)
         if status == "empty":
             return "Je n'ai pas compris le nom. Demande-lui son prénom."
@@ -108,6 +111,33 @@ class Interlocuteurs:
         }.get(status, "Rien à retenir.")
 
     # ------------------------------------------------------------------ aides
+    def _completer_actif(self, nom, complement, surnom):
+        """L'interlocuteur actif donne plus de détails sur lui (« Tiphaine », puis « Tiphaine Cousinier, appelez-moi Titi ») :
+        on complète sa fiche au lieu de créer un homonyme. Retourne le texte de réponse, ou None si ce n'est pas ce cas."""
+        person = self.store.personnes.get(self.store.active)
+        if not person:
+            return None
+        nom, complement, surnom = (" ".join(str(x or "").split())[:60] for x in (nom, complement, surnom))
+        if not complement and " " in nom:
+            nom, complement = nom.split(" ", 1)             # « Tiphaine Cousinier » donné d'un coup
+        if not key(nom) or key(nom) not in (key(person["nom"]), key(person["surnom"])):
+            return None                                     # ce n'est pas le prénom de la personne active : une autre personne
+        if complement and person["compl"] and key(complement) != key(person["compl"]):
+            return None                                     # un autre nom de famille : un homonyme
+        if complement and any(p["id"] != person["id"] for p in self.store.personnes.find(f"{nom} {complement}")):
+            return None                                     # ce nom complet est celui d'une autre personne connue
+        changes = {}
+        if complement and not person["compl"]:
+            changes["compl"] = complement
+        if surnom and not person["surnom"] and key(surnom) != key(person["nom"]):
+            changes["surnom"] = surnom
+        if changes:
+            self.store.personnes.update(person["id"], **changes)
+            self.store.activity.log("person_complete", id=person["id"], fields=sorted(changes))
+            person = self.store.personnes.get(person["id"])
+            return f"OK, fiche complétée : {self.store.personnes.full(person)} (toujours actif). Ne crée pas de nouvelle personne."
+        return f"OK, {self.store.personnes.full(person)} est toujours actif."
+
     def _designation(self, value):
         value = " ".join(str(value or "").split())[:60]
         if key(value) in ("moi", "je", "me", "mon", "moimeme"):
