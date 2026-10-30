@@ -53,7 +53,8 @@ class Personnes:
                         continue
                     if isinstance(obj, dict) and obj.get("id") and obj.get("nom"):
                         self.items.append({"id": str(obj["id"]), "nom": _clean(obj["nom"]), "compl": _clean(obj.get("compl")),
-                                           "surnom": _clean(obj.get("surnom")), "sexe": _sexe(obj.get("sexe")), "c": obj.get("c", "")})
+                                           "surnom": _clean(obj.get("surnom")), "sexe": _sexe(obj.get("sexe")), "c": obj.get("c", ""),
+                                           **({"ref": True} if obj.get("ref") else {})})
         except OSError:
             pass
 
@@ -91,9 +92,12 @@ class Personnes:
             parts.append(f"dit {person['surnom']}")
         return " ".join(parts)
 
-    def listing(self):
+    def listing(self, avec_citees=False):
+        """Personnes pour la liste déroulante : les interlocuteurs (qui ont parlé). Les personnes seulement citées dans un lien
+        (`ref`) n'y figurent pas, sauf `avec_citees` (page de gestion)."""
         with self.lock:
-            return sorted(({"id": p["id"], "label": self.label(p)} for p in self.items), key=lambda x: key(x["label"]))
+            return sorted(({"id": p["id"], "label": self.label(p)} for p in self.items if avec_citees or not p.get("ref")),
+                          key=lambda x: key(x["label"]))
 
     def find(self, name):
         """Personnes dont le nom, le nom complet ou le surnom correspond (comparaison sans casse ni accents)."""
@@ -118,6 +122,10 @@ class Personnes:
           'empty'      nom vide
         Un complément qui ne correspond à aucune personne portant ce prénom crée un homonyme."""
         status, person, candidates = self._resolve(_clean(nom), _clean(complement))
+        if person and person.get("ref"):                        # une personne seulement citée prend la parole : elle devient interlocutrice
+            del person["ref"]
+            with self.lock:
+                self._rewrite()
         # Le surnom d'usage (« appelle-moi Oli ») est retenu sur la personne désignée, sans écraser un surnom existant
         surnom = _clean(surnom)
         if person and surnom and not person["surnom"] and key(surnom) != key(person["nom"]):
@@ -128,10 +136,30 @@ class Personnes:
                 self.activity.log("person_nickname", id=person["id"])
         return status, person, candidates
 
+    def _reprendre_citee(self, nom, complement):
+        """Une personne seulement CITÉE dans un lien (`ref`) prend la parole : on reprend sa fiche au lieu d'en créer une autre.
+        Elle doit être la seule de ce prénom, et son nom de famille (s'il est connu) ne doit pas contredire celui qu'on donne."""
+        if not complement and " " in nom:
+            nom, complement = nom.split(" ", 1)
+        candidates = [p for p in self.items if key(p["nom"]) == key(nom)]
+        if len(candidates) != 1 or not candidates[0].get("ref"):
+            return None
+        person = candidates[0]
+        if complement and person["compl"] and key(complement) != key(person["compl"]):
+            return None
+        if complement and not person["compl"]:
+            person["compl"] = _clean(complement)
+            with self.lock:
+                self._rewrite()
+        return person
+
     def _resolve(self, nom, complement):
         if not key(nom):
             return "empty", None, []
         with self.lock:
+            citee = self._reprendre_citee(nom, complement)
+            if citee:
+                return "found", citee, []
             same_first = [p for p in self.items if key(p["nom"]) == key(nom)]
             # Le nom donné peut déjà être complet (« Olivier Martin ») ou un surnom : on essaie d'abord tel quel
             exact = self.find(nom if not complement else f"{nom} {complement}")
@@ -158,14 +186,50 @@ class Personnes:
                 return "found", p, []
         return self._create(nom, complement)
 
-    def _create(self, nom, complement):
+    def _create(self, nom, complement, ref=False, sexe=""):
         pid = self._new_id()
-        person = {"id": pid, "nom": nom, "compl": complement, "surnom": "", "sexe": "", "c": self.iso(self.clock())}
+        person = {"id": pid, "nom": nom, "compl": complement, "surnom": "", "sexe": _sexe(sexe), "c": self.iso(self.clock())}
+        if ref:
+            person["ref"] = True
         self.items.append(person)
         self._append(person)
         if self.activity:
-            self.activity.log("person_add", id=pid, nom=self.activity.q(nom), compl=bool(complement))
+            self.activity.log("person_add", id=pid, nom=self.activity.q(nom), compl=bool(complement), ref=ref)
         return "created", person, []
+
+    def reference(self, name, sexe=""):
+        """Fiche d'une personne CITÉE dans un lien (« Emma » dans « Tiphaine est la mère de Emma »), créée si elle est inconnue.
+        Elle est marquée « citée » (`ref`) : elle n'apparaît pas dans la liste des interlocuteurs tant qu'elle n'a pas parlé. Le sexe
+        n'est renseigné que s'il est encore inconnu (une valeur saisie à la main n'est jamais écrasée). Retourne la personne, ou None
+        si le nom est vide ou ambigu (plusieurs personnes le portent : on ne devine pas)."""
+        name, sexe = _clean(name), _sexe(sexe)
+        if not key(name):
+            return None
+        with self.lock:
+            found = self.find(name)
+            if len(found) > 1:
+                return None
+            if len(found) == 1:
+                return self._renseigner(found[0], sexe=sexe)
+            parts = name.split(" ", 1)
+            if len(parts) == 2:                                 # « Marion Cousinier » : prénom + nom de famille
+                same = [p for p in self.items if key(p["nom"]) == key(parts[0])]
+                if len(same) == 1 and not same[0]["compl"]:     # « Marion » était connue sans nom de famille : on la complète
+                    return self._renseigner(same[0], sexe=sexe, compl=_clean(parts[1]))
+                return self._create(parts[0], _clean(parts[1]), ref=True, sexe=sexe)[1]
+            return self._create(name, "", ref=True, sexe=sexe)[1]
+
+    def _renseigner(self, person, sexe="", compl=""):
+        changed = False
+        if sexe and not person.get("sexe"):
+            person["sexe"] = sexe
+            changed = True
+        if compl and not person["compl"]:
+            person["compl"] = compl
+            changed = True
+        if changed:
+            self._rewrite()
+        return person
 
     def _new_id(self):
         used = {p["id"] for p in self.items}

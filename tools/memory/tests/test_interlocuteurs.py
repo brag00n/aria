@@ -647,5 +647,106 @@ class EntourageIdentiteTests(Base):
         self.assertNotIn("Zoé est amie de Olivier Dupont", textes)
 
 
+class ParenteBranchementTests(Base):
+    """Le moteur de parenté branché sur les liens enregistrés, les fiches de personnes et la recherche."""
+
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+
+    def foyer(self):
+        """Le foyer réel, saisi comme Haiku l'a fait."""
+        self.i.identifier("Olivier", "Cousinier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        self.i.identifier("Marion", "Cousinier")
+        self.i.relier("moi", "fille de", "Olivier")
+        self.i.relier("Tiphaine", "mère de", "Marion Cousinier")
+        self.i.identifier("Tiphaine")
+        self.i.relier("moi", "mère de", "Emma")
+        self.i.identifier("Marion")
+
+    def personne(self, nom):
+        return next(p for p in self.s.personnes.items if p["nom"] == nom)
+
+    # ---- fiches créées par les liens
+    def test_relier_cree_les_fiches_citees_avec_le_sexe_du_lien(self):
+        self.i.identifier("Olivier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        tiphaine = self.personne("Tiphaine")
+        self.assertEqual((tiphaine["sexe"], tiphaine.get("ref")), ("f", True))
+
+    def test_les_personnes_citees_ne_sont_pas_dans_la_liste_deroulante(self):
+        self.foyer()
+        self.i.etat("")
+        labels = [x["label"] for x in self.i.etat("?")["liste"]]
+        self.assertEqual(sorted(labels), ["Marion", "Olivier", "Tiphaine"])           # Emma n'a jamais parlé : absente
+        self.assertTrue(self.personne("Emma").get("ref"))
+
+    def test_une_personne_citee_qui_parle_reprend_sa_fiche(self):
+        self.i.identifier("Olivier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        self.i.identifier("Tiphaine", "Cousinier", surnom="Titi")
+        self.assertEqual(len([p for p in self.s.personnes.items if p["nom"] == "Tiphaine"]), 1)
+        tiphaine = self.personne("Tiphaine")
+        self.assertEqual((tiphaine["compl"], tiphaine["surnom"], tiphaine["sexe"], tiphaine.get("ref")), ("Cousinier", "Titi", "f", None))
+
+    def test_une_valeur_saisie_a_la_main_n_est_jamais_ecrasee(self):
+        self.i.identifier("Olivier")
+        emma = self.s.personnes.add("Emma", sexe="m")
+        self.i.relier("Tiphaine", "mère de", "Emma")
+        self.assertEqual(self.s.personnes.get(emma["id"])["sexe"], "m")
+
+    def test_marion_connue_sans_nom_de_famille_est_completee_par_un_lien(self):
+        self.i.identifier("Marion")
+        self.i.relier("Tiphaine", "mère de", "Marion Cousinier")
+        marions = [p for p in self.s.personnes.items if p["nom"] == "Marion"]
+        self.assertEqual(len(marions), 1)
+        self.assertEqual(marions[0]["compl"], "Cousinier")
+
+    # ---- liens calculés
+    def test_scenario_reel_marion(self):
+        self.foyer()
+        self.assertEqual(self.i.liens_calcules("qui suis-je pour Tiphaine ?"), ["Tiphaine est la mère de Marion"])
+        # Aucun lien ne dit si Emma est une fille ou un fils : formulation neutre tant que son sexe n'est pas renseigné
+        self.assertEqual(self.i.liens_calcules("qui est Emma ?"), ["Emma est un frère ou une sœur de Marion"])
+
+    def test_scenario_reel_olivier_ses_filles(self):
+        self.foyer()
+        self.i.identifier("Olivier")
+        phrases = self.i.liens_calcules("quelles sont mes filles ?")
+        self.assertIn("Marion est la fille de Olivier", phrases)
+
+    def test_la_presomption_favorise_la_fille_et_la_soeur(self):
+        self.foyer()
+        self.s.personnes.update(self.personne("Emma")["id"], sexe="f")
+        self.assertEqual(self.i.liens_calcules("Emma"), ["Emma est la sœur de Marion"])
+        self.i.identifier("Olivier")
+        self.assertIn("Emma est la fille de Olivier", self.i.liens_calcules("Emma"))
+
+    def test_une_declaration_demi_soeur_corrige_la_presomption(self):
+        self.foyer()
+        self.s.personnes.update(self.personne("Emma")["id"], sexe="f")
+        self.i.relier("Emma", "demi-sœur de", "Marion")
+        self.assertEqual(self.i.liens_calcules("Emma"), ["Emma est la demi-sœur de Marion"])
+
+    def test_sexe_corrige_a_la_main_change_la_formulation(self):
+        self.foyer()
+        self.s.personnes.update(self.personne("Emma")["id"], sexe="m")
+        self.assertEqual(self.i.liens_calcules("Emma"), ["Emma est le frère de Marion"])
+
+    def test_sans_interlocuteur_aucun_lien_calcule(self):
+        self.foyer()
+        self.i.etat("")
+        self.assertEqual(self.i.liens_calcules("Emma"), [])
+
+    # ---- consigne et recherche
+    def test_la_consigne_demande_de_reprendre_la_parente_etablie(self):
+        self.foyer()
+        self.assertIn("Parenté établie", self.i.contexte())
+        self.assertIn("n'en déduis jamais d'autres", self.i.contexte())
+
+
 if __name__ == "__main__":
     unittest.main()

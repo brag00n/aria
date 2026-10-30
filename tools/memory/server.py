@@ -82,11 +82,17 @@ def rechercher_souvenir(question: str = "", limite: int = 5) -> str:
     results, fallback = store.search(question, limite, src="llm")
     # Liens de la famille : permettent de répondre sur un lien indirect (« qui suis-je pour Tiphaine ? ») sans deuxième recherche
     proches = interlocuteurs.entourage(question, deja={r["id"] for r in results})
-    if not results and not proches:
+    calcules = interlocuteurs.liens_calcules(question)
+    if not results and not proches and not calcules:
         return "Aucun souvenir."
-    lines = [_line(r) for r in results]
+    lines = []
+    if calcules:
+        # Liens déjà déduits par le moteur de parenté : à reprendre tels quels, sans les réinterpréter
+        lines.append("Parenté établie (à utiliser telle quelle) :")
+        lines.extend(f"- {phrase}" for phrase in calcules)
     if fallback and results:
-        lines.insert(0, "Aucune correspondance exacte, souvenirs principaux :")
+        lines.append("Aucune correspondance exacte, souvenirs principaux :")
+    lines.extend(_line(r) for r in results)
     if proches:
         lines.append("Liens connus dans la famille :")
         lines.extend(f"- {r['txt']}" for r in proches)
