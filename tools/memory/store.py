@@ -494,6 +494,19 @@ class Store:
                     weight = scoring.idf(n_docs, len(postings)) * (k1 + 1)
                     for rid, tf in postings.items():
                         raw[rid] = raw.get(rid, 0.0) + weight * tf / (tf + k1 * (1 - b + b * doclen.get(rid, 1) / avg))
+                # Précision : un terme est « distinctif » s'il est rare (présent dans moins de 30 % des souvenirs).
+                # Un souvenir qui ne partage que des termes fréquents avec la question n'est pas une réponse.
+                if n_docs >= 4:         # sur une très petite mémoire, aucun terme n'est « fréquent » : pas de filtre
+                    query_terms = set(tokens)
+                    rare = [t for t in query_terms if t in self.inv and len(self.inv[t]) <= 0.3 * n_docs]
+                    # Il faut qu'un souvenir partage au moins un terme rare ; la moitié des termes rares s'il y en a plusieurs.
+                    need = max(1, int(scoring.MIN_COVERAGE * len(rare) + 0.5))
+                    # On ne parcourt que les listes des termes rares (courtes par définition), pas tous les candidats
+                    hits = {}
+                    for t in rare:
+                        for rid in self.inv[t]:
+                            hits[rid] = hits.get(rid, 0) + 1
+                    raw = {rid: raw[rid] for rid, n in hits.items() if n >= need}
                 top = max(raw.values()) if raw else 0.0
                 recent_limit = scoring.RECENT_DAYS * 86400
                 # L'importance effective ne fait varier le score que de 0,6 à 1,0 : seuls les meilleurs candidats BM25 méritent
@@ -507,9 +520,13 @@ class Store:
                     scored.append((scoring.final_score(value / top if top else 0.0, eff, (now - rec["last"]) < recent_limit), rec))
             if not scored:
                 # Aucune correspondance (ou question vide) : on propose les souvenirs les plus importants
-                pool = [r for r in self.records.values() if visible(r)]
-                pool.sort(key=lambda r: (self.eff(r, now), r["last"]), reverse=True)
-                scored = [(0.0, r) for r in pool]
+                # Sans parcourir toute la mémoire : on retient d'abord les plus importants à la création (heapq), puis on évalue
+                # leur importance effective. Les milliers d'autres ne pourraient pas passer devant.
+                candidates = heapq.nlargest(max(limit * 8, 40), self.records.values(), key=lambda r: r["imp"] * r["s"])
+                pool = [(self.eff(r, now), r["last"], r) for r in candidates]
+                pool = [p for p in pool if p[0] >= scoring.HIDE_BELOW]
+                pool.sort(key=lambda p: (p[0], p[1]), reverse=True)
+                scored = [(0.0, p[2]) for p in pool]
                 fallback = bool(tokens)
             else:
                 fallback = False

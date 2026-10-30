@@ -14,6 +14,7 @@ quelle quels quelles est es sont suis etes sommes etre ai as avons avez ont avoi
 dans par pour avec sans chez vers entre comment quand pourquoi combien aussi alors ainsi cela ca ceci celui
 celle ceux celles tout tous toute toutes deja encore ici bien peu trop meme autre autres tel telle fois
 quelque quelques dis dit moi toi est ce oui non
+utilisateur utilisatrice nom appelle appelle prenom sait savoir connais connait dire parle
 """.split())
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")

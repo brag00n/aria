@@ -22,6 +22,7 @@ RECENT_DAYS = 7         # un souvenir rappelé depuis moins de 7 jours reçoit u
 
 K1 = 1.2
 B = 0.75
+MIN_COVERAGE = 0.5      # un souvenir doit couvrir au moins la moitié des termes DISTINCTIFS de la question
 
 
 def is_protected(tags):
