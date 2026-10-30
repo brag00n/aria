@@ -157,5 +157,45 @@ class Interlocuteurs:
         found = self.store.personnes.find(name)
         return found[0]["id"] if len(found) == 1 else ""
 
+    def entourage(self, question, deja=(), maximum=6):
+        """Relations utiles pour répondre sur un lien indirect (« qui suis-je pour Tiphaine ? ») : celles des personnes citées dans
+        la question et de l'interlocuteur actif, puis celles de leurs proches (un niveau de plus). Exemple : « Marion fille
+        d'Olivier » + « Tiphaine femme d'Olivier » permettent de conclure sans deuxième recherche. Plafonné à `maximum` liens.
+        `deja` : identifiants déjà renvoyés par la recherche, qui ne sont pas répétés."""
+        relations = [r for r in self.store.records.values() if r["t"] == "relation" and r.get("rel")]
+        if not relations:
+            return []
+        wanted = set(self._names_in(question))
+        active = self.store.personnes.get(self.store.active)
+        if active:
+            wanted.add(key(active["nom"]))
+        chosen, seen = [], set(deja)
+        for _ in range(2):                                      # personnes citées, puis leurs proches
+            found = [r for r in relations if r["id"] not in seen
+                     and ({key(r["rel"].get("a", "")), key(r["rel"].get("b", ""))} & wanted)]
+            for r in found:
+                seen.add(r["id"])
+                chosen.append(r)
+                wanted.update({key(r["rel"].get("a", "")), key(r["rel"].get("b", ""))})
+            if not found:
+                break
+        return chosen[:maximum]
+
+    def _names_in(self, question):
+        """Prénoms, noms et surnoms des personnes connues (et des extrémités de relations) cités dans la question."""
+        words = set(key(question).split())
+        names = set()
+        for p in self.store.personnes.items:
+            for field in ("nom", "surnom"):
+                if p[field] and key(p[field]) in words:
+                    names.add(key(p["nom"]))
+        for r in self.store.records.values():
+            rel = r.get("rel")
+            if rel:
+                for side in ("a", "b"):
+                    if key(rel.get(side, "")) in words:
+                        names.add(key(rel[side]))
+        return names
+
     def liste_json(self):
         return json.dumps(self.etat("?"), ensure_ascii=False)

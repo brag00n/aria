@@ -523,5 +523,68 @@ class CompletionEtLiensTests(Base):
         self.assertEqual(len(res), 1)
 
 
+class EntourageTests(Base):
+    """Liens de la famille ajoutés à une recherche, pour répondre sur un lien indirect."""
+
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+        # Le scénario réel : Marion est la fille d'Olivier, Tiphaine la femme d'Olivier
+        self.i.identifier("Olivier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        self.i.identifier("Marion")
+        self.i.relier("moi", "fille de", "Olivier")
+
+    def textes(self, question, deja=()):
+        return [r["txt"] for r in self.i.entourage(question, deja)]
+
+    def test_lien_indirect_marion_tiphaine(self):
+        """« Qui suis-je pour Tiphaine ? » : Marion active, la question cite Tiphaine -> les deux liens, via Olivier."""
+        textes = self.textes("Quel est le lien entre moi et Tiphaine ?")
+        self.assertIn("Tiphaine est la femme de Olivier", textes)
+        self.assertIn("Marion est la fille de Olivier", textes)
+
+    def test_les_liens_de_l_interlocuteur_actif_sont_toujours_proposes(self):
+        textes = self.textes("Quel temps fait-il ?")
+        self.assertIn("Marion est la fille de Olivier", textes)
+
+    def test_un_niveau_de_plus_seulement(self):
+        self.i.relier("Paul", "ami de", "Tiphaine")           # lien lointain : Paul <-> Tiphaine
+        self.i.relier("Zoé", "amie de", "Paul")               # encore un cran : Zoé <-> Paul
+        textes = self.textes("Parle-moi de Marion")
+        self.assertIn("Marion est la fille de Olivier", textes)
+        self.assertIn("Tiphaine est la femme de Olivier", textes)       # niveau 2 : via Olivier
+        self.assertNotIn("Paul est ami de Tiphaine", textes)             # niveau 3 : pas inclus
+        self.assertFalse(any("Zoé" in t for t in textes))
+
+    def test_pas_de_repetition_des_resultats_deja_renvoyes(self):
+        deja = {r["id"] for r in self.s.records.values() if r["t"] == "relation"}
+        self.assertEqual(self.textes("Tiphaine", deja=deja), [])
+
+    def test_plafond(self):
+        for k in range(10):
+            self.i.relier(f"Cousin{k}", "ami de", "Olivier")
+        self.assertLessEqual(len(self.i.entourage("Olivier", maximum=6)), 6)
+
+    def test_surnom_reconnu_dans_la_question(self):
+        self.i.etat("")
+        self.i.identifier("Tiphaine", "Cousinier", surnom="Titi")
+        textes = self.textes("Qui est Titi pour moi ?")
+        self.assertIn("Tiphaine est la femme de Olivier", textes)
+
+    def test_sans_relation_rien(self):
+        from interlocuteur import Interlocuteurs
+        vide = store_mod.Store(self.tmp / "autre_espace", "default", clock=self.clock, lock_instance=False)
+        vide.active = "p1"
+        self.assertEqual(Interlocuteurs(vide).entourage("Tiphaine"), [])
+
+    def test_inconnue_ne_voit_pas_de_liens_de_personne_active(self):
+        self.i.etat("")                                        # Inconnue : aucune personne active
+        textes = self.textes("Quel temps fait-il ?")
+        self.assertEqual(textes, [])
+
+
 if __name__ == "__main__":
     unittest.main()

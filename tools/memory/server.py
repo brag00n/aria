@@ -80,11 +80,16 @@ def memoriser(fait: str, type: str = "fait", tags: str = "") -> str:
 def rechercher_souvenir(question: str = "", limite: int = 5) -> str:
     """Cherche ce que l'on sait de l'interlocuteur actuel et du foyer. À appeler avant de répondre sur ses goûts, sa maison, sa famille ou ses affaires."""
     results, fallback = store.search(question, limite, src="llm")
-    if not results:
+    # Liens de la famille : permettent de répondre sur un lien indirect (« qui suis-je pour Tiphaine ? ») sans deuxième recherche
+    proches = interlocuteurs.entourage(question, deja={r["id"] for r in results})
+    if not results and not proches:
         return "Aucun souvenir."
     lines = [_line(r) for r in results]
-    if fallback:
+    if fallback and results:
         lines.insert(0, "Aucune correspondance exacte, souvenirs principaux :")
+    if proches:
+        lines.append("Liens connus dans la famille :")
+        lines.extend(f"- {r['txt']}" for r in proches)
     return "\n".join(lines)
 
 
