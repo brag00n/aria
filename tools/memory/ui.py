@@ -13,6 +13,8 @@ Sécurité (la page peut afficher du texte venu du web via la mémoire) :
 import json
 import os
 import threading
+
+import liens
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -155,6 +157,19 @@ def make_handler(store, activity, token):
                 if "type" in body: changes["t"] = str(body["type"])
                 if "tags" in body: changes["tags"] = body["tags"]
                 if "imp" in body: changes["imp"] = body["imp"]
+                if "s" in body: changes["s"] = body["s"]
+                if isinstance(body.get("rel"), dict):
+                    rec = store.records.get(rid)
+                    if not rec or rec["t"] != "relation":
+                        return self._json({"ok": False, "erreur": "ce souvenir n'est pas une relation"})
+                    a, l, b = (" ".join(str(body["rel"].get(k, "")).split())[:60] for k in ("a", "l", "b"))
+                    if not (a and l and b) or a.lower() == b.lower():
+                        return self._json({"ok": False, "erreur": "une relation a besoin de deux personnes différentes et d'un lien"})
+                    info = liens.analyser(a, l, b)
+                    changes["rel"] = {"a": a, "l": l, "b": b, "cle": info["cle"], "inv": info["inv"],
+                                      "ia": (store.personnes.find(a) or [{"id": ""}])[0]["id"] if len(store.personnes.find(a)) == 1 else "",
+                                      "ib": (store.personnes.find(b) or [{"id": ""}])[0]["id"] if len(store.personnes.find(b)) == 1 else ""}
+                    changes["txt"] = f"{a} est {liens.article(l)} {b}"
                 if "o" in body:
                     if body["o"] and not store.personnes.get(str(body["o"])):
                         return self._json({"ok": False, "erreur": "personne inconnue"})

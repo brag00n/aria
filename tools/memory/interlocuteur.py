@@ -100,7 +100,7 @@ class Interlocuteurs:
         for rec in self.store.records.values():
             if rec["t"] == "relation" and (rec.get("rel") or {}).get("cle") == info["cle"]:
                 return f"Déjà connu : {rec['txt']}."
-        text = f"{a} est {self._article(lien)} {b}"
+        text = f"{a} est {liens.article(lien)} {b}"
         rel = {"a": a, "l": lien, "b": b, "ia": ia, "ib": ib, "cle": info["cle"], "inv": info["inv"]}
         status, rec = self.store.add(text, "relation", "", src="llm", rel=rel)
         if status == "added":
@@ -156,17 +156,6 @@ class Interlocuteurs:
     def _id_of(self, name):
         found = self.store.personnes.find(name)
         return found[0]["id"] if len(found) == 1 else ""
-
-    @staticmethod
-    def _article(lien):
-        """« femme de » -> « la femme de » ; les liens inconnus sont gardés tels quels (« est collègue de »)."""
-        words = lien.split()
-        first = key(words[0]) if words else ""
-        if first in ("femme", "fille", "soeur", "mere", "amie", "voisine", "compagne", "collegue"):
-            return "la " + lien if first != "collegue" else "collègue " + " ".join(words[1:])
-        if first in ("mari", "fils", "pere", "frere", "ami", "voisin", "compagnon", "epoux"):
-            return "le " + lien
-        return lien
 
     def liste_json(self):
         return json.dumps(self.etat("?"), ensure_ascii=False)

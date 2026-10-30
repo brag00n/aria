@@ -59,3 +59,16 @@ def analyser(a, lien, b):
     else:
         cle = f"parent|{ka}|{kb}"
     return {"cle": cle, "invp": invp, "inv": inv}
+
+
+def article(lien):
+    """« femme de » -> « la femme de » ; les liens inconnus sont gardés tels quels (« est collègue de »)."""
+    words = lien.split()
+    first = textproc.normalize(words[0]) if words else ""
+    if first in ("femme", "fille", "soeur", "mere", "amie", "voisine", "compagne"):
+        return "la " + lien
+    if first == "collegue":
+        return "collègue " + " ".join(words[1:])
+    if first in ("mari", "fils", "pere", "frere", "ami", "voisin", "compagnon", "epoux"):
+        return "le " + lien
+    return lien

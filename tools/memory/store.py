@@ -347,6 +347,11 @@ class Store:
             rec["o"] = str(changes["o"] or "")
         if isinstance(changes.get("rel"), dict):
             rec["rel"] = changes["rel"]
+        if "s" in changes:
+            try:
+                rec["s"] = max(0.1, min(scoring.S_MAX, float(changes["s"])))
+            except (TypeError, ValueError):
+                pass
         if "tags" in changes:
             rec["tags"] = parse_tags(changes["tags"])
         if "imp" in changes:
@@ -446,7 +451,7 @@ class Store:
             rec = self.records.get(rid)
             if not rec:
                 return False
-            clean = {k: v for k, v in changes.items() if k in ("txt", "t", "tags", "imp", "o")}
+            clean = {k: v for k, v in changes.items() if k in ("txt", "t", "tags", "imp", "o", "s", "rel")}
             self._index_update(rec, clean)
             self._append({"op": "update", "ts": iso(self.clock()), "id": rid, "set": clean}, sync=True)
             self.activity.log("update", id=rid, fields=sorted(clean), src=src)

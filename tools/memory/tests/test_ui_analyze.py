@@ -96,13 +96,20 @@ class UiTests(UiCase):
         self.assertEqual(status, 403)
 
     def test_post_avec_mauvaise_origine_refuse(self):
-        status, _ = self.call("POST", "/api/add", {"texte": "x y z"}, headers={"Origin": "http://evil.example.com"})
-        self.assertEqual(status, 403)
+        try:
+            status, _ = self.call("POST", "/api/add", {"texte": "x y z"}, headers={"Origin": "http://evil.example.com"})
+            self.assertEqual(status, 403)
+        except (ConnectionError, http.client.HTTPException):
+            pass        # refus avant lecture du corps : le client peut voir la connexion se fermer
         self.assertEqual(len(self.store.records), 0)
 
     def test_post_sans_json_refuse(self):
-        status, _ = self.call("POST", "/api/add", b"texte=abc", headers={"Content-Type": "text/plain"})
-        self.assertEqual(status, 415)
+        try:
+            status, _ = self.call("POST", "/api/add", b"texte=abc", headers={"Content-Type": "text/plain"})
+            self.assertEqual(status, 415)
+        except (ConnectionError, http.client.HTTPException):
+            pass        # le serveur refuse sans lire le corps puis coupe : le client peut voir la connexion se fermer
+        self.assertEqual(len(self.store.records), 0)        # dans tous les cas, rien n'a été enregistré
 
     def test_corps_trop_gros_refuse(self):
         try:
@@ -202,6 +209,68 @@ class UiPersonnesTests(UiCase):
         _, r = self.call("POST", "/api/add", {"texte": "Aime le thé", "type": "preference", "o": a})
         self.store.active = ""
         self.assertTrue(self.call("POST", "/api/delete", {"id": r["id"]})[1]["ok"])
+
+
+class UiEditionTests(UiCase):
+    def make_relation(self):
+        from interlocuteur import Interlocuteurs
+        i = Interlocuteurs(self.store)
+        i.identifier("Olivier")
+        i.relier("Tiphaine", "femme de", "moi")
+        return next(r for r in self.store.records.values() if r["t"] == "relation")
+
+    def test_modifier_le_renfort(self):
+        owner = self.store.personnes.add("Olivier")["id"]
+        _, r = self.call("POST", "/api/add", {"texte": "Aime le café serré", "type": "preference", "o": owner})
+        rid = r["id"]
+        self.assertTrue(self.call("POST", "/api/update", {"id": rid, "s": "1.5"})[1]["ok"])
+        self.assertEqual(self.store.records[rid]["s"], 1.5)
+        self.call("POST", "/api/update", {"id": rid, "s": "99"})
+        self.assertEqual(self.store.records[rid]["s"], 2.0)             # borné
+        self.call("POST", "/api/update", {"id": rid, "s": "n'importe quoi"})
+        self.assertEqual(self.store.records[rid]["s"], 2.0)             # valeur invalide ignorée
+
+    def test_editer_une_relation_recalcule_le_texte_et_l_index(self):
+        rel = self.make_relation()
+        rid = rel["id"]
+        ok = self.call("POST", "/api/update", {"id": rid, "rel": {"a": "Tiphaine", "l": "soeur de", "b": "Olivier"}})[1]
+        self.assertTrue(ok["ok"])
+        self.assertEqual(self.store.records[rid]["txt"], "Tiphaine est la soeur de Olivier")
+        self.assertEqual(self.store.records[rid]["rel"]["l"], "soeur de")
+        self.assertEqual(self.store.search("frere", touch=False, everything=True)[0][0]["id"], rid)    # nouvel index : fratrie
+
+    def test_relation_a_deux_personnes_differentes(self):
+        rid = self.make_relation()["id"]
+        x = self.call("POST", "/api/update", {"id": rid, "rel": {"a": "Olivier", "l": "ami de", "b": "olivier"}})[1]
+        self.assertFalse(x["ok"])
+        self.assertIn("deux personnes", x["erreur"])
+        x = self.call("POST", "/api/update", {"id": rid, "rel": {"a": "", "l": "ami de", "b": "Paul"}})[1]
+        self.assertFalse(x["ok"])
+
+    def test_rel_refuse_sur_un_souvenir_ordinaire(self):
+        _, r = self.call("POST", "/api/add", {"texte": "Aime le café serré", "type": "preference", "o": self.store.personnes.add("Olivier")["id"]})
+        x = self.call("POST", "/api/update", {"id": r["id"], "rel": {"a": "A", "l": "ami de", "b": "B"}})[1]
+        self.assertFalse(x["ok"])
+        self.assertIn("pas une relation", x["erreur"])
+
+    def test_la_relation_editee_survit_au_rechargement(self):
+        rid = self.make_relation()["id"]
+        self.call("POST", "/api/update", {"id": rid, "rel": {"a": "Tiphaine", "l": "soeur de", "b": "Paul"}, "s": "1.3"})
+        self.store.close()
+        import store as store_mod2
+        again = store_mod2.Store(self.tmp, "default", lock_instance=False)
+        rec = again.records[rid]
+        self.assertEqual((rec["rel"]["b"], rec["s"]), ("Paul", 1.3))
+        self.assertEqual(rec["txt"], "Tiphaine est la soeur de Paul")
+
+    def test_changer_le_type_et_le_proprietaire_en_une_fois(self):
+        a = self.store.personnes.add("Olivier")["id"]
+        _, r = self.call("POST", "/api/add", {"texte": "Le portail est vert", "type": "foyer"})
+        x = self.call("POST", "/api/update", {"id": r["id"], "type": "fait", "o": a, "tags": "maison,pinned", "imp": "7"})[1]
+        self.assertTrue(x["ok"])
+        rec = self.store.records[r["id"]]
+        self.assertEqual((rec["t"], rec["o"], rec["imp"]), ("fait", a, 7.0))
+        self.assertIn("pinned", rec["tags"])
 
 
 class UiTokenTests(UiCase):
