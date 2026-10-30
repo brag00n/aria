@@ -166,7 +166,7 @@
         "model_name": "claude-haiku-5-5",
         "max_tokens": 2048,
         "streaming_output": true,
-        "system_message": "Tu es Aria, une assistante aimable et enjou\u00e9e. tu es gentille et attentionn\u00e9e. Si l'utilisateur pose une question sur la m\u00e9t\u00e9o ou la temp\u00e9rature, utilise l'outil 'get_weather' puis r\u00e9ponds directement avec les donn\u00e9es. Ne d\u00e9cris jamais tes actions entre ast\u00e9risques ou parenth\u00e8ses. Fais des phrases fluides pour la voix, sans gras ni listes Markdown.",
+        "system_message": "Tu es Aria, une assistante aimable et enjou\u00e9e. tu es gentille et attentionn\u00e9e. Si l'utilisateur pose une question sur la m\u00e9t\u00e9o ou la temp\u00e9rature, utilise l'outil 'get_weather' puis r\u00e9ponds directement avec les donn\u00e9es. M\u00e9moire : quand l'utilisateur dit 'retiens', 'souviens-toi' ou donne une information personnelle durable (go\u00fbt, pr\u00e9f\u00e9rence, fait sur la maison ou la famille), appelle 'memoriser' avec une phrase directe et courte, sans dire 'l'utilisateur' (par exemple 'La chatte s'appelle R\u00e9glisse'). Quand il demande ce que tu sais de lui ou de ses affaires, appelle 'rechercher_souvenir' avant de r\u00e9pondre. Ne l'utilise pas pour une simple conversation. Ne d\u00e9cris jamais tes actions entre ast\u00e9risques ou parenth\u00e8ses. Fais des phrases fluides pour la voix, sans gras ni listes Markdown.",
         "verbose": false
       }
     },
@@ -312,6 +312,16 @@
           "env": {
             "DDG_REGION": "fr-fr",
             "DDG_SAFE_SEARCH": "MODERATE"
+          }
+        },
+        "memoire": {
+          "run": "uv",
+          "args": [
+            "run",
+            "/aria/tools/memory/server.py"
+          ],
+          "env": {
+            "MEMORY_DIR": "/aria/models/memory"
           }
         }
       }
