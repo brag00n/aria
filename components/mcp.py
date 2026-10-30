@@ -14,6 +14,7 @@ class Mcp:
         self.tool_registry = {}  
         self.openai_tools = []   
         self.stack = AsyncExitStack()
+        self._lock = None            # créé à la première utilisation, dans la boucle qui s'en sert
         self.loop = asyncio.get_event_loop()
         
     def start(self):
@@ -60,10 +61,24 @@ class Mcp:
             except Exception as e:
                 utils.log_info("MCP", f"❌ Échec de connexion au serveur [{name}]: {e}")
 
+    async def ensure_connected(self):
+        """Connecte les serveurs une seule fois, même si le démarrage d'Aria et la première question se croisent."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if not self.tool_registry:
+                await self._connect_all()
+
+    async def close(self):
+        """Ferme les sessions MCP. À appeler depuis la tâche qui les a ouvertes (contrainte de la bibliothèque asynchrone)."""
+        try:
+            await self.stack.aclose()
+        except Exception as e:
+            utils.log_info("MCP", f"Fermeture des services MCP : {type(e).__name__}: {e}")
+
     async def get_tools_for_openai(self):
         """Récupère les schémas d'outils pour LM Studio."""
-        if not self.tool_registry:
-            await self._connect_all()
+        await self.ensure_connected()
         return self.openai_tools if self.openai_tools else None
 
     async def call_tool(self, tool_name, arguments):

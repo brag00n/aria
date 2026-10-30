@@ -727,5 +727,24 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
     )
 
 if __name__ == "__main__":
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def _mcp_lifespan(app):
+        """Connecte les serveurs MCP au démarrage d'Aria (et non à la première question) : leurs pages éventuelles
+        (ex. gestion de la mémoire) sont disponibles tout de suite, et le premier échange ne paie plus ce démarrage."""
+        manager = getattr(llm.engine, "mcp_manager", None)
+        if manager is not None:
+            try:
+                await manager.ensure_connected()
+            except Exception as e:                  # ne jamais empêcher Aria de démarrer à cause d'un serveur MCP
+                utils.log_info("MCP", f"❌ Connexion au démarrage impossible : {type(e).__name__}: {e}")
+        try:
+            yield
+        finally:
+            if manager is not None:
+                await manager.close()
+
     # HTTPS optionnel (config "https") : nécessaire pour le micro depuis un autre poste ou un smartphone
-    ariaHmi.launch(server_name="0.0.0.0", server_port=7860, **https.launch_args(config.get("https")))
+    ariaHmi.launch(server_name="0.0.0.0", server_port=7860, app_kwargs={"lifespan": _mcp_lifespan},
+                   **https.launch_args(config.get("https")))
