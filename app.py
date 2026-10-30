@@ -61,6 +61,7 @@ from components.language import Language, normalize
 from components.conversation import Conversation
 from components import https
 from components import memory_tab
+from components import interlocuteur
 from components import history as history_mod
 utils.log_info("app","Stt, Llm, Tts chargés")
 
@@ -199,9 +200,9 @@ JS_COMBO = f"""
 JS_ON_LOAD = "() => {" + mic_toggle.js_toggle(JS_COMBO, conv.enabled) + "}"
 
 # --- LOGIQUE SERVEUR ---
-async def process_streaming_binaire(b64_audio, history):
+async def process_streaming_binaire(b64_audio, history, interlocutor=""):
     start_total = datetime.now()
-    if not b64_audio: 
+    if not b64_audio:
         yield history or [], ""
         return
     
@@ -247,11 +248,12 @@ async def process_streaming_binaire(b64_audio, history):
             conv.begin()
             yield history, ctl_payload("conv_open")      # l'icône du cadre apparaît (chargement) pendant que la réponse se prépare
 
-        async for update in repondre(text_user, history, timer, start_total):
+        async for update in repondre(text_user, history, timer, start_total, interlocutor):
             yield update
         if action == "close":
             conv.end()
             forget_context()                             # clôture : Aria oublie la conversation (réglage memory.reset_on_close)
+            await reset_interlocutor()                   # ... et ne sait plus à qui elle parlait
             yield history, ctl_payload("conv_close")     # l'icône du cadre disparaît après la fin de la réponse
     except Exception as e:
         utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
@@ -265,23 +267,27 @@ def ctl_payload(kind):
 STOP_NOTICE = "\n\n> ⏹️ Réponse interrompue\n\n"
 
 
-async def repondre(text_user, history, timer, start_total):
+async def repondre(text_user, history, timer, start_total, interlocutor=""):
     """Une seule réponse à la fois (verrou) ; l'arrêt, lui, ne passe jamais par le verrou."""
     async with conv.lock:
         conv.stop_requested = False
-        async for update in _generer(text_user, history, timer, start_total):
+        async for update in _generer(text_user, history, timer, start_total, interlocutor):
             yield update
 
 
-async def _generer(text_user, history, timer, start_total):
+async def _generer(text_user, history, timer, start_total, interlocutor=""):
     """Réponse d'Aria à un message de l'utilisateur (voix transcrite ou texte saisi) : texte en continu + blocs son."""
     history.append({"role": "user", "content": text_user})
     history.append({"role": "assistant", "content": "..."})
     yield history, ""
-    
+
+    # Qui parle ? La liste déroulante fait référence : on la communique au serveur de mémoire (qui garde l'état, même
+    # après un redémarrage de ce dernier), et on récupère la consigne du tour. Sans serveur de mémoire : Inconnue, sans effet.
+    etat = await interlocuteur.etat(mcp_manager(), interlocutor or "")
+
     # 2. Appel LLM + TTS Streaming
     utils.log_info("app", f"   LLM: Début génération")
-    response_gen = llm.get_answer_web(tts, text_user, "DefaultUser")
+    response_gen = llm.get_answer_web(tts, text_user, "DefaultUser", etat["contexte"])
     chunk_count = 0
     first_text = False
     
@@ -334,7 +340,7 @@ async def _generer(text_user, history, timer, start_total):
     utils.log_info("app", f"--- FIN Traitement ({chunk_count} blocs, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
 
 
-async def process_texte(text, history):
+async def process_texte(text, history, interlocutor=""):
     """Message saisi au clavier : même chaîne que la voix, sans la reconnaissance vocale.
     La réponse est lue à voix haute si le son est activé (clic sur le cadre), sinon elle reste écrite."""
     text = (text or "").strip()
@@ -350,11 +356,12 @@ async def process_texte(text, history):
             return
         utils.log_info("app", f"--- DEBUT Traitement (texte saisi) : '{text}'")
         timer = utils.StepTimer("app")
-        async for hist, payload in repondre(text, history, timer, datetime.now()):
+        async for hist, payload in repondre(text, history, timer, datetime.now(), interlocutor):
             yield hist, payload, ""
         if action == "close":
             conv.end()
             forget_context()
+            await reset_interlocutor()
             yield history, ctl_payload("conv_close"), ""
     except Exception as e:
         utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
@@ -371,12 +378,44 @@ def forget_context(force=False):
         history_mod.reset(store)
 
 
-def new_conversation():
+def mcp_manager():
+    """Gestionnaire MCP du moteur LLM actif (None pour le moteur local, qui n'utilise pas ce module)."""
+    return getattr(llm.engine, "mcp_manager", None)
+
+
+async def reset_interlocutor():
+    """Clôture / nouvelle conversation : Aria ne sait plus à qui elle parlait (retour à « Inconnue »)."""
+    await interlocuteur.etat(mcp_manager(), "")
+
+
+_last_interlocutor = {"id": ""}      # dernier interlocuteur connu de l'interface (choisi à la main OU fixé par Aria)
+
+
+async def refresh_interlocutor():
+    """Met à jour la liste déroulante à partir du serveur de mémoire (nouvelles personnes, interlocuteur actif)."""
+    etat = await interlocuteur.etat(mcp_manager(), "?")
+    _last_interlocutor["id"] = etat["actif"]          # suit aussi les changements décidés par Aria (outil identifier_interlocuteur)
+    return gr.update(choices=etat["choices"], value=etat["actif"], visible=interlocuteur.disponible(mcp_manager()))
+
+
+async def change_interlocutor(choice):
+    """Changement à la main dans la liste : on prévient le serveur. Passer d'une personne connue à une autre efface
+    l'historique du LLM, pour qu'il ne reste pas de confidences de la précédente dans la conversation."""
+    choice = choice or ""
+    previous, _last_interlocutor["id"] = _last_interlocutor["id"], choice
+    await interlocuteur.etat(mcp_manager(), choice)
+    if previous and choice and previous != choice:
+        forget_context(force=True)
+        utils.log_info("INTERLOCUTEUR", f"Changement {previous} -> {choice} : historique du LLM effacé")
+
+
+async def new_conversation():
     """Bouton « Nouvelle conversation » : Aria oublie tout, le chat est vidé, la conversation vocale se referme."""
     conv.request_stop()
     forget_context(force=True)
     if conv.active:
         conv.end()
+    await reset_interlocutor()
     return [], ctl_payload("conv_close")
 
 
@@ -529,7 +568,10 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
             )
         with gr.Column(scale=4, elem_id="visualizer_col"): # Visualiseur audio : anneaux animés par la voix d'Aria
             gr.HTML('<canvas id="audio_visualizer" width="400" height="100"></canvas>', elem_id="visualizer_wrapper")
-        
+            # Interlocuteur : qui parle à Aria. Masquée tant que le serveur de mémoire n'est pas connecté (voir refresh_interlocutor).
+            interlocutor_dd = gr.Dropdown(choices=[("Inconnue", "")], value="", show_label=False, container=False,
+                                          interactive=True, allow_custom_value=False, elem_id="interlocutor_dd", visible=False)
+
 
     with gr.Tabs():
 
@@ -773,14 +815,19 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
             memory_tab_item.select(None, None, None, js=memory_tab.js_reload())
 
     ariaHmi.load(None, None, None, js=JS_ON_LOAD)
+    # Au chargement de la page : liste à jour (ou masquée si le serveur de mémoire est absent)
+    ariaHmi.load(refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
 
     text_input.submit(
         fn=process_texte,
-        inputs=[text_input, chatbot],
+        inputs=[text_input, chatbot, interlocutor_dd],
         outputs=[chatbot, audio_url_bridge, text_input],
         show_progress="hidden",
         concurrency_limit=None
-    )
+    ).then(refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
+
+    # Changement à la main : le serveur de mémoire est prévenu (et l'historique effacé si on passe d'une personne à une autre)
+    interlocutor_dd.input(change_interlocutor, [interlocutor_dd], None, show_progress="hidden")
 
     stop_btn.click(
         fn=stop_aria,
@@ -798,15 +845,15 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
         show_progress="hidden",
         concurrency_limit=None,
         js="() => { if (window.ariaStopAudio) window.ariaStopAudio(); }"
-    )
+    ).then(refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
 
     trigger_btn.click(
-        fn=process_streaming_binaire, 
-        inputs=[audio_input, chatbot], 
+        fn=process_streaming_binaire,
+        inputs=[audio_input, chatbot, interlocutor_dd],
         outputs=[chatbot, audio_url_bridge],
         show_progress="hidden",
         concurrency_limit=None
-    )
+    ).then(refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
 
 if __name__ == "__main__":
     import contextlib

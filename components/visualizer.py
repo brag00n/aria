@@ -51,6 +51,8 @@ def css(cfg=None):
     border-radius: 12px;
     transition: border-color 0.2s ease;
 }}
+/* Liste déroulante de l'interlocuteur (app.py), juste sous le cadre et de sa largeur */
+#interlocutor_dd {{ width: {h}px !important; max-width: 100%; margin: 8px auto 0 !important; padding: 0 !important; }}
 #audio_visualizer.speaking {{
     border-color: #ff4b4b;
     animation: aria-pulse 1.5s infinite;
