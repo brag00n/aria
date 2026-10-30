@@ -273,6 +273,32 @@ class UiEditionTests(UiCase):
         self.assertIn("pinned", rec["tags"])
 
 
+class UiSexeTests(UiCase):
+    def test_modifier_le_sexe_d_une_personne(self):
+        pid = self.call("POST", "/api/personne/add", {"nom": "Emma"})[1]["id"]
+        self.assertTrue(self.call("POST", "/api/personne/update", {"id": pid, "sexe": "f"})[1]["ok"])
+        person = next(p for p in self.call("GET", "/api/personnes")[1] if p["id"] == pid)
+        self.assertEqual(person["sexe"], "f")
+        self.call("POST", "/api/personne/update", {"id": pid, "sexe": "zzz"})
+        person = next(p for p in self.call("GET", "/api/personnes")[1] if p["id"] == pid)
+        self.assertEqual(person["sexe"], "")                 # valeur invalide : sexe inconnu, jamais un texte libre
+
+    def test_ajouter_une_personne_avec_son_sexe(self):
+        pid = self.call("POST", "/api/personne/add", {"nom": "Paul", "sexe": "masculin"})[1]["id"]
+        person = next(p for p in self.call("GET", "/api/personnes")[1] if p["id"] == pid)
+        self.assertEqual(person["sexe"], "m")
+
+    def test_les_personnes_citees_sont_signalees(self):
+        from interlocuteur import Interlocuteurs
+        i = Interlocuteurs(self.store)
+        i.identifier("Olivier")
+        i.relier("Tiphaine", "femme de", "moi")
+        rows = {p["nom"]: p for p in self.call("GET", "/api/personnes")[1] if not p.get("special")}
+        self.assertTrue(rows["Tiphaine"]["citee"])
+        self.assertFalse(rows["Olivier"]["citee"])
+        self.assertEqual(rows["Tiphaine"]["sexe"], "f")
+
+
 class UiTokenTests(UiCase):
     token = "secret-test"
 

@@ -122,7 +122,8 @@ def make_handler(store, activity, token):
                 for r in store.records.values():
                     counts[r.get("o", "")] = counts.get(r.get("o", ""), 0) + 1
                 return self._json([{"id": p["id"], "label": store.personnes.label(p), "nom": p["nom"], "compl": p["compl"],
-                                    "surnom": p["surnom"], "cree": p["c"], "souvenirs": counts.get(p["id"], 0),
+                                    "surnom": p["surnom"], "sexe": p.get("sexe", ""), "citee": bool(p.get("ref")),
+                                    "cree": p["c"], "souvenirs": counts.get(p["id"], 0),
                                     "actif": p["id"] == store.active} for p in store.personnes.items]
                                    + [{"id": "", "label": "Foyer (partagé)", "souvenirs": counts.get("", 0), "actif": False, "special": True}])
             if url.path == "/api/relations":
@@ -188,10 +189,10 @@ def make_handler(store, activity, token):
                     tags.append("pinned")
                 return self._json({"ok": store.update(rid, {"tags": tags}, src="ui")})
             if path == "/api/personne/add":
-                person = store.personnes.add(body.get("nom", ""), body.get("compl", ""), body.get("surnom", ""))
+                person = store.personnes.add(body.get("nom", ""), body.get("compl", ""), body.get("surnom", ""), body.get("sexe", ""))
                 return self._json({"ok": bool(person), "id": person["id"] if person else None})
             if path == "/api/personne/update":
-                fields = {k: body[k] for k in ("nom", "compl", "surnom") if k in body}
+                fields = {k: body[k] for k in ("nom", "compl", "surnom", "sexe") if k in body}
                 return self._json({"ok": store.personnes.update(rid, **fields)})
             if path == "/api/personne/merge":
                 moved = store.merge_persons(rid, str(body.get("vers", "")), src="ui")
@@ -319,11 +320,12 @@ function editRelation(r){
 }
 function editPerson(p){
   const nom = el('input',{value:p.nom}), compl = el('input',{value:p.compl}), sur = el('input',{value:p.surnom});
+  const sexe = el('select',{}, ...optionsOf([['','inconnu'],['f','féminin'],['m','masculin']], p.sexe||''));
   openModal('Modifier la personne', [
     el('div',{className:'row'}, field('Prénom', nom), field('Nom de famille', compl)),
-    field('Surnom (comment elle veut être appelée)', sur),
-  ], `Identifiant ${p.id} · créée ${p.cree} · ${p.souvenirs} souvenir(s)${p.actif?' · interlocuteur actif':''}`, async ()=>{
-    const x = await post('/api/personne/update', {id:p.id, nom:nom.value, compl:compl.value, surnom:sur.value});
+    el('div',{className:'row'}, field('Surnom (comment elle veut être appelée)', sur), field('Sexe (pour dire fille, tante, grand-mère...)', sexe)),
+  ], `Identifiant ${p.id} · créée ${p.cree} · ${p.souvenirs} souvenir(s)${p.actif?' · interlocuteur actif':''}${p.citee?' · seulement citée (pas encore interlocutrice)':''}`, async ()=>{
+    const x = await post('/api/personne/update', {id:p.id, nom:nom.value, compl:compl.value, surnom:sur.value, sexe:sexe.value});
     return x.ok ? true : 'Le prénom est obligatoire';
   });
 }
@@ -388,9 +390,9 @@ async function renderPersons(main){
   const add=el('button',{onclick:async()=>{if(!nom.value.trim())return;const r=await post('/api/personne/add',{nom:nom.value,compl:compl.value,surnom:sur.value});say(r.ok?'Ajoutée':'Impossible');render()}},'Ajouter');
   const people=PERSONS.filter(p=>!p.special);
   main.append(el('div',{className:'bar'},nom,compl,sur,add),
-    el('table',{},el('tr',{},...['Personne','Prénom','Nom','Surnom','Souvenirs',''].map(h=>el('th',{},h))),
-      ...PERSONS.map(p=>p.special?el('tr',{},el('td',{},p.label),el('td',{colSpan:3,className:'mut'},'souvenirs sans propriétaire (relations, foyer, anciens souvenirs)'),el('td',{},String(p.souvenirs)),el('td',{})):
-        el('tr',{},el('td',{},p.label+(p.actif?' ● actif':'')),el('td',{},p.nom),el('td',{},p.compl),el('td',{},p.surnom),el('td',{},String(p.souvenirs)),
+    el('table',{},el('tr',{},...['Personne','Prénom','Nom','Surnom','Sexe','Souvenirs',''].map(h=>el('th',{},h))),
+      ...PERSONS.map(p=>p.special?el('tr',{},el('td',{},p.label),el('td',{colSpan:4,className:'mut'},'souvenirs sans propriétaire (relations, foyer, anciens souvenirs)'),el('td',{},String(p.souvenirs)),el('td',{})):
+        el('tr',{},el('td',{},p.label+(p.actif?' ● actif':'')+(p.citee?' (citée)':'')),el('td',{},p.nom),el('td',{},p.compl),el('td',{},p.surnom),el('td',{},p.sexe==='f'?'F':p.sexe==='m'?'M':'?'),el('td',{},String(p.souvenirs)),
           el('td',{},el('button',{title:'Modifier',onclick:()=>editPerson(p)},'✎'),' ',
             el('button',{title:'Fusionner dans une autre personne',onclick:()=>mergePerson(p)},'⇢'),' ',
             el('button',{title:'Supprimer',onclick:async()=>{if(!confirm('Supprimer '+p.label+' ?'))return;const r=await post('/api/personne/delete',{id:p.id});say(r.ok?'Supprimée':(r.erreur||'Impossible'));render()}},'🗑'))))));
