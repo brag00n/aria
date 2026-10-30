@@ -24,8 +24,10 @@ class Llm:
             utils.log_info("LLM", "Initialisation du mode Local 🏠")
             self.engine = LlmConnectLocal(self.params, all_config)
 
-    async def get_answer_web(self, tts, query, user):
-        async for values in self.engine.get_answer_web(tts, query, user):
+    async def get_answer_web(self, tts, query, user, contexte=""):
+        # `contexte` (consigne propre à la requête) n'est géré que par les moteurs à historique (Anthropic, OpenAI/LM Studio)
+        args = (tts, query, user, contexte) if contexte and self.backend_type != "local" else (tts, query, user)
+        async for values in self.engine.get_answer_web(*args):
             # Gestion flexible du nombre de valeurs (2 ou 3)
             response = values[0]
             audio_path = values[1]

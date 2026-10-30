@@ -49,7 +49,9 @@ class LlmConnectAnthropic:
             for t in openai_tools
         ]
 
-    async def get_answer_web(self, tts, query, user):
+    async def get_answer_web(self, tts, query, user, contexte=""):
+        # `contexte` : consigne propre à cette requête (ex. interlocuteur actuel), ajoutée au message système sans toucher à l'historique
+        system = f"{self.system_message}\n\n{contexte}".strip() if contexte else self.system_message
         history = self.user_aware_messages.setdefault(user, [])
         # Historique borné AVANT d'ajouter la question (start_len, utilisé pour annuler un tour en erreur, reste exact)
         history_mod.shorten_tool_results(history, self.memory)
@@ -71,8 +73,8 @@ class LlmConnectAnthropic:
                     "max_tokens": self.max_tokens,
                     "messages": history,
                 }
-                if self.system_message:
-                    kwargs["system"] = self.system_message
+                if system:
+                    kwargs["system"] = system
                 if tools:
                     kwargs["tools"] = tools
                     if round_idx == MAX_TOOL_ROUNDS - 1:

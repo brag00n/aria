@@ -7,6 +7,10 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
+# Les outils dont le nom commence ainsi sont réservés à l'interface d'Aria : appelables par elle, absents des schémas du LLM
+HIDDEN_PREFIX = "ui_"
+
+
 class Mcp:
     def __init__(self, mcp_params):
         self.params = mcp_params or {}
@@ -49,6 +53,8 @@ class Mcp:
                 tools_resp = await session.list_tools()
                 for tool in tools_resp.tools:
                     self.tool_registry[tool.name] = session
+                    if tool.name.startswith(HIDDEN_PREFIX):
+                        continue            # appelable par Aria (call_tool), jamais proposé au LLM
                     self.openai_tools.append({
                         "type": "function",
                         "function": {
@@ -57,7 +63,10 @@ class Mcp:
                             "parameters": tool.inputSchema
                         }
                     })
-                utils.log_info("MCP", f"✅ Serveur [{name}] prêt : {len(tools_resp.tools)} outils enregistrés.")
+                hidden = sum(1 for t in tools_resp.tools if t.name.startswith(HIDDEN_PREFIX))
+                shown = len(tools_resp.tools) - hidden
+                utils.log_info("MCP", f"✅ Serveur [{name}] prêt : {shown} outils enregistrés"
+                                      + (f" (+{hidden} réservé(s) à l'interface)." if hidden else "."))
             except Exception as e:
                 utils.log_info("MCP", f"❌ Échec de connexion au serveur [{name}]: {e}")
 
@@ -75,6 +84,10 @@ class Mcp:
             await self.stack.aclose()
         except Exception as e:
             utils.log_info("MCP", f"Fermeture des services MCP : {type(e).__name__}: {e}")
+
+    def has_tool(self, name):
+        """Un serveur MCP fournit-il cet outil ? (Sert à masquer une fonction de l'interface quand son serveur est absent.)"""
+        return name in self.tool_registry
 
     async def get_tools_for_openai(self):
         """Récupère les schémas d'outils pour LM Studio."""

@@ -36,7 +36,7 @@ class LlmConnectOpenai:
             self.mcp_manager = Mcp(all_config["mcp"]["params"])
 
 
-    async def get_answer_web(self, tts, query, user):
+    async def get_answer_web(self, tts, query, user, contexte=""):
         tag = f"LLM-{self.backend_type}"
         timer = StepTimer(tag)
         queue = TtsQueue(tts, user, tag)
@@ -44,6 +44,9 @@ class LlmConnectOpenai:
         messages = self.user_aware_messages.setdefault(
             user, [{"role": "system", "content": self.system_message}]
         )
+        # `contexte` : consigne propre à cette requête (ex. interlocuteur actuel). Le message système est réécrit à chaque
+        # requête (jamais cumulé) ; les messages suivants de l'historique ne sont pas touchés.
+        messages[0]["content"] = f"{self.system_message}\n\n{contexte}".strip() if contexte else self.system_message
         # Historique borné AVANT d'ajouter la question (start_len, utilisé pour annuler un tour en erreur, reste exact)
         history_mod.shorten_tool_results(messages, self.memory, first=1)
         history_mod.trim(messages, self.memory, first=1)
