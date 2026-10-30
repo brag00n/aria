@@ -48,9 +48,9 @@ def _line(rec):
 
 
 @mcp.tool(name="identifier_interlocuteur")
-def identifier_interlocuteur(nom: str, complement: str = "") -> str:
-    """Désigne la personne qui parle (prénom, plus nom de famille ou surnom en cas d'homonyme). La crée si elle est inconnue."""
-    return interlocuteurs.identifier(nom, complement)
+def identifier_interlocuteur(nom: str, complement: str = "", surnom: str = "") -> str:
+    """Désigne la personne qui parle: nom = son prénom, complement = nom de famille (distingue les homonymes), surnom = comment elle veut être appelée. La crée si inconnue."""
+    return interlocuteurs.identifier(nom, complement, surnom)
 
 
 @mcp.tool(name="relier")

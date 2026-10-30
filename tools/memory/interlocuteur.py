@@ -66,9 +66,9 @@ class Interlocuteurs:
         return {"liste": self.store.personnes.listing(), "actif": self.store.active, "contexte": self.contexte()}
 
     # ------------------------------------------------------------------ outils du LLM
-    def identifier(self, nom, complement=""):
+    def identifier(self, nom, complement="", surnom=""):
         """Outil identifier_interlocuteur : active la personne qui parle, la crée si besoin, signale les homonymes."""
-        status, person, candidates = self.store.personnes.resolve(nom, complement)
+        status, person, candidates = self.store.personnes.resolve(nom, complement, surnom)
         if status == "empty":
             return "Je n'ai pas compris le nom. Demande-lui son prénom."
         if status == "ambiguous":

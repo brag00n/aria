@@ -353,5 +353,76 @@ class OutilsTests(Base):
         self.assertEqual((speakers[0]["frm"], speakers[0]["to"], speakers[0]["src"]), ("", "p1", "llm"))
 
 
+class SurnomEtGestionTests(Base):
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+
+    def test_surnom_retenu_a_la_creation(self):
+        self.i.identifier("Olivier Cousinier", surnom="Olivier")
+        person = self.s.personnes.get("p1")
+        self.assertEqual((person["nom"], person["compl"]), ("Olivier", "Cousinier"))
+        self.assertEqual(self.s.personnes.resolve("Oli", surnom="")[0], "created")      # « Oli » n'est pas encore un surnom
+
+    def test_surnom_different_du_prenom_est_enregistre_et_retrouve(self):
+        self.i.identifier("Olivier", "Cousinier", surnom="Oli")
+        self.assertEqual(self.s.personnes.get("p1")["surnom"], "Oli")
+        self.i.etat("")
+        self.assertIn("est maintenant actif", self.i.identifier("Oli"))
+        self.assertEqual(self.s.active, "p1")
+
+    def test_surnom_existant_non_ecrase(self):
+        self.i.identifier("Olivier", "Cousinier", surnom="Oli")
+        self.i.identifier("Olivier", "Cousinier", surnom="Livier")
+        self.assertEqual(self.s.personnes.get("p1")["surnom"], "Oli")
+
+    def test_rattacher_un_ancien_souvenir_a_une_personne(self):
+        anonyme = self.make(active="p9")
+        ev = {"op": "add", "ts": store_mod.iso(self.clock()), "r": {
+            "id": "m_old002", "t": "fait", "txt": "Ma femme s'appelle Tiphaine", "imp": 5, "tags": [], "h": "",
+            "c": store_mod.iso(self.clock()), "last": store_mod.iso(self.clock()), "hits": 0, "s": 1.0, "src": "llm"}}
+        with open(anonyme.ns_dir / "events.jsonl", "ab") as f:
+            f.write((json.dumps(ev) + "\n").encode("utf-8"))
+        anonyme.active = "p2"
+        self.assertEqual(len(anonyme.search("Tiphaine", touch=False)[0]), 1)             # partagé tant qu'il n'a pas de propriétaire
+        self.assertTrue(anonyme.update("m_old002", {"o": "p1"}))
+        self.assertEqual(anonyme.search("Tiphaine", touch=False)[0], [])                 # privé à p1 maintenant
+        anonyme.active = "p1"
+        self.assertEqual(len(anonyme.search("Tiphaine", touch=False)[0]), 1)
+        anonyme.close()
+        again = self.make(active="p2")
+        self.assertEqual(again.records["m_old002"]["o"], "p1")                           # persiste après rechargement
+
+    def test_changer_en_type_partage_retire_le_proprietaire(self):
+        s = self.make(active="p1")
+        _, rec = s.add("Le portail est vert", "fait")
+        self.assertEqual(rec["o"], "p1")
+        s.update(rec["id"], {"t": "foyer"})
+        self.assertEqual(rec["o"], "")
+
+    def test_fusion_de_deux_personnes(self):
+        self.i.identifier("Olivier", "Martin")
+        self.i.identifier("Olivier", "Dupont")
+        self.s.active = "p2"
+        self.s.add("Aime le thé", "préférence")
+        self.s.active = "p1"
+        self.s.add("Aime le café", "préférence")
+        self.i.relier("Tiphaine", "femme de", "Olivier Dupont")
+        moved = self.s.merge_persons("p2", "p1")
+        self.assertEqual(moved, 1)
+        self.assertIsNone(self.s.personnes.get("p2"))
+        self.assertEqual(len([r for r in self.s.records.values() if r.get("o") == "p1"]), 2)
+        self.s.close()
+        again = self.make(active="p1")
+        self.assertEqual(len(again.search("thé café", touch=False)[0]), 2)
+
+    def test_fusion_invalide(self):
+        self.i.identifier("Olivier")
+        self.assertEqual(self.s.merge_persons("p1", "p1"), -1)
+        self.assertEqual(self.s.merge_persons("p1", "p99"), -1)
+
+
 if __name__ == "__main__":
     unittest.main()

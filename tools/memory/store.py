@@ -334,9 +334,14 @@ class Store:
             txt = str(changes["txt"]).strip()[:MAX_TEXT]
             if txt:
                 rec["txt"] = txt
-                rec["h"] = self._hash(txt)
         if "t" in changes:
             rec["t"] = normalize_type(changes["t"])
+            if rec["t"] in scoring.SHARED_TYPES:
+                rec["o"] = ""                          # un type partagé n'a pas de propriétaire
+        if "o" in changes and rec["t"] not in scoring.SHARED_TYPES:
+            rec["o"] = str(changes["o"] or "")
+        if isinstance(changes.get("rel"), dict):
+            rec["rel"] = changes["rel"]
         if "tags" in changes:
             rec["tags"] = parse_tags(changes["tags"])
         if "imp" in changes:
@@ -344,6 +349,7 @@ class Store:
                 rec["imp"] = max(0.0, min(10.0, float(changes["imp"])))
             except (TypeError, ValueError):
                 pass
+        rec["h"] = self._hash(rec["txt"], rec.get("o", ""))        # texte ou propriétaire changé : nouvelle empreinte
         self._index_add(rec)
 
     # ---------------------------------------------------------------- écriture du journal
@@ -435,7 +441,7 @@ class Store:
             rec = self.records.get(rid)
             if not rec:
                 return False
-            clean = {k: v for k, v in changes.items() if k in ("txt", "t", "tags", "imp")}
+            clean = {k: v for k, v in changes.items() if k in ("txt", "t", "tags", "imp", "o")}
             self._index_update(rec, clean)
             self._append({"op": "update", "ts": iso(self.clock()), "id": rid, "set": clean}, sync=True)
             self.activity.log("update", id=rid, fields=sorted(clean), src=src)
@@ -480,6 +486,33 @@ class Store:
             self._append({"op": "add", "ts": iso(self.clock()), "r": self._record_to_json(rec)}, sync=True)
             self.activity.log("restore", id=rid, src=src)
             return True
+
+    def merge_persons(self, source, target, src="ui"):
+        """Fusionne deux personnes (homonyme créé par erreur) : les souvenirs de `source` passent à `target`, `source` disparaît.
+        Les relations qui nommaient `source` pointent désormais vers `target`. Retourne le nombre de souvenirs rattachés."""
+        with self.lock:
+            self._check_external_changes()
+            if self._writable() or source == target:
+                return -1
+            if not (self.personnes.get(source) and self.personnes.get(target)):
+                return -1
+            moved = 0
+            for rec in list(self.records.values()):
+                if rec.get("o") == source:
+                    self.update(rec["id"], {"o": target}, src=src)
+                    moved += 1
+                rel = rec.get("rel")
+                if rel and (rel.get("ia") == source or rel.get("ib") == source):
+                    for k in ("ia", "ib"):
+                        if rel.get(k) == source:
+                            rel[k] = target
+                    # la relation modifiée est réécrite dans le journal par un update d'un champ neutre
+                    self._append({"op": "update", "ts": iso(self.clock()), "id": rec["id"], "set": {"rel": rel}}, sync=True)
+            self.personnes.remove(source)
+            if self.active == source:
+                self.active = target
+            self.activity.log("merge_persons", frm=source, to=target, moved=moved, src=src)
+            return moved
 
     def _archive(self, rec, why):
         path = self.archive_dir / (datetime.fromtimestamp(self.clock(), timezone.utc).strftime("%Y-%m") + ".jsonl")

@@ -104,14 +104,25 @@ class Personnes:
         return out
 
     # ------------------------------------------------------------------ résolution d'un nom donné par le LLM
-    def resolve(self, nom, complement=""):
+    def resolve(self, nom, complement="", surnom=""):
         """Retourne (statut, personne, candidats). statut :
           'found'      une seule personne correspond : à activer
           'created'    personne inconnue : créée
           'ambiguous'  plusieurs personnes (ou un prénom déjà pris sans complément) : on n'active rien
           'empty'      nom vide
         Un complément qui ne correspond à aucune personne portant ce prénom crée un homonyme."""
-        nom, complement = _clean(nom), _clean(complement)
+        status, person, candidates = self._resolve(_clean(nom), _clean(complement))
+        # Le surnom d'usage (« appelle-moi Oli ») est retenu sur la personne désignée, sans écraser un surnom existant
+        surnom = _clean(surnom)
+        if person and surnom and not person["surnom"] and key(surnom) != key(person["nom"]):
+            person["surnom"] = surnom
+            with self.lock:
+                self._rewrite()
+            if self.activity:
+                self.activity.log("person_nickname", id=person["id"])
+        return status, person, candidates
+
+    def _resolve(self, nom, complement):
         if not key(nom):
             return "empty", None, []
         with self.lock:
