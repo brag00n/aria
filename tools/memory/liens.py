@@ -43,6 +43,25 @@ def _famille(lien):
     return None
 
 
+def type_lien(lien):
+    """Famille d'un lien : 'conjoint', 'parent' (A est le parent de B), 'enfant' (A est l'enfant de B), 'fratrie', 'ami'...
+    ou '' pour un lien non reconnu (belle-mère, demi-frère, ex-femme... : gardés en texte libre)."""
+    famille = _famille(lien)
+    return famille[0] if famille else ""
+
+
+_MOTS_F = frozenset(("femme", "epouse", "compagne", "mere", "fille", "soeur"))
+_MOTS_M = frozenset(("mari", "epoux", "compagnon", "pere", "fils", "frere"))
+
+
+def sexe_du_lien(lien):
+    """Sexe de la personne qui PORTE le lien (« Tiphaine est la femme de... » -> 'f'), '' si le lien ne le dit pas
+    (« conjoint », « parent », « enfant », « frère ou sœur »...)."""
+    mots = set(textproc.normalize(lien).split())
+    f, m = bool(mots & _MOTS_F), bool(mots & _MOTS_M)
+    return "f" if f and not m else "m" if m and not f else ""
+
+
 def analyser(a, lien, b):
     """Retourne {"cle": clé de déduplication, "invp": phrase du sens inverse ('' si inconnue), "inv": mots à indexer}.
     La clé est la même pour les deux sens d'un lien connu ; un lien inconnu garde sa forme telle quelle (sans sens inverse)."""

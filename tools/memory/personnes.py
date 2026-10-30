@@ -1,10 +1,10 @@
 """Personnes connues d'Aria (les interlocuteurs) : un fichier JSONL, ajout en fin de fichier, réécriture atomique pour modifier.
 
 Fichier personnes.jsonl (dans le dossier de l'espace de noms), une personne par ligne :
-    {"id":"p1","nom":"Olivier","compl":"Martin","surnom":"Oli","c":"2026-10-30T14:02:11+00:00"}
+    {"id":"p1","nom":"Olivier","compl":"Martin","surnom":"Oli","sexe":"m","c":"2026-10-30T14:02:11+00:00"}
 
 `nom` est le prénom (ou ce que la personne dit être son nom), `compl` un complément qui la distingue d'un homonyme (nom de famille),
-`surnom` un nom d'usage. Module autonome : aucune importation depuis Aria, bibliothèque standard seulement.
+`surnom` un nom d'usage, `sexe` "f", "m" ou vide (inconnu) : il sert au moteur de parenté (belle-fille, tante, grand-mère...). Module autonome : aucune importation depuis Aria, bibliothèque standard seulement.
 """
 import json
 import os
@@ -18,6 +18,12 @@ MAX_FIELD = 60
 
 def _clean(value):
     return " ".join(str(value or "").split())[:MAX_FIELD]
+
+
+def _sexe(value):
+    """'f', 'm' ou '' (inconnu) ; accepte aussi féminin/masculin/femme/homme."""
+    v = key(str(value or ""))[:1]
+    return v if v in ("f", "m") else ""
 
 
 def key(value):
@@ -47,7 +53,7 @@ class Personnes:
                         continue
                     if isinstance(obj, dict) and obj.get("id") and obj.get("nom"):
                         self.items.append({"id": str(obj["id"]), "nom": _clean(obj["nom"]), "compl": _clean(obj.get("compl")),
-                                           "surnom": _clean(obj.get("surnom")), "c": obj.get("c", "")})
+                                           "surnom": _clean(obj.get("surnom")), "sexe": _sexe(obj.get("sexe")), "c": obj.get("c", "")})
         except OSError:
             pass
 
@@ -154,7 +160,7 @@ class Personnes:
 
     def _create(self, nom, complement):
         pid = self._new_id()
-        person = {"id": pid, "nom": nom, "compl": complement, "surnom": "", "c": self.iso(self.clock())}
+        person = {"id": pid, "nom": nom, "compl": complement, "surnom": "", "sexe": "", "c": self.iso(self.clock())}
         self.items.append(person)
         self._append(person)
         if self.activity:
@@ -169,13 +175,13 @@ class Personnes:
         return f"p{n}"
 
     # ------------------------------------------------------------------ gestion (page de gestion)
-    def add(self, nom, compl="", surnom=""):
+    def add(self, nom, compl="", surnom="", sexe=""):
         nom = _clean(nom)
         if not key(nom):
             return None
         with self.lock:
             person = {"id": self._new_id(), "nom": nom, "compl": _clean(compl), "surnom": _clean(surnom),
-                      "c": self.iso(self.clock())}
+                      "sexe": _sexe(sexe), "c": self.iso(self.clock())}
             self.items.append(person)
             self._append(person)
             return person
@@ -185,6 +191,8 @@ class Personnes:
             person = self.get(pid)
             if not person:
                 return False
+            if "sexe" in changes:
+                person["sexe"] = _sexe(changes["sexe"])
             for field in ("nom", "compl", "surnom"):
                 if field in changes:
                     value = _clean(changes[field])
