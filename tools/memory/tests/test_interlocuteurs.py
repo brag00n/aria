@@ -424,7 +424,7 @@ class SurnomEtGestionTests(Base):
         self.assertEqual(self.s.merge_persons("p1", "p99"), -1)
 
 
-class CompletionTests(Base):
+class CompletionEtLiensTests(Base):
     def setUp(self):
         super().setUp()
         from interlocuteur import Interlocuteurs
@@ -471,6 +471,56 @@ class CompletionTests(Base):
         self.i.identifier("Tiphaine")
         self.assertIn("toujours actif", self.i.identifier("Tiphaine"))
         self.assertEqual(len(self.s.personnes.items), 1)
+
+    # ---- 2. sens inverse indexé, fratrie sans multiplication
+    def test_femme_de_retrouve_par_mari(self):
+        self.i.identifier("Olivier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        res, fallback = self.s.search("Qui est mon mari ?", touch=False)
+        self.assertFalse(fallback)
+        self.assertIn("Tiphaine", res[0]["txt"])
+
+    def test_la_reponse_indique_le_sens_inverse(self):
+        self.i.identifier("Olivier")
+        self.assertIn("est le mari ou conjoint de", self.i.relier("Tiphaine", "femme de", "moi"))
+
+    def test_le_meme_lien_dit_dans_l_autre_sens_n_est_pas_double(self):
+        self.i.identifier("Olivier")
+        self.i.relier("Marion", "soeur de", "Paul")
+        self.assertTrue(self.i.relier("Paul", "frère de", "Marion").startswith("Déjà connu"))
+        self.assertEqual(sum(1 for r in self.s.records.values() if r["t"] == "relation"), 1)
+
+    def test_fratrie_de_quatre_se_stocke_en_trois_liens_au_plus_par_ajout(self):
+        self.i.identifier("Olivier")
+        for a, b in [("Marion", "Paul"), ("Marion", "Léa"), ("Paul", "Léa"), ("Léa", "Marion"), ("Paul", "Marion")]:
+            self.i.relier(a, "frère ou soeur de", b)
+        liens = [r for r in self.s.records.values() if r["t"] == "relation"]
+        self.assertEqual(len(liens), 3)                      # 3 paires distinctes, pas 6 ni 12
+
+    def test_mari_et_femme_sont_le_meme_lien(self):
+        self.i.identifier("Olivier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        self.assertTrue(self.i.relier("moi", "mari de", "Tiphaine").startswith("Déjà connu"))
+
+    def test_parent_et_enfant_sont_le_meme_lien_mais_pas_inversable(self):
+        self.i.identifier("Olivier")
+        self.i.relier("Marion", "fille de", "moi")
+        self.assertTrue(self.i.relier("moi", "père de", "Marion").startswith("Déjà connu"))
+        self.assertFalse(self.i.relier("Marion", "père de", "moi").startswith("Déjà connu"))   # sens opposé : un autre lien
+
+    def test_un_lien_inconnu_est_garde_tel_quel(self):
+        self.i.identifier("Olivier")
+        reponse = self.i.relier("Tiphaine", "belle-mère de", "Paul")
+        self.assertTrue(reponse.startswith("OK"))
+        self.assertNotIn("donc", reponse)
+
+    def test_liens_conserves_apres_rechargement(self):
+        self.i.identifier("Olivier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        self.s.close()
+        again = self.make(active="p1")
+        res, _ = again.search("mari", touch=False)
+        self.assertEqual(len(res), 1)
 
 
 if __name__ == "__main__":

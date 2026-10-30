@@ -6,6 +6,7 @@ voit un état à jour. Aria ne connaît que `ui_etat` (non exposé au LLM). Modu
 """
 import json
 
+import liens
 import textproc
 from personnes import key
 
@@ -94,10 +95,17 @@ class Interlocuteurs:
         if key(a) == key(b):
             return "Une personne ne peut pas être liée à elle-même."
         ia, ib = self._id_of(a), self._id_of(b)
+        info = liens.analyser(a, lien, b)
+        # Le même lien redit dans l'autre sens (« A frère de B » puis « B sœur de A ») n'est enregistré qu'une fois
+        for rec in self.store.records.values():
+            if rec["t"] == "relation" and (rec.get("rel") or {}).get("cle") == info["cle"]:
+                return f"Déjà connu : {rec['txt']}."
         text = f"{a} est {self._article(lien)} {b}"
-        status, rec = self.store.add(text, "relation", "", src="llm", rel={"a": a, "l": lien, "b": b, "ia": ia, "ib": ib})
+        rel = {"a": a, "l": lien, "b": b, "ia": ia, "ib": ib, "cle": info["cle"], "inv": info["inv"]}
+        status, rec = self.store.add(text, "relation", "", src="llm", rel=rel)
         if status == "added":
-            return f"OK {rec['id']} : {text}."
+            inverse = f" (donc {b} est {info['invp']} {a})" if info["invp"] else ""
+            return f"OK {rec['id']} : {text}{inverse}."
         if status == "duplicate":
             return f"Déjà connu : {text}."
         return self.refus(status)

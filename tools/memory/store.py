@@ -288,7 +288,12 @@ class Store:
         """Racines indexées d'un souvenir (texte + tags). Mémorisées : indexer puis désindexer ne normalise qu'une fois."""
         cached = rec.get("_tok")
         if cached is None:
-            cached = textproc.analyze(rec["txt"] + " " + " ".join(rec["tags"]))
+            extra = ""
+            rel = rec.get("rel")
+            if rel:
+                # Sens inverse d'un lien, indexé sans être stocké : « femme de » retrouve aussi « mari », « frère » retrouve « sœur »
+                extra = " " + str(rel.get("inv", ""))
+            cached = textproc.analyze(rec["txt"] + " " + " ".join(rec["tags"]) + extra)
             rec["_tok"] = cached
         return cached
 
