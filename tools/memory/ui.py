@@ -237,6 +237,16 @@ th{cursor:pointer;color:var(--mut);font-weight:600;white-space:nowrap}
 .bar{display:flex;gap:8px;margin:8px 0;flex-wrap:wrap}
 pre{background:var(--card);border:1px solid var(--line);padding:8px;overflow:auto;max-height:60vh}
 #msg{color:var(--warn);margin-left:8px}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:10}
+#modal .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 20px;min-width:360px;max-width:92vw;max-height:90vh;overflow:auto}
+#modal h2{font-size:15px;margin:0 0 10px}
+#modal label{display:block;margin:8px 0 2px;color:var(--mut);font-size:12px}
+#modal input,#modal select,#modal textarea{width:100%;box-sizing:border-box;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+#modal textarea{min-height:80px;resize:vertical}
+#modal .row{display:flex;gap:10px}#modal .row>div{flex:1}
+#modal .info{margin-top:10px;font-size:12px;color:var(--mut)}
+#modal .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+#modal .err{color:var(--warn);margin-top:8px;min-height:1em}
 </style></head><body>
 <header><h1>🧠 Mémoire d'Aria</h1>
 <nav><button data-t="mem" class="on">Souvenirs</button><button data-t="per">Personnes</button><button data-t="rel">Relations</button><button data-t="arc">Archive</button><button data-t="sta">Statistiques</button><button data-t="log">Journal</button></nav>
@@ -252,6 +262,84 @@ const post=async(u,b)=>(await fetch(u,{method:'POST',headers:hdr(),body:JSON.str
 const say=t=>{$('#msg').textContent=t;setTimeout(()=>{$('#msg').textContent=''},4000)};
 let tab='mem',sortKey='cree',sortDir=-1,query='',fType='',fState='',fOwner='',PERSONS=[];
 const OWNER_TXT=id=>(PERSONS.find(p=>p.id===id)||{label:id?'? '+id:'Foyer (partagé)'}).label;
+
+// ---- Modale d'édition : tous les champs modifiables d'un souvenir, d'une relation ou d'une personne
+function field(label, node){ return el('div',{}, el('label',{},label), node); }
+function openModal(title, fields, info, onSave){
+  closeModal();
+  const err = el('div',{className:'err'});
+  const save = el('button',{onclick:async()=>{ err.textContent=''; const res = await onSave(); if(res===true){closeModal();render()} else err.textContent = res || 'Impossible'; }},'Enregistrer');
+  const cancel = el('button',{onclick:closeModal},'Annuler');
+  const box = el('div',{id:'modal',onclick:e=>{if(e.target===box)closeModal()}},
+    el('div',{className:'card'}, el('h2',{},title), ...fields, info?el('div',{className:'info'},info):'', err, el('div',{className:'btns'},cancel,save)));
+  document.body.append(box);
+  const first = box.querySelector('input,textarea,select'); if(first) first.focus();
+}
+function closeModal(){ const m=$('#modal'); if(m) m.remove(); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+const optionsOf = (values, current) => values.map(v=>el('option',{value:v[0],selected:v[0]===current},v[1]));
+const TYPES = [['fait','fait'],['preference','préférence'],['tache','tâche'],['ephemere','éphémère'],['foyer','foyer (partagé)'],['relation','relation (partagée)']];
+const peopleOptions = (current) => [['','— aucun (partagé) —'], ...PERSONS.filter(p=>!p.special).map(p=>[p.id,p.label])];
+
+function editMemory(r){
+  const txt = el('textarea',{value:r.texte});
+  const typ = el('select',{}, ...optionsOf(TYPES, r.type));
+  const own = el('select',{}, ...optionsOf(peopleOptions(), r.o));
+  const tags = el('input',{value:r.tags.join(', ')});
+  const imp = el('input',{type:'number',min:0,max:10,step:0.5,value:r.imp});
+  const sv = el('input',{type:'number',min:0.1,max:2,step:0.05,value:r.s});
+  const pin = el('input',{type:'checkbox',checked:r.tags.includes('pinned'),style:'width:auto'});
+  const info = [`Identifiant ${r.id} · source ${r.src}`, `Créé ${r.cree} · dernier rappel ${r.dernier} · ${r.hits} rappel(s)`, `Importance effective ${r.eff} · état ${r.etat}`].join(' — ');
+  openModal('Modifier le souvenir', [
+    field('Texte', txt),
+    el('div',{className:'row'}, field('Type', typ), field('Propriétaire', own)),
+    field('Tags (séparés par des virgules)', tags),
+    el('div',{className:'row'}, field('Note de départ (0 à 10)', imp), field('Renfort (0,1 à 2)', sv)),
+    el('label',{}, pin, ' Protégé : jamais oublié (tag pinned)'),
+  ], info, async ()=>{
+    const list = tags.value.split(',').map(t=>t.trim()).filter(t=>t && t!=='pinned');
+    if(pin.checked) list.push('pinned');
+    const body = {id:r.id, texte:txt.value, type:typ.value, tags:list.join(','), imp:imp.value, s:sv.value};
+    if(typ.value!=='foyer' && typ.value!=='relation') body.o = own.value;
+    const x = await post('/api/update', body);
+    return x.ok ? true : (x.erreur || 'Impossible (texte vide, mémoire verrouillée ?)');
+  });
+}
+function editRelation(r){
+  const rel = r.rel || {a:'',l:'',b:''};
+  const a = el('input',{value:rel.a}), l = el('input',{value:rel.l}), b = el('input',{value:rel.b});
+  const sv = el('input',{type:'number',min:0.1,max:2,step:0.05,value:r.s});
+  openModal('Modifier la relation', [
+    el('div',{className:'row'}, field('Personne', a), field('Lien (ex. femme de, frère de)', l), field('Personne', b)),
+    field('Renfort (0,1 à 2)', sv),
+  ], `Identifiant ${r.id} · créée ${r.cree} · ${r.hits} rappel(s). Le texte du souvenir est recalculé : « A est le lien de B ».`, async ()=>{
+    const x = await post('/api/update', {id:r.id, rel:{a:a.value,l:l.value,b:b.value}, s:sv.value});
+    return x.ok ? true : (x.erreur || 'Impossible');
+  });
+}
+function editPerson(p){
+  const nom = el('input',{value:p.nom}), compl = el('input',{value:p.compl}), sur = el('input',{value:p.surnom});
+  openModal('Modifier la personne', [
+    el('div',{className:'row'}, field('Prénom', nom), field('Nom de famille', compl)),
+    field('Surnom (comment elle veut être appelée)', sur),
+  ], `Identifiant ${p.id} · créée ${p.cree} · ${p.souvenirs} souvenir(s)${p.actif?' · interlocuteur actif':''}`, async ()=>{
+    const x = await post('/api/personne/update', {id:p.id, nom:nom.value, compl:compl.value, surnom:sur.value});
+    return x.ok ? true : 'Le prénom est obligatoire';
+  });
+}
+function mergePerson(p){
+  const others = PERSONS.filter(o=>!o.special && o.id!==p.id);
+  if(!others.length){ say('Aucune autre personne vers qui fusionner'); return; }
+  const target = el('select',{}, ...others.map(o=>el('option',{value:o.id},o.label)));
+  openModal('Fusionner ' + p.label, [
+    el('p',{}, 'Les ' + p.souvenirs + ' souvenir(s) de ' + p.label + ' et ses relations passent à la personne choisie ; ' + p.label + ' disparaît de la liste.'),
+    field('Fusionner dans', target),
+  ], 'Utile pour corriger un doublon (ex. deux fiches pour la même personne). Les souvenirs ne sont pas perdus.', async ()=>{
+    const x = await post('/api/personne/merge', {id:p.id, vers:target.value});
+    if(!x.ok) return 'Impossible';
+    say(x.deplaces + ' souvenir(s) rattaché(s)'); return true;
+  });
+}
 
 async function render(){
   const main=$('#main');main.replaceChildren();
@@ -271,7 +359,7 @@ async function renderMem(main){
   let list=rows.filter(r=>(!fType||r.type===fType)&&(!fState||r.etat===fState)&&(fOwner===''||(fOwner==='_foyer'?!r.o:r.o===fOwner)));
   list.sort((a,b)=>(a[sortKey]>b[sortKey]?1:-1)*sortDir);
   const inpQ=el('input',{placeholder:'Rechercher…',value:query,onchange:e=>{query=e.target.value;render()}});
-  const selT=el('select',{onchange:e=>{fType=e.target.value;render()}},...['','fait','preference','tache','ephemere'].map(v=>el('option',{value:v,selected:v===fType},v||'tous les types')));
+  const selT=el('select',{onchange:e=>{fType=e.target.value;render()}},...['','fait','preference','tache','ephemere','foyer','relation'].map(v=>el('option',{value:v,selected:v===fType},v||'tous les types')));
   const selS=el('select',{onchange:e=>{fState=e.target.value;render()}},...['','actif','masque','protege'].map(v=>el('option',{value:v,selected:v===fState},v||'tous les états')));
   const selO=el('select',{onchange:e=>{fOwner=e.target.value;render()}},el('option',{value:''},'tous les propriétaires'),el('option',{value:'_foyer',selected:fOwner==='_foyer'},'Foyer (partagé)'),...PERSONS.filter(p=>!p.special).map(p=>el('option',{value:p.id,selected:p.id===fOwner},p.label)));
   const nowner=el('select',{},...PERSONS.filter(p=>!p.special).map(p=>el('option',{value:p.id},p.label)));
@@ -285,7 +373,7 @@ async function renderMem(main){
       el('td',{},ownerSelect(r)),
       el('td',{},String(r.eff),el('div',{className:'mut'},r.imp+' × '+r.s)),
       el('td',{},...r.tags.map(t=>el('span',{className:'tag'},t))),el('td',{className:'mut'},r.cree.slice(0,10)),el('td',{},String(r.hits)),el('td',{},r.etat),
-      el('td',{},el('button',{onclick:async()=>{const t=prompt('Modifier le souvenir',r.texte);if(t&&t!==r.texte){await post('/api/update',{id:r.id,texte:t});render()}}},'✎'),' ',
+      el('td',{},el('button',{title:'Modifier',onclick:()=>editMemory(r)},'✎'),' ',
         el('button',{title:'Protéger / déprotéger',onclick:async()=>{await post('/api/pin',{id:r.id});render()}},'📌'),' ',
         el('button',{title:'Oublier',onclick:async()=>{if(confirm('Oublier ce souvenir ?')){await post('/api/delete',{id:r.id});render()}}},'🗑'))))));
 }
@@ -303,11 +391,8 @@ async function renderPersons(main){
     el('table',{},el('tr',{},...['Personne','Prénom','Nom','Surnom','Souvenirs',''].map(h=>el('th',{},h))),
       ...PERSONS.map(p=>p.special?el('tr',{},el('td',{},p.label),el('td',{colSpan:3,className:'mut'},'souvenirs sans propriétaire (relations, foyer, anciens souvenirs)'),el('td',{},String(p.souvenirs)),el('td',{})):
         el('tr',{},el('td',{},p.label+(p.actif?' ● actif':'')),el('td',{},p.nom),el('td',{},p.compl),el('td',{},p.surnom),el('td',{},String(p.souvenirs)),
-          el('td',{},el('button',{title:'Modifier',onclick:async()=>{const n=prompt('Prénom',p.nom);if(n===null)return;const c=prompt('Nom de famille',p.compl)||'';const s2=prompt('Surnom',p.surnom)||'';
-              say((await post('/api/personne/update',{id:p.id,nom:n,compl:c,surnom:s2})).ok?'Modifiée':'Impossible');render()}},'✎'),' ',
-            el('button',{title:'Fusionner dans une autre personne',onclick:async()=>{const others=people.filter(o=>o.id!==p.id);if(!others.length)return;
-              const t=prompt('Fusionner '+p.label+' dans qui ?\\n'+others.map(o=>o.id+' = '+o.label).join('\\n'));if(!t)return;
-              const r=await post('/api/personne/merge',{id:p.id,vers:t.trim()});say(r.ok?r.deplaces+' souvenir(s) rattaché(s)':'Impossible');render()}},'⇢'),' ',
+          el('td',{},el('button',{title:'Modifier',onclick:()=>editPerson(p)},'✎'),' ',
+            el('button',{title:'Fusionner dans une autre personne',onclick:()=>mergePerson(p)},'⇢'),' ',
             el('button',{title:'Supprimer',onclick:async()=>{if(!confirm('Supprimer '+p.label+' ?'))return;const r=await post('/api/personne/delete',{id:p.id});say(r.ok?'Supprimée':(r.erreur||'Impossible'));render()}},'🗑'))))));
 }
 async function renderRelations(main){
@@ -315,7 +400,7 @@ async function renderRelations(main){
   main.append(el('p',{className:'mut'},'Liens entre personnes, partagés par tout le foyer et jamais oubliés. Aria les enregistre avec l\\'outil « relier ».'),
     el('table',{},el('tr',{},...['Personne','Lien','Personne','Souvenir',''].map(h=>el('th',{},h))),
       ...rows.map(r=>el('tr',{},el('td',{},(r.rel&&r.rel.a)||'?'),el('td',{},(r.rel&&r.rel.l)||''),el('td',{},(r.rel&&r.rel.b)||'?'),el('td',{className:'mut'},r.texte),
-        el('td',{},el('button',{title:'Oublier',onclick:async()=>{if(confirm('Oublier cette relation ?')){await post('/api/delete',{id:r.id});render()}}},'🗑'))))));
+        el('td',{},el('button',{title:'Modifier',onclick:()=>editRelation(r)},'✎'),' ',el('button',{title:'Oublier',onclick:async()=>{if(confirm('Oublier cette relation ?')){await post('/api/delete',{id:r.id});render()}}},'🗑'))))));
 }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));render()});
 render();
