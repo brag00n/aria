@@ -321,7 +321,8 @@
             "/aria/tools/memory/server.py"
           ],
           "env": {
-            "MEMORY_DIR": "/aria/models/memory"
+            "MEMORY_DIR": "/aria/models/memory",
+            "MEMORY_UI_PORT": "7870"
           }
         }
       }

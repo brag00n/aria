@@ -13,6 +13,8 @@ services:
     container_name: aria
     ports:
       - "7860:7860"
+      # Page de gestion de la mémoire (tools/memory/ui.py) : accessible depuis ce PC uniquement
+      - "127.0.0.1:7870:7870"
     # Les secrets (ANTHROPIC_API_KEY...) sont lus dans .env, jamais commités
     env_file:
       - .env
