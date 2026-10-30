@@ -315,6 +315,15 @@ def expand_secrets(value, where=""):
     return value
 
 
+TOOL_NOTICE_RE = re.compile(r"\n*> 🛠️ Outil utilisé : `[^`]*`\n*")
+
+
+def answer_for_log(text):
+    """Réponse d'Aria sur une seule ligne pour les journaux : sans les lignes « Outil utilisé » (déjà tracées par « Action MCP »)
+    et sans sauts de ligne. Le texte affiché dans le chat n'est pas modifié."""
+    return " ".join(TOOL_NOTICE_RE.sub(" ", text or "").split())
+
+
 def tool_notice(name):
     """Ligne d'information « outil utilisé » insérée dans le texte du chat (citation markdown, stylée dans app.py).
     Elle n'est ajoutée qu'au texte affiché : le texte envoyé à la synthèse vocale est tenu à part, donc elle n'est jamais lue."""

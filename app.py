@@ -334,7 +334,7 @@ async def _generer(text_user, history, timer, start_total, interlocutor=""):
         yield history, payload_str
     
     utils.log_info("app", f"   LLM: FIN Traitement ({chunk_count} blocs son, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
-    utils.log_info("app", f"   LLM: Réponse finale: '{history[-1]['content']}'")
+    utils.log_info("app", f"   LLM: Réponse finale: '{utils.answer_for_log(history[-1]['content'])}'")
     timer.mark("fin_traitement")
             
     utils.log_info("app", f"--- FIN Traitement ({chunk_count} blocs, Total: {(datetime.now() - start_total).total_seconds():.3f}s)")
