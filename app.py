@@ -400,8 +400,82 @@ def request_restart(confirmed=""):
     threading.Thread(target=_exit_later, daemon=True).start()
     return "🔄 Redémarrage en cours... rechargez la page dans une vingtaine de secondes."
 
+# JavaScript du bouton « Redémarrer » : confirmation, puis une boîte « Redémarrage en cours... » animée qui teste la connexion.
+# Juste après le clic le serveur répond encore (~2 s) : on attend donc d'abord de le voir TOMBER, puis REVENIR avant de conclure.
+# Au retour la page est rechargée : la session Gradio ouverte avant l'arrêt n'existe plus côté serveur.
+JS_RESTART = r"""() => {
+    if (!confirm("Redémarrer le serveur Aria ? Les conversations en cours seront coupées.")) return ["non"];
+    if (document.getElementById("aria_restart_box")) return ["oui"];
+    const box = document.createElement("div");
+    box.id = "aria_restart_box";
+    const card = document.createElement("div");
+    card.className = "aria-restart-card";
+    const spinner = document.createElement("div");
+    spinner.className = "aria-restart-spinner";
+    const text = document.createElement("div");
+    text.className = "aria-restart-text";
+    text.textContent = "Redémarrage en cours...";
+    const sub = document.createElement("div");
+    sub.className = "aria-restart-sub";
+    sub.textContent = "Test de la connexion au serveur";
+    card.append(spinner, text, sub);
+    box.append(card);
+    document.body.append(box);
+
+    const started = Date.now();
+    let sawDown = false;
+    const alive = async () => {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 2000);
+        try {
+            const r = await fetch("/?_=" + Date.now(), { cache: "no-store", signal: ctl.signal });
+            return r.ok;
+        } catch (e) { return false; }
+        finally { clearTimeout(timer); }
+    };
+    const fail = (msg) => {
+        spinner.style.display = "none";
+        text.textContent = msg;
+        sub.textContent = "";
+        const close = document.createElement("button");
+        close.textContent = "Fermer";
+        close.onclick = () => box.remove();
+        card.append(close);
+    };
+    const tick = async () => {
+        const up = await alive();
+        const sec = (Date.now() - started) / 1000;
+        if (!up) sawDown = true;
+        if (up && sawDown) {
+            spinner.style.display = "none";
+            text.textContent = "Aria est de retour";
+            sub.textContent = "Rechargement de la page...";
+            setTimeout(() => location.reload(), 700);
+            return;
+        }
+        if (up && sec > 25) return fail("Le serveur n'a pas redémarré (il répond toujours).");
+        if (sec > 300) return fail("Aria ne répond pas après 5 minutes. Consultez les logs du conteneur.");
+        sub.textContent = sawDown ? "Serveur arrêté, attente de son retour (" + Math.round(sec) + " s)" : "Arrêt du serveur en cours...";
+        setTimeout(tick, 1500);
+    };
+    setTimeout(tick, 1500);
+    return ["oui"];
+}"""
+
 # --- UI GRADIO ---
 CSS = """
+/* Boîte « Redémarrage en cours » (JS_RESTART) */
+#aria_restart_box { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.55); }
+#aria_restart_box .aria-restart-card { background: var(--background-fill-primary, #fff); color: var(--body-text-color, #111);
+    border-radius: 12px; padding: 28px 36px; text-align: center; min-width: 280px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35); }
+#aria_restart_box .aria-restart-spinner { width: 42px; height: 42px; margin: 0 auto 14px; border-radius: 50%;
+    border: 4px solid rgba(128, 128, 128, 0.3); border-top-color: #e08a00; animation: aria-spin 0.9s linear infinite; }
+#aria_restart_box .aria-restart-text { font-size: 1.15em; font-weight: 600; }
+#aria_restart_box .aria-restart-sub { margin-top: 6px; opacity: 0.7; font-size: 0.9em; }
+#aria_restart_box button { margin-top: 14px; padding: 6px 16px; cursor: pointer; }
+@keyframes aria-spin { to { transform: rotate(360deg); } }
+
 #audio_input_box, #audio_url_bridge, #aria_trigger, #restart_confirm_box {
     position: absolute;
     top: -9999px;
@@ -481,6 +555,13 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
         # --- NOUVEL ONGLET DE GESTION DES CONFIGS ---
         # --- ONGLET DE GESTION DES CONFIGS ---
         with gr.TabItem("⚙️ Paramètres"):
+            # Boutons en haut de l'onglet (leurs actions sont reliées en bas, une fois tous les champs créés)
+            with gr.Row():
+                save_btn = gr.Button("💾 SAUVEGARDER TOUTE LA CONFIGURATION", variant="primary", scale=4)
+                restart_btn = gr.Button("🔄 Redémarrer", variant="stop", scale=1)
+            status_msg = gr.Markdown("")
+            gr.Markdown("---")
+
             gr.Markdown("### 🛠️ Configuration Modulaire")
 
             # --- BLOC 0 : RÉGLAGES GÉNÉRAUX (langue de tous les modules) ---
@@ -616,13 +697,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     lines=12
                 )
 
-            # --- BOUTON DE SAUVEGARDE GLOBALE ---
-            gr.Markdown("---")
-            with gr.Row():
-                save_btn = gr.Button("💾 SAUVEGARDER TOUTE LA CONFIGURATION", variant="primary", scale=4)
-                restart_btn = gr.Button("🔄 Redémarrer", variant="stop", scale=1)
-            status_msg = gr.Markdown("")
-            
+            # --- SAUVEGARDE GLOBALE (boutons en haut de l'onglet) ---
             # Au clic, on envoie toutes les valeurs actuelles (dropdowns + codes)
             save_btn.click(
                 fn=update_config_ui,
@@ -647,7 +722,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                 fn=request_restart,
                 inputs=[restart_confirm],
                 outputs=[status_msg],
-                js="() => [confirm('Redémarrer le serveur Aria ? Les conversations en cours seront coupées.') ? 'oui' : 'non']"
+                js=JS_RESTART
             )
 
         # --- ONGLET LOGS (RAM) ---
