@@ -100,8 +100,13 @@ class Mcp:
             utils.log_info("MCP", f"⚠️ Outil inconnu appelé : {tool_name}")
             return f"Erreur : L'outil {tool_name} n'existe pas."
         
+        # Les lectures d'état de l'interface (ui_etat avec activer='?') ont lieu après chaque message : on ne les trace pas.
+        # Un changement d'état et toute erreur restent tracés (et le serveur de mémoire journalise les changements d'interlocuteur).
+        quiet = tool_name.startswith(HIDDEN_PREFIX) and (arguments or {}).get("activer", "?") == "?"
+
         # LOG : Entrée
-        utils.log_info("MCP", f"🚀 APPEL OUTIL : [{tool_name}] | Paramètres : {json.dumps(arguments)}")
+        if not quiet:
+            utils.log_info("MCP", f"🚀 APPEL OUTIL : [{tool_name}] | Paramètres : {json.dumps(arguments)}")
         
         session = self.tool_registry[tool_name]
         try:
@@ -111,7 +116,8 @@ class Mcp:
             response_text = result.content[0].text if result.content else "Aucune réponse"
             
             # LOG : Sortie
-            utils.log_info("MCP", f"📥 RETOUR OUTIL : [{tool_name}] | Réponse : {response_text[:150]}...")
+            if not quiet:
+                utils.log_info("MCP", f"📥 RETOUR OUTIL : [{tool_name}] | Réponse : {response_text[:150]}...")
             
             return response_text
         except Exception as e:
