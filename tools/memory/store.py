@@ -24,12 +24,15 @@ from pathlib import Path
 import scoring
 import textproc
 from activity import NullActivity
+from personnes import Personnes
 
-TYPES = ("fait", "preference", "tache", "ephemere")
+TYPES = ("fait", "preference", "tache", "ephemere", "foyer", "relation")
 _TYPE_ALIASES = {
     "fait": "fait", "faits": "fait", "fact": "fait", "info": "fait",
     "preference": "preference", "preferences": "preference", "pref": "preference", "gout": "preference", "gouts": "preference",
     "tache": "tache", "taches": "tache", "task": "tache", "todo": "tache", "rappel": "tache",
+    "foyer": "foyer", "maison": "foyer", "famille": "foyer", "household": "foyer",
+    "relation": "relation", "relations": "relation", "lien": "relation",
     "ephemere": "ephemere", "ephemeres": "ephemere", "temporaire": "ephemere", "temp": "ephemere",
 }
 MAX_TEXT = 500
@@ -94,12 +97,14 @@ class Store:
         self.by_tag = {}
         self._total_len = 0
         self.last_compact = None
+        self.active = ""           # id de l'interlocuteur actif ; vide = Inconnue (rien n'est mémorisé)
 
         self.ns_dir.mkdir(parents=True, exist_ok=True)
         for d in (self.archive_dir, self.backup_dir):
             d.mkdir(exist_ok=True)
         if lock_instance:
             self._acquire_instance_lock()
+        self.personnes = Personnes(self.ns_dir, iso, self.clock, self.activity)
         t0 = time.perf_counter()
         self._load()
         ms = (time.perf_counter() - t0) * 1000
@@ -231,10 +236,12 @@ class Store:
                 "id": str(obj["id"]), "t": mtype, "txt": txt,
                 "imp": float(obj.get("imp", scoring.START_IMP[mtype])),
                 "tags": parse_tags(obj.get("tags", [])),
-                "h": obj.get("h") or self._hash(txt),
+                "h": obj.get("h") or self._hash(txt, str(obj.get("o") or "")),
                 "c": created, "last": parse_iso(obj.get("last")) or created,
                 "hits": int(obj.get("hits", 0)), "s": float(obj.get("s", 1.0)),
                 "src": str(obj.get("src", "llm")),
+                "o": str(obj.get("o") or ""),                       # propriétaire ; vide = partagé
+                "rel": obj.get("rel") if isinstance(obj.get("rel"), dict) else None,   # relation : {a, l, b, ia, ib}
             }
         except (KeyError, TypeError, ValueError):
             self.activity.warn("enregistrement invalide ignoré")
@@ -243,11 +250,14 @@ class Store:
     def _record_to_json(self, rec):
         return {"id": rec["id"], "t": rec["t"], "txt": rec["txt"], "imp": rec["imp"], "tags": rec["tags"],
                 "h": rec["h"], "c": iso(rec["c"]), "last": iso(rec["last"]), "hits": rec["hits"],
-                "s": round(rec["s"], 3), "src": rec["src"]}
+                "s": round(rec["s"], 3), "src": rec["src"], "o": rec.get("o", ""), **({"rel": rec["rel"]} if rec.get("rel") else {})}
 
     @staticmethod
-    def _hash(text):
-        return hashlib.sha256(textproc.normalize(text).encode("utf-8")).hexdigest()[:16]
+    def _hash(text, owner=""):
+        """Empreinte du texte normalisé. Pour un souvenir privé elle inclut le propriétaire ; sans propriétaire, c'est
+        l'empreinte d'origine (les souvenirs créés avant les interlocuteurs gardent donc le même hash)."""
+        base = textproc.normalize(text)
+        return hashlib.sha256((f"{owner}|{base}" if owner else base).encode("utf-8")).hexdigest()[:16]
 
     # ---------------------------------------------------------------- application des événements
     def _apply(self, ev):
@@ -373,8 +383,10 @@ class Store:
         return False
 
     # ---------------------------------------------------------------- opérations
-    def add(self, text, mtype="fait", tags="", src="llm"):
-        """Retourne (statut, enregistrement). statut : 'added' | 'duplicate' | 'locked' | 'rate_limit' | 'empty'."""
+    def add(self, text, mtype="fait", tags="", src="llm", owner=None, rel=None):
+        """Retourne (statut, enregistrement). statut : 'added' | 'duplicate' | 'locked' | 'rate_limit' | 'empty' | 'unknown_speaker'.
+        `owner` : propriétaire explicite (page de gestion) ; sinon l'interlocuteur actif. Types partagés (foyer, relation) : sans
+        propriétaire. Interlocuteur inconnu : rien n'est mémorisé (sauf par la page de gestion, qui désigne un propriétaire)."""
         with self.lock:
             self._check_external_changes()
             if (err := self._writable()):
@@ -382,10 +394,19 @@ class Store:
             text = (text or "").strip()[:MAX_TEXT]
             if not textproc.normalize(text):
                 return "empty", None
-            h = self._hash(text)
+            mtype = normalize_type(mtype)
+            shared = mtype in scoring.SHARED_TYPES
+            who = "" if shared else (self.active if owner is None else owner)
+            if not shared and not who:
+                self.activity.log("add_refused", reason="unknown_speaker", src=src)
+                return "unknown_speaker", None
+            if shared and not self.active and owner is None and src == "llm":
+                self.activity.log("add_refused", reason="unknown_speaker", src=src)
+                return "unknown_speaker", None          # même un fait du foyer doit venir d'une personne identifiée
+            h = self._hash(text, who)
             existing = self.records.get(self.hashes.get(h))
             now = self.clock()
-            if existing:
+            if existing and self.visible_to(existing, who):
                 existing["s"] = min(scoring.S_MAX, existing["s"] + scoring.DUP_BOOST)
                 existing["last"] = now
                 self._append({"op": "touch", "ts": iso(now), "id": existing["id"], "boost": scoring.DUP_BOOST}, sync=False)
@@ -393,14 +414,16 @@ class Store:
                 return "duplicate", existing
             if self._rate_limited(src):
                 return "rate_limit", None
-            mtype = normalize_type(mtype)
+            tag_list = parse_tags(tags)
+            if mtype == "relation" and "core" not in tag_list:
+                tag_list.append("core")                 # une relation ne décroît jamais
             rec = {"id": "m_" + secrets.token_hex(3), "t": mtype, "txt": text, "imp": float(scoring.START_IMP[mtype]),
-                   "tags": parse_tags(tags), "h": h, "c": now, "last": now, "hits": 0, "s": 1.0, "src": src}
+                   "tags": tag_list, "h": h, "c": now, "last": now, "hits": 0, "s": 1.0, "src": src, "o": who, "rel": rel}
             while rec["id"] in self.records:
                 rec["id"] = "m_" + secrets.token_hex(3)
             self._index_add(rec)
             self._append({"op": "add", "ts": iso(now), "r": self._record_to_json(rec)}, sync=True)
-            self.activity.log("add", id=rec["id"], t=mtype, imp=rec["imp"], dup=False, src=src, n=len(text))
+            self.activity.log("add", id=rec["id"], t=mtype, imp=rec["imp"], dup=False, src=src, n=len(text), o=who)
             self._maybe_compact()
             return "added", rec
 
@@ -418,14 +441,18 @@ class Store:
             self.activity.log("update", id=rid, fields=sorted(clean), src=src)
             return True
 
-    def delete(self, rid, why="user", src="llm"):
-        """Oubli : le souvenir quitte l'index mais reste dans l'archive (jamais perdu en silence)."""
+    def delete(self, rid, why="user", src="llm", force=False):
+        """Oubli : le souvenir quitte l'index mais reste dans l'archive (jamais perdu en silence).
+        L'interlocuteur n'oublie que ses souvenirs et le partagé (si identifié) ; `force` : page de gestion, sans restriction."""
         with self.lock:
             self._check_external_changes()
             if self._writable():
                 return False
             rec = self.records.get(rid)
             if not rec:
+                return False
+            if not force and not (self.visible_to(rec) and (rec.get("o") or self.active)):
+                self.activity.log("delete_refused", id=rid, src=src)
                 return False
             self._archive(rec, why)
             self._index_remove(rec)
@@ -464,6 +491,11 @@ class Store:
             os.fsync(f.fileno())
 
     # ---------------------------------------------------------------- lecture / recherche
+    def visible_to(self, rec, owner=None):
+        """Un souvenir est visible de son propriétaire et de tous s'il est partagé. Interlocuteur inconnu : le partagé seulement."""
+        owner = self.active if owner is None else owner
+        return not rec.get("o") or rec["o"] == owner
+
     def eff(self, rec, now=None):
         return scoring.effective(rec["imp"], rec["s"], rec["last"], now or self.clock(), rec["t"], rec["tags"])
 
@@ -472,15 +504,17 @@ class Store:
             return "protege"
         return "actif" if self.eff(rec, now) >= scoring.HIDE_BELOW else "masque"
 
-    def search(self, question, limit=5, touch=True, src="llm"):
-        """Souvenirs classés par pertinence. Question vide : les plus importants et récents. Les masqués sont exclus."""
+    def search(self, question, limit=5, touch=True, src="llm", owner=None, everything=False):
+        """Souvenirs classés par pertinence. Question vide : les plus importants et récents. Les masqués sont exclus.
+        Visibles : ceux de l'interlocuteur actif (ou `owner`) et le partagé. `everything` : tous (page de gestion)."""
         with self.lock:
             t0 = time.perf_counter()
             self._check_external_changes()
             now = self.clock()
             limit = max(1, min(int(limit or 5), 10))
             tokens = textproc.analyze(question)
-            visible = lambda r: self.eff(r, now) >= scoring.HIDE_BELOW
+            who = self.active if owner is None else owner
+            visible = lambda r: self.visible_to(r, who) and self.eff(r, now) >= scoring.HIDE_BELOW
             scored = []
             if tokens:
                 n_docs = max(len(self.records), 1)
@@ -514,6 +548,8 @@ class Store:
                 pool = heapq.nlargest(max(limit * 8, 40), raw.items(), key=lambda kv: kv[1])
                 for rid, value in pool:
                     rec = self.records[rid]
+                    if not everything and not self.visible_to(rec, who):
+                        continue
                     eff = self.eff(rec, now)
                     if eff < scoring.HIDE_BELOW:
                         continue
@@ -522,7 +558,8 @@ class Store:
                 # Aucune correspondance (ou question vide) : on propose les souvenirs les plus importants
                 # Sans parcourir toute la mémoire : on retient d'abord les plus importants à la création (heapq), puis on évalue
                 # leur importance effective. Les milliers d'autres ne pourraient pas passer devant.
-                candidates = heapq.nlargest(max(limit * 8, 40), self.records.values(), key=lambda r: r["imp"] * r["s"])
+                pool_src = self.records.values() if everything else (r for r in self.records.values() if self.visible_to(r, who))
+                candidates = heapq.nlargest(max(limit * 8, 40), pool_src, key=lambda r: r["imp"] * r["s"])
                 pool = [(self.eff(r, now), r["last"], r) for r in candidates]
                 pool = [p for p in pool if p[0] >= scoring.HIDE_BELOW]
                 pool.sort(key=lambda p: (p[0], p[1]), reverse=True)

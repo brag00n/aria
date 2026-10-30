@@ -79,10 +79,13 @@ class StoreCase(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def make(self, **kw):
+    def make(self, speaker="p0", **kw):
+        """Store de test. Par défaut un interlocuteur est actif (sans cela, plus rien ne se mémorise) ; speaker="" = Inconnue."""
         kw.setdefault("clock", self.clock)
         kw.setdefault("lock_instance", False)
-        return store_mod.Store(self.dirs, "default", **kw)
+        s = store_mod.Store(self.dirs, "default", **kw)
+        s.active = speaker
+        return s
 
 
 class StoreTests(StoreCase):

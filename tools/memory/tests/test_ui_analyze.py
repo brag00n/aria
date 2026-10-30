@@ -30,6 +30,7 @@ class UiCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="memui_"))
         self.activity = Activity(self.tmp / "logs")
         self.store = store_mod.Store(self.tmp, "default", activity=self.activity, lock_instance=False)
+        self.store.active = "p0"
         self.port = free_port()
         self.httpd = ui.start(self.store, self.activity, self.port, self.token)
 
@@ -133,6 +134,7 @@ class AnalyzeTests(unittest.TestCase):
         try:
             act = Activity(tmp / "logs")
             s = store_mod.Store(tmp, "default", activity=act, lock_instance=False)
+            s.active = "p0"
             _, a = s.add("Marion préfère 19 degrés", "préférence")
             s.add("Le compteur Linky est l'équipement 270")
             s.add("Marion préfère 19 degrés")

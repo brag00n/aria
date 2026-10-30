@@ -8,9 +8,11 @@ dernier rappel. Les souvenirs protégés (tags core, identity, pinned) ne décro
 import math
 
 # Demi-vie en jours, par type
-HALF_LIFE = {"ephemere": 10, "tache": 30, "preference": 90, "fait": 120}
+HALF_LIFE = {"ephemere": 10, "tache": 30, "preference": 90, "fait": 120, "foyer": 120, "relation": 120}
 # Note de départ, par type
-START_IMP = {"preference": 6, "fait": 5, "tache": 4, "ephemere": 2}
+START_IMP = {"preference": 6, "fait": 5, "tache": 4, "ephemere": 2, "foyer": 5, "relation": 7}
+# Types partagés par tout le foyer (propriétaire vide) ; les autres appartiennent à l'interlocuteur qui les a donnés
+SHARED_TYPES = frozenset(("foyer", "relation"))
 PROTECTED = frozenset(("core", "identity", "pinned"))
 
 HIDE_BELOW = 1.0        # sous ce seuil : caché des recherches
