@@ -192,6 +192,30 @@ class Interlocuteurs:
                 break
         return chosen[:maximum]
 
+    # ------------------------------------------------------------------ rattrapage des anciens liens
+    def rattraper(self):
+        """Remise à niveau, au démarrage : les liens enregistrés avant les fiches de personnes n'ont pas de fiche pour leurs extrémités.
+        Crée les fiches manquantes (personnes « citées ») et renseigne leur sexe quand un lien le dit, SANS jamais écraser une valeur
+        déjà présente. Idempotent : un second passage ne change rien. Retourne (fiches créées, sexes renseignés)."""
+        crees = sexes = 0
+        for rec in list(self.store.records.values()):
+            rel = rec.get("rel")
+            if rec["t"] != "relation" or not rel:
+                continue
+            for cote, sexe in (("a", liens.sexe_du_lien(rel.get("l", ""))), ("b", "")):
+                nom = rel.get(cote, "")
+                avant = len(self.store.personnes.items)
+                sexe_avant = {p["id"]: p.get("sexe", "") for p in self.store.personnes.items}
+                person = self.store.personnes.reference(nom, sexe=sexe)
+                if person is None:
+                    continue
+                crees += len(self.store.personnes.items) - avant
+                if sexe_avant.get(person["id"], "x") == "" and person.get("sexe"):
+                    sexes += 1                                  # une fiche existante sans sexe en reçoit un
+        if crees or sexes:
+            self.store.activity.log("rattrapage", fiches=crees, sexes=sexes)
+        return crees, sexes
+
     # ------------------------------------------------------------------ moteur de parenté
     def famille(self):
         """Famille déduite des relations stockées. Le sexe d'une personne vient de sa fiche (champ modifiable), sinon des mots des
@@ -227,15 +251,25 @@ class Interlocuteurs:
         moi = "id:" + active["id"]
         fam = self.famille()
         cibles = [i for i in self._names_in(question) if i != moi]
-        if not cibles:                                    # aucune personne citée : les proches directs de l'interlocuteur
-            cibles = [i for i in {x for ens in (fam.parents, fam.conjoints) for k, v in ens.items() for x in ({k} | set(v))}
-                      if i != moi]
+        if not cibles or self._question_de_famille(question):
+            # Aucune personne citée, ou question sur toute la famille (« mes enfants », « mes parents », « ma famille »...) :
+            # tous les proches de l'interlocuteur, y compris ceux que la question ne nomme pas
+            tous = {x for ens in (fam.parents, fam.conjoints, fam.fratrie, fam.demi) for k, v in ens.items() for x in ({k} | set(v))}
+            cibles = sorted(set(cibles) | (tous - {moi}))
         phrases = []
         for cible in cibles:
             nom_lien = parente.lien(fam, moi, cible)
             if nom_lien and nom_lien != "la même personne":
                 phrases.append(f"{self._libelle(cible, fam)} est {nom_lien} de {self._libelle(moi, fam)}")
         return sorted(set(phrases))[:maximum]
+
+    _MOTS_FAMILLE = frozenset(("enfant", "enfants", "fils", "fille", "filles", "parent", "parents", "pere", "mere", "frere", "freres",
+                               "soeur", "soeurs", "famille", "proche", "proches", "conjoint", "epoux", "epouse", "mari", "femme",
+                               "connaissance", "connaissances", "grand", "oncle", "tante", "cousin", "cousine", "neveu", "niece"))
+
+    def _question_de_famille(self, question):
+        """La question porte-t-elle sur la famille entière de l'interlocuteur plutôt que sur une personne précise ?"""
+        return bool(set(key(question).split()) & self._MOTS_FAMILLE)
 
     def _libelle(self, ident, fam):
         if ident.startswith("id:"):

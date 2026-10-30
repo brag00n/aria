@@ -748,5 +748,103 @@ class ParenteBranchementTests(Base):
         self.assertIn("n'en déduis jamais d'autres", self.i.contexte())
 
 
+class RattrapageEtFamilleTests(Base):
+    """Remise à niveau des anciens liens et questions portant sur toute la famille."""
+
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+
+    def anciens_liens(self):
+        """Liens enregistrés avant les fiches de personnes : écrits directement dans le journal, comme avant le moteur."""
+        from liens import analyser
+        self.i.identifier("Olivier", "Cousinier")
+        for a, l, b in [("Tiphaine", "femme de", "Olivier Cousinier"), ("Marion", "fille de", "Olivier"),
+                        ("Tiphaine", "mère de", "Emma")]:
+            info = analyser(a, l, b)
+            self.s.add(f"{a} est {l} {b}", "relation", "", src="llm",
+                       rel={"a": a, "l": l, "b": b, "ia": "", "ib": "", "cle": info["cle"], "inv": info["inv"]})
+
+    def fiches(self):
+        return {p["nom"]: p for p in self.s.personnes.items}
+
+    def test_cree_les_fiches_manquantes_et_renseigne_les_sexes(self):
+        self.anciens_liens()
+        self.assertEqual(set(self.fiches()), {"Olivier"})
+        crees, sexes = self.i.rattraper()
+        fiches = self.fiches()
+        self.assertEqual(set(fiches), {"Olivier", "Tiphaine", "Marion", "Emma"})
+        self.assertEqual((crees, sexes), (3, 0))                       # fiches neuves : le sexe est posé à la création
+        self.assertEqual((fiches["Tiphaine"]["sexe"], fiches["Marion"]["sexe"], fiches["Emma"]["sexe"]), ("f", "f", ""))
+        self.assertTrue(all(fiches[n].get("ref") for n in ("Tiphaine", "Marion", "Emma")))
+
+    def test_idempotent(self):
+        self.anciens_liens()
+        self.i.rattraper()
+        self.assertEqual(self.i.rattraper(), (0, 0))
+        self.assertEqual(len(self.s.personnes.items), 4)
+
+    def test_un_sexe_saisi_a_la_main_n_est_jamais_ecrase(self):
+        self.anciens_liens()
+        self.s.personnes.add("Tiphaine", sexe="m")                    # volontairement contraire au lien
+        self.i.rattraper()
+        self.assertEqual(self.fiches()["Tiphaine"]["sexe"], "m")
+
+    def test_une_fiche_existante_sans_sexe_en_recoit_un(self):
+        self.anciens_liens()
+        self.s.personnes.add("Tiphaine")
+        crees, sexes = self.i.rattraper()
+        self.assertEqual(self.fiches()["Tiphaine"]["sexe"], "f")
+        self.assertEqual(sexes, 1)
+
+    def test_ne_cree_pas_de_doublon_pour_une_personne_deja_interlocutrice(self):
+        self.anciens_liens()
+        self.i.identifier("Marion", "Cousinier")
+        self.i.rattraper()
+        self.assertEqual(len([p for p in self.s.personnes.items if p["nom"] == "Marion"]), 1)
+        self.assertEqual(self.fiches()["Marion"]["sexe"], "f")
+
+    def test_sans_liens_rien_a_faire(self):
+        self.assertEqual(self.i.rattraper(), (0, 0))
+
+    def test_les_citees_restent_hors_de_la_liste_deroulante(self):
+        self.anciens_liens()
+        self.i.rattraper()
+        self.assertEqual([x["label"] for x in self.s.personnes.listing()], ["Olivier"])
+
+    # ---- point 2 : questions sur toute la famille
+    def foyer(self):
+        self.i.identifier("Olivier", "Cousinier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        self.i.identifier("Marion", "Cousinier")
+        self.i.relier("moi", "fille de", "Olivier")
+        self.i.relier("Tiphaine", "mère de", "Marion Cousinier")
+        self.i.relier("Tiphaine", "mère de", "Emma")
+        self.i.identifier("Olivier")
+
+    def test_mes_enfants_inclut_les_enfants_non_nommes(self):
+        self.foyer()
+        phrases = self.i.liens_calcules("ais-je des enfants ?")
+        self.assertIn("Marion est la fille de Olivier", phrases)
+        self.assertIn("Emma est un enfant de Olivier", phrases)         # Emma n'est pas nommée dans la question
+
+    def test_une_question_sur_une_personne_precise_ne_donne_que_cette_personne(self):
+        self.foyer()
+        self.assertEqual(self.i.liens_calcules("Que sais-tu de Tiphaine ?"), ["Tiphaine est la femme de Olivier"])
+
+    def test_question_de_famille_avec_un_prenom_garde_aussi_les_proches(self):
+        self.foyer()
+        phrases = self.i.liens_calcules("quels sont les enfants de Tiphaine ?")
+        self.assertIn("Marion est la fille de Olivier", phrases)
+
+    def test_mots_de_famille_reconnus(self):
+        for q in ("mes parents", "ma famille", "mes frères et sœurs", "qui est mon mari ?", "mes connaissances"):
+            self.assertTrue(self.i._question_de_famille(q), q)
+        for q in ("Quel temps fait-il ?", "allume la lumière", "Que sais-tu de Tiphaine ?"):
+            self.assertFalse(self.i._question_de_famille(q), q)
+
+
 if __name__ == "__main__":
     unittest.main()

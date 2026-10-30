@@ -38,6 +38,11 @@ activity = Activity(DATA_DIR / "logs",
                     level=os.environ.get("MEMORY_LOG_LEVEL", "info"))
 store = store_mod.Store(DATA_DIR, NAMESPACE, activity=activity)
 interlocuteurs = Interlocuteurs(store)
+if not store.read_only:
+    try:
+        interlocuteurs.rattraper()          # fiches et sexes des personnes citées dans d'anciens liens (idempotent)
+    except Exception as e:                  # jamais bloquant : le serveur doit démarrer
+        activity.warn(f"rattrapage des fiches impossible : {e}")
 
 mcp = FastMCP("memoire")
 
