@@ -46,6 +46,15 @@ def _famille(lien):
 def type_lien(lien):
     """Famille d'un lien : 'conjoint', 'parent' (A est le parent de B), 'enfant' (A est l'enfant de B), 'fratrie', 'ami'...
     ou '' pour un lien non reconnu (belle-mère, demi-frère, ex-femme... : gardés en texte libre)."""
+    mots = set(textproc.normalize(lien).split())
+    if "demi" in mots and mots & {"frere", "soeur"}:
+        return "demi"                                  # « demi-sœur de » : déclaré, il l'emporte sur la présomption
+    if mots & {"belle", "beau"}:
+        if mots & {"pere", "mere", "parent"}:
+            return "beauparent"                        # « A est le beau-père / la belle-mère de B »
+        if mots & {"fils", "fille", "enfant"}:
+            return "beauenfant"                        # « A est le beau-fils / la belle-fille de B »
+        return ""                                      # beau-frère, belle-sœur : déduits des autres liens
     famille = _famille(lien)
     return famille[0] if famille else ""
 

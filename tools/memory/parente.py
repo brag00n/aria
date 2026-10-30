@@ -24,6 +24,8 @@ class Famille:
         self.parents = {}      # enfant -> {parents}
         self.conjoints = {}    # personne -> {conjoints}
         self.fratrie = {}      # personne -> {frères/sœurs déclarés sans parent commun connu}
+        self.demi = {}         # personne -> {demi-frères/sœurs DÉCLARÉS}
+        self.beau = {}         # enfant -> {beaux-parents DÉCLARÉS}
         self.sexe = {}         # identité -> 'f' | 'm'
         self.noms = {}         # identité -> libellé affichable
 
@@ -40,6 +42,13 @@ class Famille:
     def ajouter_fratrie(self, a, b):
         self.fratrie.setdefault(a, set()).add(b)
         self.fratrie.setdefault(b, set()).add(a)
+
+    def ajouter_demi(self, a, b):
+        self.demi.setdefault(a, set()).add(b)
+        self.demi.setdefault(b, set()).add(a)
+
+    def ajouter_beau(self, beau_parent, beau_enfant):
+        self.beau.setdefault(beau_enfant, set()).add(beau_parent)
 
     def enfants(self, parent):
         return {e for e, ps in self.parents.items() if parent in ps}
@@ -65,6 +74,12 @@ def construire(relations, resoudre, sexe_de):
             fam.ajouter_conjoint(a, b)
         elif t == "fratrie":
             fam.ajouter_fratrie(a, b)
+        elif t == "demi":            # « A est le demi-frère / la demi-sœur de B » : déclaré, donc prioritaire sur la présomption
+            fam.ajouter_demi(a, b)
+        elif t == "beauparent":      # « A est le beau-père / la belle-mère de B »
+            fam.ajouter_beau(a, b)
+        elif t == "beauenfant":      # « A est le beau-fils / la belle-fille de B »
+            fam.ajouter_beau(b, a)
         for ident in (a, b):
             s = sexe_de(ident)
             if s:
@@ -74,6 +89,27 @@ def construire(relations, resoudre, sexe_de):
 
 # ---------------------------------------------------------------------------------------------------- chemins
 
+def parents_de(fam, p):
+    """Parents de p : ceux qui sont connus, plus un parent PRÉSUMÉ. On favorise toujours le lien le plus proche : si p n'a qu'un
+    parent connu et que ce parent n'a qu'un seul conjoint, ce conjoint est présumé être l'autre parent (« fille », « père »,
+    « sœur ») plutôt qu'un beau-parent (« belle-fille ») ou une demi-fratrie. La présomption tombe dès que :
+    - un autre parent est connu, ou le parent connu a plusieurs conjoints (rien ne permet de choisir) ;
+    - le lien « beau-parent » est déclaré pour ce conjoint, ou un demi-frère / une demi-sœur est déclaré(e) via le parent connu."""
+    connus = set(fam.parents.get(p, ()))
+    if len(connus) != 1:
+        return connus
+    (parent,) = connus
+    conjoints = fam.conjoints.get(parent, set())
+    if len(conjoints) != 1:
+        return connus
+    (conjoint,) = conjoints
+    if conjoint == p or conjoint in fam.conjoints.get(p, ()) or conjoint in fam.beau.get(p, ()):
+        return connus
+    if any(parent in fam.parents.get(d, ()) for d in fam.demi.get(p, ())):
+        return connus
+    return connus | {conjoint}
+
+
 def _ancetres(fam, personne, limite=6):
     """{ancêtre: génération} pour la personne elle-même (0) et ses ancêtres, en largeur d'abord (le plus proche d'abord)."""
     vus = {personne: 0}
@@ -81,7 +117,7 @@ def _ancetres(fam, personne, limite=6):
     for gen in range(1, limite + 1):
         suivant = []
         for p in front:
-            for parent in fam.parents.get(p, ()):
+            for parent in parents_de(fam, p):
                 if parent not in vus:
                     vus[parent] = gen
                     suivant.append(parent)
@@ -194,12 +230,20 @@ def lien(fam, a, b):
     if b in fam.conjoints.get(a, ()):
         return _g(sb, "le mari", "la femme", "le conjoint ou la conjointe")
 
+    # Demi-fratrie et beaux-parents DÉCLARÉS : ils l'emportent sur la présomption
+    if b in fam.demi.get(a, ()):
+        return _g(sb, "le demi-frère", "la demi-sœur", "un demi-frère ou une demi-sœur")
+    if b in fam.beau.get(a, ()):
+        return _g(sb, "le beau-père", "la belle-mère", "un beau-parent")
+    if a in fam.beau.get(b, ()):
+        return _g(sb, "le beau-fils", "la belle-fille", "un beau-fils ou une belle-fille")
+
     sang = _parente_sang(fam, a, b)
     if sang:
         ga, gb, communs = sang
         if ga == 1 and gb == 1:
-            # frère/sœur de sang : mêmes deux parents, sinon demi-fratrie
-            if len(communs) < 2 and (len(fam.parents.get(a, ())) > 1 or len(fam.parents.get(b, ())) > 1):
+            # frère/sœur de sang : mêmes deux parents (connus ou présumés), sinon demi-fratrie
+            if len(communs) < 2 and (len(parents_de(fam, a)) > 1 or len(parents_de(fam, b)) > 1):
                 return _g(sb, "le demi-frère", "la demi-sœur", "un demi-frère ou une demi-sœur")
         return _libelle_sang(ga, gb, sb)
 

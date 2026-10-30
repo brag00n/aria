@@ -40,15 +40,51 @@ class LiensDeBase(unittest.TestCase):
         self.assertEqual(self.lien("tiphaine", "olivier"), "le mari")
         self.assertEqual(self.lien("olivier", "tiphaine"), "la femme")
 
-    def test_demi_soeur_quand_un_seul_parent_commun(self):
-        """Emma est la fille de Tiphaine seule ; Marion de Tiphaine ET d'Olivier : demi-sœurs."""
-        self.assertEqual(self.lien("marion", "emma"), "la demi-sœur")
-        self.assertEqual(self.lien("emma", "marion"), "la demi-sœur")
+    def test_presomption_la_fille_du_couple_plutot_que_la_belle_fille(self):
+        """Emma n'a que Tiphaine comme parent connu, et Tiphaine n'a qu'un conjoint (Olivier) : on présume qu'Emma est
+        aussi sa fille. « fille » et « père » l'emportent sur « belle-fille » et « beau-père »."""
+        self.assertEqual(self.lien("olivier", "emma"), "la fille")
+        self.assertEqual(self.lien("emma", "olivier"), "le père")
 
-    def test_belle_fille_et_beau_pere_par_alliance_seulement(self):
-        """Emma n'a pas Olivier pour père connu : elle est la belle-fille d'Olivier ; lui est son beau-père."""
-        self.assertEqual(self.lien("olivier", "emma"), "la belle-fille")
-        self.assertEqual(self.lien("emma", "olivier"), "le beau-père")
+    def test_presomption_la_soeur_plutot_que_la_demi_soeur(self):
+        self.assertEqual(self.lien("marion", "emma"), "la sœur")
+        self.assertEqual(self.lien("emma", "marion"), "la sœur")
+
+    def test_declaration_demi_soeur_corrige_la_presomption(self):
+        f = famille(("tiphaine", "conjoint", "olivier"), ("tiphaine", "parent", "marion"), ("tiphaine", "parent", "emma"),
+                    ("olivier", "parent", "marion"), ("marion", "demi", "emma"), sexes=SEXES)
+        self.assertEqual(parente.lien(f, "marion", "emma"), "la demi-sœur")
+        self.assertEqual(parente.lien(f, "emma", "marion"), "la demi-sœur")
+        self.assertEqual(parente.lien(f, "olivier", "emma"), "la belle-fille")        # la déclaration retire aussi le père présumé
+
+    def test_declaration_belle_fille_corrige_la_presomption(self):
+        f = famille(("tiphaine", "conjoint", "olivier"), ("tiphaine", "parent", "emma"), ("emma", "beauenfant", "olivier"),
+                    sexes=SEXES)
+        self.assertEqual(parente.lien(f, "olivier", "emma"), "la belle-fille")
+        self.assertEqual(parente.lien(f, "emma", "olivier"), "le beau-père")
+
+    def test_declaration_beau_pere(self):
+        f = famille(("tiphaine", "conjoint", "olivier"), ("tiphaine", "parent", "emma"), ("olivier", "beauparent", "emma"),
+                    sexes=SEXES)
+        self.assertEqual(parente.lien(f, "emma", "olivier"), "le beau-père")
+
+    def test_pas_de_presomption_si_le_parent_a_plusieurs_conjoints(self):
+        """Tiphaine a eu deux conjoints : impossible de savoir lequel est le père, donc on ne présume rien."""
+        f = famille(("tiphaine", "conjoint", "olivier"), ("tiphaine", "conjoint", "paul"), ("tiphaine", "parent", "emma"),
+                    sexes=SEXES)
+        self.assertEqual(parente.lien(f, "emma", "olivier"), "le beau-père")
+        self.assertEqual(parente.lien(f, "emma", "paul"), "le beau-père")
+
+    def test_pas_de_presomption_si_deux_parents_connus(self):
+        f = famille(("tiphaine", "conjoint", "olivier"), ("tiphaine", "parent", "emma"), ("paul", "parent", "emma"),
+                    sexes=SEXES)
+        self.assertEqual(parente.lien(f, "emma", "olivier"), "le beau-père")           # Paul est le père connu
+        self.assertEqual(parente.lien(f, "emma", "paul"), "le père")
+
+    def test_pas_de_presomption_sans_conjoint_connu(self):
+        f = famille(("tiphaine", "parent", "emma"), ("tiphaine", "parent", "marion"), sexes=SEXES)
+        self.assertEqual(parente.lien(f, "marion", "emma"), "la sœur")                  # deux filles de la même mère : sœurs
+        self.assertEqual(parente.lien(f, "emma", "olivier"), "")
 
     def test_pas_de_belle_fille_pour_sa_propre_fille(self):
         """Le défaut réel du 30/10 : Marion est la fille de Tiphaine, jamais sa belle-fille."""
