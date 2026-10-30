@@ -105,8 +105,12 @@ class UiTests(UiCase):
         self.assertEqual(status, 415)
 
     def test_corps_trop_gros_refuse(self):
-        status, _ = self.call("POST", "/api/add", {"texte": "a" * 50_000})
-        self.assertEqual(status, 400)
+        try:
+            status, _ = self.call("POST", "/api/add", {"texte": "a" * 50_000})
+            self.assertEqual(status, 400)
+        except (ConnectionError, http.client.HTTPException):
+            pass        # le serveur a refusé le corps sans le lire puis coupé : le client peut voir la connexion se fermer
+        self.assertEqual(len(self.store.records), 0)        # dans tous les cas, rien n'a été enregistré
 
     def test_texte_html_stocke_tel_quel_sans_etre_interprete(self):
         evil = "<script>alert(1)</script> chatte"
@@ -117,6 +121,87 @@ class UiTests(UiCase):
 
     def test_route_inconnue(self):
         self.assertEqual(self.call("GET", "/api/nope")[0], 404)
+
+
+class UiPersonnesTests(UiCase):
+    def add_person(self, nom, compl=""):
+        return self.call("POST", "/api/personne/add", {"nom": nom, "compl": compl})[1]["id"]
+
+    def test_personnes_et_foyer_dans_la_liste(self):
+        a = self.add_person("Olivier", "Martin")
+        self.call("POST", "/api/add", {"texte": "Aime le café serré", "type": "preference", "o": a})
+        self.call("POST", "/api/add", {"texte": "Le portail est vert", "type": "foyer"})
+        _, rows = self.call("GET", "/api/personnes")
+        by_id = {r["id"]: r for r in rows}
+        self.assertEqual(by_id[a]["souvenirs"], 1)
+        self.assertEqual(by_id[""]["souvenirs"], 1)
+        self.assertTrue(by_id[""]["special"])
+
+    def test_la_page_peut_ajouter_pour_une_personne_sans_interlocuteur_actif(self):
+        a = self.add_person("Olivier")
+        self.store.active = ""
+        status, r = self.call("POST", "/api/add", {"texte": "Aime le thé", "type": "preference", "o": a})
+        self.assertEqual(r["statut"], "added")
+        _, rows = self.call("GET", "/api/memories")
+        self.assertEqual((rows[0]["o"], rows[0]["proprietaire"]), (a, "Olivier"))
+
+    def test_ajout_pour_une_personne_inconnue_refuse(self):
+        _, r = self.call("POST", "/api/add", {"texte": "Aime le thé", "type": "preference", "o": "p99"})
+        self.assertEqual(r["statut"], "personne_inconnue")
+        self.assertEqual(len(self.store.records), 0)
+
+    def test_attribuer_un_ancien_souvenir(self):
+        a = self.add_person("Tiphaine")
+        _, r = self.call("POST", "/api/add", {"texte": "Aime 21 degrés", "type": "foyer"})
+        rid = r["id"]
+        self.call("POST", "/api/update", {"id": rid, "type": "preference"})            # le foyer devient personnel...
+        self.assertTrue(self.call("POST", "/api/update", {"id": rid, "o": a})[1]["ok"])     # ... et est attribué
+        _, rows = self.call("GET", "/api/memories")
+        self.assertEqual(rows[0]["proprietaire"], "Tiphaine")
+        self.assertFalse(self.call("POST", "/api/update", {"id": rid, "o": "p99"})[1]["ok"])
+
+    def test_la_page_voit_tout_dans_la_recherche(self):
+        a = self.add_person("Olivier")
+        self.call("POST", "/api/add", {"texte": "Aime le café serré", "type": "preference", "o": a})
+        self.store.active = ""
+        _, rows = self.call("GET", "/api/memories?q=caf%C3%A9")
+        self.assertEqual(len(rows), 1)
+
+    def test_fusion_via_la_page(self):
+        a, b = self.add_person("Olivier", "Martin"), self.add_person("Olivier", "Dupont")
+        self.call("POST", "/api/add", {"texte": "Aime le thé", "type": "preference", "o": b})
+        _, r = self.call("POST", "/api/personne/merge", {"id": b, "vers": a})
+        self.assertEqual((r["ok"], r["deplaces"]), (True, 1))
+        self.assertEqual([p["id"] for p in self.call("GET", "/api/personnes")[1] if not p.get("special")], [a])
+
+    def test_supprimer_une_personne_avec_souvenirs_refuse(self):
+        a = self.add_person("Olivier")
+        self.call("POST", "/api/add", {"texte": "Aime le thé", "type": "preference", "o": a})
+        _, r = self.call("POST", "/api/personne/delete", {"id": a})
+        self.assertFalse(r["ok"])
+        self.assertIn("souvenirs", r["erreur"])
+
+    def test_renommer_une_personne(self):
+        a = self.add_person("Olivier")
+        self.assertTrue(self.call("POST", "/api/personne/update", {"id": a, "nom": "Olivier", "compl": "Cousinier", "surnom": "Oli"})[1]["ok"])
+        person = next(p for p in self.call("GET", "/api/personnes")[1] if p["id"] == a)
+        self.assertEqual((person["compl"], person["surnom"]), ("Cousinier", "Oli"))
+
+    def test_relations(self):
+        from interlocuteur import Interlocuteurs
+        i = Interlocuteurs(self.store)
+        i.identifier("Olivier")
+        i.relier("Tiphaine", "femme de", "moi")
+        _, rows = self.call("GET", "/api/relations")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["rel"]["a"], rows[0]["rel"]["l"]), ("Tiphaine", "femme de"))
+        self.assertEqual(rows[0]["proprietaire"], "Foyer (partagé)")
+
+    def test_la_page_peut_oublier_le_souvenir_d_un_autre(self):
+        a = self.add_person("Olivier")
+        _, r = self.call("POST", "/api/add", {"texte": "Aime le thé", "type": "preference", "o": a})
+        self.store.active = ""
+        self.assertTrue(self.call("POST", "/api/delete", {"id": r["id"]})[1]["ok"])
 
 
 class UiTokenTests(UiCase):

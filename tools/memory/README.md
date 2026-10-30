@@ -3,13 +3,25 @@
 Serveur MCP (stdio) autonome : il n'importe rien depuis Aria et n'utilise que la bibliothèque standard, plus le paquet `mcp`
 déjà présent dans l'image. Les données sont **100 % locales**, en JSONL lisible.
 
-## Outils exposés (3)
+## Outils exposés (5 au LLM + 1 réservé à l'interface)
 
 | Outil | Rôle |
 |---|---|
-| `memoriser(fait, type, tags)` | retient une information durable. `type` : `fait`, `preference`, `tache`, `ephemere` |
-| `rechercher_souvenir(question, limite)` | retrouve des souvenirs ; question vide = les plus importants |
+| `memoriser(fait, type, tags)` | retient une information de l'interlocuteur actif. `type` : `fait`, `preference`, `tache`, `ephemere` (privés) ou `foyer` (partagé). Refusé si l'interlocuteur est inconnu |
+| `rechercher_souvenir(question, limite)` | retrouve les souvenirs de l'interlocuteur actif et ceux du foyer ; question vide = les plus importants |
 | `oublier(id)` | oublie un souvenir (il reste dans l'archive) |
+| `identifier_interlocuteur(nom, complement, surnom)` | désigne (ou crée) la personne qui parle ; signale les homonymes |
+| `relier(personne_a, lien, personne_b)` | mémorise un lien entre deux personnes (« moi » = l'interlocuteur actif) |
+| `ui_etat(activer)` | **caché au LLM** (préfixe `ui_`) : interlocuteurs, actif et consigne du tour, pour l'interface d'Aria |
+
+## Interlocuteurs
+
+- L'**interlocuteur actif** vit dans le serveur (jamais dans les arguments d'un outil) : le LLM ne peut pas mémoriser « en tant que » quelqu'un d'autre. Au démarrage il est **Inconnue** ; Aria le resynchronise à chaque message avec la liste déroulante.
+- **Inconnue = rien n'est mémorisé.** Aria reçoit alors la consigne de demander à qui elle parle, puis d'appeler `identifier_interlocuteur`.
+- Chaque souvenir a un propriétaire `o` (id de personne). **Vide = partagé** : types `foyer` et `relation`, et tous les souvenirs créés avant les interlocuteurs. Chacun voit **les siens et le partagé**.
+- Les personnes sont dans `personnes.jsonl` (`id`, `nom`, `compl` = nom de famille, `surnom`). Deux « Olivier » se distinguent par `compl` : la liste affiche « Olivier (Martin) ».
+- Les **relations** (`t="relation"`, champ `rel` : `a`, `l`, `b`, `ia`, `ib`) sont partagées et ne décroissent jamais (tag `core`).
+- Rattacher un ancien souvenir, fusionner deux personnes, créer ou renommer : **page de gestion**, onglets Souvenirs, Personnes et Relations.
 
 ## Importance (calculée par le serveur, pas par le LLM)
 
@@ -22,6 +34,7 @@ déjà présent dans l'image. Les données sont **100 % locales**, en JSONL lisi
 ## Fichiers (`$MEMORY_DIR`, par défaut `models/memory/`, ignoré par git)
 
 ```
+default/personnes.jsonl    personnes connues (interlocuteurs)
 default/memories.jsonl     instantané (un souvenir par ligne), écrit seulement par la compaction
 default/events.jsonl       journal append-only depuis l'instantané
 default/archive/AAAA-MM.jsonl   oubliés et périmés : {"why","ts","r":{...souvenir...}}
@@ -35,7 +48,9 @@ Exemples de lignes :
 {"op":"add","ts":"…","r":{…souvenir complet…}}      {"op":"touch","ts":"…","id":"m_6edcbd"}
 {"op":"update","ts":"…","id":"m_6edcbd","set":{"tags":["pinned"]}}      {"op":"del","ts":"…","id":"m_6edcbd","why":"user"}
 ```
-`src` : `llm` (outil MCP), `ui` (page de gestion) ou `main` (ajouté à la main). Dates en UTC.
+`src` : `llm` (outil MCP), `ui` (page de gestion) ou `main` (ajouté à la main). Dates en UTC. `o` : propriétaire (vide = partagé).
+Ligne de relation : `{"id":"m_b2d7bb","t":"relation","txt":"Tiphaine est la femme de Olivier","o":"","rel":{"a":"Tiphaine","l":"femme de","b":"Olivier","ia":"p2","ib":"p1"},"tags":["core"],…}`.
+Personne : `{"id":"p1","nom":"Olivier","compl":"Cousinier","surnom":"Oli","c":"2026-10-30T18:42:26+00:00"}`.
 
 ## Consulter et modifier à la main
 
@@ -51,7 +66,8 @@ Restaurer une sauvegarde : `gunzip -c backups/memories-XXXX.jsonl.gz > memories.
 ## Page de gestion (optionnelle)
 
 Variable `MEMORY_UI_PORT` (ex. 7870) dans l'entrée `memoire` de `configs/default.json`. Sans elle, aucune page. La page liste,
-cherche, ajoute, modifie, protège (📌), oublie et restaure les souvenirs, et affiche statistiques et journal. Pour l'atteindre
+cherche, ajoute, modifie, **attribue à une personne**, protège (📌), oublie et restaure les souvenirs, gère les **personnes** (création,
+renommage, fusion) et les **relations**, et affiche archive, statistiques et journal. Elle voit tous les souvenirs, quel que soit l'interlocuteur actif. Pour l'atteindre
 depuis le PC hôte, publier le port dans `docker-compose.yml` **sur 127.0.0.1 uniquement** : `"127.0.0.1:7870:7870"`.
 Autres variables : `MEMORY_UI_TOKEN` (jeton, à passer en `?token=`), `MEMORY_UI_HOSTS` (noms d'hôte supplémentaires autorisés).
 
