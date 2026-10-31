@@ -168,10 +168,15 @@ def make_handler(store, activity, token):
                     if not rec or rec["t"] != "relation":
                         return self._json({"ok": False, "erreur": "ce souvenir n'est pas une relation"})
                     a, l, b = (" ".join(str(body["rel"].get(k, "")).split())[:60] for k in ("a", "l", "b"))
+                    if not l and body["rel"].get("t"):
+                        l = str(body["rel"]["t"])
                     if not (a and l and b) or a.lower() == b.lower():
                         return self._json({"ok": False, "erreur": "une relation a besoin de deux personnes différentes et d'un lien"})
-                    info = liens.analyser(a, l, b)
-                    changes["rel"] = {"a": a, "l": l, "b": b, "cle": info["cle"], "inv": info["inv"],
+                    t, l = liens.choisir(l, body["rel"].get("precision", ""))
+                    if t is None:
+                        return self._json({"ok": False, "erreur": "lien hors liste : " + ", ".join(liens.TYPES)})
+                    info = liens.analyser(a, l, b, t)
+                    changes["rel"] = {"a": a, "l": l, "b": b, "t": t, "cle": info["cle"], "inv": info["inv"],
                                       "ia": (store.personnes.find(a) or [{"id": ""}])[0]["id"] if len(store.personnes.find(a)) == 1 else "",
                                       "ib": (store.personnes.find(b) or [{"id": ""}])[0]["id"] if len(store.personnes.find(b)) == 1 else ""}
                     changes["txt"] = f"{a} est {liens.article(l)} {b}"
@@ -197,9 +202,16 @@ def make_handler(store, activity, token):
                 return self._json({"ok": bool(person), "id": person["id"] if person else None})
             if path == "/api/personne/update":
                 fields = {k: body[k] for k in ("nom", "compl", "surnom", "sexe") if k in body}
-                return self._json({"ok": store.personnes.update(rid, **fields)})
+                ok = store.personnes.update(rid, **fields)
+                if ok and ("nom" in fields or "compl" in fields):
+                    from interlocuteur import Interlocuteurs
+                    Interlocuteurs(store).synchroniser_noms(rid)      # les relations suivent le nouveau nom
+                return self._json({"ok": ok})
             if path == "/api/personne/merge":
                 moved = store.merge_persons(rid, str(body.get("vers", "")), src="ui")
+                if moved >= 0:
+                    from interlocuteur import Interlocuteurs
+                    Interlocuteurs(store).synchroniser_noms(str(body.get("vers", "")))      # les relations reprennent le nom de la personne gardée
                 return self._json({"ok": moved >= 0, "deplaces": max(moved, 0)})
             if path == "/api/personne/delete":
                 if any(r.get("o") == rid for r in store.records.values()):
@@ -293,6 +305,7 @@ function openModal(title, fields, info, onSave, retour){
 function closeModal(){ const m=$('#modal'); if(!m) return; m.remove(); const back = m._retour; m._retour = null; if(back) back(); }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 const optionsOf = (values, current) => values.map(v=>el('option',{value:v[0],selected:v[0]===current},v[1]));
+const LIENS_TYPES = [['conjoint','conjoint(e)'],['parent','parent'],['enfant','enfant'],['fratrie','frère ou sœur'],['demi','demi-frère ou demi-sœur'],['beauparent','beau-parent'],['beauenfant','beau-enfant'],['ami','ami(e)'],['collegue','collègue'],['voisin','voisin(e)'],['autre','autre (précision)']];
 const TYPES = [['fait','fait'],['preference','préférence'],['tache','tâche'],['ephemere','éphémère'],['foyer','foyer (partagé)'],['relation','relation (partagée)']];
 const peopleOptions = (current) => [['','— aucun (partagé) —'], ...PERSONS.filter(p=>!p.special).map(p=>[p.id,p.label])];
 
@@ -322,13 +335,17 @@ function editMemory(r){
 }
 function editRelation(r){
   const rel = r.rel || {a:'',l:'',b:''};
-  const a = el('input',{value:rel.a}), l = el('input',{value:rel.l}), b = el('input',{value:rel.b});
+  const a = el('input',{value:rel.a}), b = el('input',{value:rel.b});
+  const type = rel.t || 'autre';
+  const lt = el('select',{}, ...optionsOf(LIENS_TYPES, type));
+  const prec = el('input',{value:rel.l, placeholder:'précision (obligatoire pour « autre »)'});
   const sv = el('input',{type:'number',min:0.1,max:2,step:0.05,value:r.s});
   openModal('Modifier la relation', [
-    el('div',{className:'row'}, field('Personne', a), field('Lien (ex. femme de, frère de)', l), field('Personne', b)),
+    el('div',{className:'row'}, field('Personne', a), field('Lien (A est le … de B)', lt), field('Personne', b)),
+    field('Précision (texte du lien, ex. femme de, marraine de)', prec),
     field('Renfort (0,1 à 2)', sv),
   ], `Identifiant ${r.id} · créée ${r.cree} · ${r.hits} rappel(s). Le texte du souvenir est recalculé : « A est le lien de B ».`, async ()=>{
-    const x = await post('/api/update', {id:r.id, rel:{a:a.value,l:l.value,b:b.value}, s:sv.value});
+    const x = await post('/api/update', {id:r.id, rel:{a:a.value,l:lt.value,b:b.value,precision:prec.value}, s:sv.value});
     return x.ok ? true : (x.erreur || 'Impossible');
   });
 }

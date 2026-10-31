@@ -19,6 +19,7 @@ LIENS = {
     "femme": _CONJOINT_F, "epouse": _CONJOINT_F,
     "mari": _CONJOINT_M, "epoux": _CONJOINT_M,
     "conjoint": _CONJOINT_N, "conjointe": _CONJOINT_N, "compagnon": _CONJOINT_N, "compagne": _CONJOINT_N,
+    "marie": _CONJOINT_N, "mariee": _CONJOINT_N, "pacse": _CONJOINT_N, "pacsee": _CONJOINT_N,
     "frere": _FRATRIE, "soeur": _FRATRIE,
     "ami": ("ami", True, "ami(e) de", "ami amie"), "amie": ("ami", True, "ami(e) de", "ami amie"),
     "voisin": ("voisin", True, "voisin(e) de", "voisin voisine"), "voisine": ("voisin", True, "voisin(e) de", "voisin voisine"),
@@ -26,6 +27,58 @@ LIENS = {
     "pere": _PARENT, "mere": _PARENT, "parent": _PARENT,
     "fils": _ENFANT, "fille": _ENFANT, "enfant": _ENFANT,
 }
+
+
+# Liste FERMÉE des liens que le LLM peut enregistrer (« A est le <lien> de B »). Le sexe ne figure pas dans le lien : il vient de la fiche
+# de la personne. `autre` + une précision en texte libre couvre le reste (marraine, ex-femme...) sans calcul de parenté.
+TYPES = ("conjoint", "parent", "enfant", "fratrie", "demi", "beauparent", "beauenfant", "ami", "collegue", "voisin", "autre")
+
+# phrase par défaut de chaque lien (« A est <phrase> B »)
+PHRASES = {
+    "conjoint": "conjoint(e) de", "parent": "parent de", "enfant": "enfant de", "fratrie": "frère ou sœur de",
+    "demi": "demi-frère ou demi-sœur de", "beauparent": "beau-parent de", "beauenfant": "beau-enfant de",
+    "ami": "ami(e) de", "collegue": "collègue de", "voisin": "voisin(e) de",
+}
+
+# lien déclaré (demi, beau) : (famille, symétrique, phrase du sens inverse, mots à indexer)
+_DECLARES = {
+    "demi": ("demi", True, "demi-frère ou demi-sœur de", "demi frere soeur"),
+    "beauparent": ("beauparent", False, "le beau-enfant de", "beau fils fille enfant"),
+    "beauenfant": ("beauenfant", False, "le beau-parent de", "beau pere mere parent"),
+}
+
+
+def choisir(lien, precision=""):
+    """Traduit ce que donne le LLM en (type, texte du lien) : (None, '') si le lien n'est pas dans la liste fermée.
+    - un identifiant de la liste (« conjoint », « enfant »...) : le texte est la phrase par défaut, ou `precision` si elle dit la même chose
+      (« femme de » garde le sexe) ;
+    - `autre` : le texte est la précision libre (obligatoire) ; si elle correspond à un lien connu, c'est ce lien qui est retenu ;
+    - un mot courant de la table (« femme de », « marié à », « fille de »...) : filet de sécurité, le type est déduit du mot."""
+    mot = textproc.normalize(lien).replace(" ", "")
+    precision = " ".join(str(precision or "").split())[:40]
+    if mot in TYPES and mot != "autre":
+        texte = precision if precision and type_lien(precision) == mot else PHRASES[mot]
+        return mot, texte
+    if mot == "autre":
+        if not precision:
+            return None, ""
+        connu = type_lien(precision)
+        return (connu, precision) if connu else ("autre", precision)
+    texte = " ".join(str(lien or "").split())[:40]
+    connu = type_lien(texte)
+    return (connu, texte) if connu else (None, "")
+
+
+_PAR_TYPE = {"conjoint": _CONJOINT_N, "fratrie": _FRATRIE, "parent": _PARENT, "enfant": _ENFANT, "ami": LIENS["ami"],
+             "voisin": LIENS["voisin"], "collegue": LIENS["collegue"], **_DECLARES}
+
+
+def type_de(rel):
+    """Type d'une relation stockée : son champ `t` s'il y en a un, sinon déduit du texte (anciennes relations). '' = pas de calcul."""
+    t = (rel or {}).get("t", "")
+    if t:
+        return "" if t == "autre" else t
+    return type_lien((rel or {}).get("l", ""))
 
 
 # Mots qui rendent un lien composé : « belle-mère », « demi-frère », « ex-femme »... ne sont PAS « mère », « frère », « femme »
@@ -71,11 +124,12 @@ def sexe_du_lien(lien):
     return "f" if f and not m else "m" if m and not f else ""
 
 
-def analyser(a, lien, b):
+def analyser(a, lien, b, t=None):
     """Retourne {"cle": clé de déduplication, "invp": phrase du sens inverse ('' si inconnue), "inv": mots à indexer}.
     La clé est la même pour les deux sens d'un lien connu ; un lien inconnu garde sa forme telle quelle (sans sens inverse)."""
     ka, kb = textproc.normalize(a), textproc.normalize(b)
-    famille = _famille(lien)
+    t = t if t not in (None, "autre") else type_lien(lien) if t is None else ""
+    famille = _famille(lien) or _PAR_TYPE.get(t)
     if not famille:
         return {"cle": f"lien|{textproc.normalize(lien)}|{ka}|{kb}", "invp": "", "inv": ""}
     nom, symetrique, invp, inv = famille
@@ -84,8 +138,10 @@ def analyser(a, lien, b):
         cle = f"{nom}|{premier}|{second}"
     elif nom == "enfant":
         cle = f"parent|{kb}|{ka}"            # « A fils de B » = « B parent de A »
+    elif nom == "beauenfant":
+        cle = f"beauparent|{kb}|{ka}"
     else:
-        cle = f"parent|{ka}|{kb}"
+        cle = f"{nom}|{ka}|{kb}"
     return {"cle": cle, "invp": invp, "inv": inv}
 
 

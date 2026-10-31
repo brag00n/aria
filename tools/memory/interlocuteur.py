@@ -36,6 +36,8 @@ LIENS_COURANTS = ("femme", "mari", "epoux", "epouse", "fille", "fils", "pere", "
 
 # Familles de liens comptées comme « famille » (les autres sont des « connaissances ») ; sert à colorer le graphe de la page
 MAX_NIVEAU = 5
+LIEN_INCONNU = ("Lien inconnu. « personne_a est le <lien> de personne_b » : choisis lien parmi " + ", ".join(liens.TYPES[:-1])
+                + ", ou autre avec une precision (ex. marraine de). Le sexe vient de la fiche de la personne, pas du lien.")
 CATEGORIE_FAMILLE = frozenset(("conjoint", "parent", "enfant", "fratrie"))
 
 
@@ -94,23 +96,26 @@ class Interlocuteurs:
             return f"OK, {label} créé et actif. " + APRES_CREATION.format(nom=person["nom"])
         return f"OK, {label} est maintenant actif." + (" (Changement d'interlocuteur.)" if previous and previous != person["id"] else "")
 
-    def relier(self, personne_a, lien, personne_b):
-        """Outil relier : mémorise un lien entre deux personnes (« moi » = l'interlocuteur actif). Retourne le texte de réponse."""
+    def relier(self, personne_a, lien, personne_b, precision=""):
+        """Outil relier : mémorise « personne_a est le <lien> de personne_b » (« moi » = l'interlocuteur actif). `lien` appartient à une liste
+        fermée (liens.TYPES) ; `autre` + `precision` couvre le reste. Un lien hors liste est refusé avec la liste, pour que le LLM corrige."""
         a, b = self._designation(personne_a), self._designation(personne_b)
-        lien = " ".join(str(lien or "").split())[:40]
         if not (a and b and key(lien)):
-            return "Il manque une personne ou le lien (exemple : Tiphaine, femme de, Olivier)."
+            return "Il manque une personne ou le lien (exemple : Tiphaine, conjoint, Olivier)."
         if key(a) == key(b):
             return "Une personne ne peut pas être liée à elle-même."
-        self._fiches(a, lien, b)
-        ia, ib = self._id_of(a), self._id_of(b)
-        info = liens.analyser(a, lien, b)
+        t, lien = liens.choisir(lien, precision)
+        if t is None:
+            return LIEN_INCONNU
+        fa, fb = self._fiches(a, lien, b)
+        ia, ib = (fa or {}).get("id") or self._id_of(a), (fb or {}).get("id") or self._id_of(b)
+        info = liens.analyser(a, lien, b, t)
         # Le même lien redit dans l'autre sens (« A frère de B » puis « B sœur de A ») n'est enregistré qu'une fois
         for rec in self.store.records.values():
             if rec["t"] == "relation" and (rec.get("rel") or {}).get("cle") == info["cle"]:
                 return f"Déjà connu : {rec['txt']}."
         text = f"{a} est {liens.article(lien)} {b}"
-        rel = {"a": a, "l": lien, "b": b, "ia": ia, "ib": ib, "cle": info["cle"], "inv": info["inv"]}
+        rel = {"a": a, "l": lien, "b": b, "t": t, "ia": ia, "ib": ib, "cle": info["cle"], "inv": info["inv"]}
         status, rec = self.store.add(text, "relation", "", src="llm", rel=rel)
         if status == "added":
             inverse = f" (donc {b} est {info['invp']} {a})" if info["invp"] else ""
@@ -159,8 +164,7 @@ class Interlocuteurs:
         """Crée (ou complète) la fiche des deux personnes d'un lien, pour que le moteur de parenté connaisse leur sexe.
         « Tiphaine est la mère de Emma » => Tiphaine est une femme. Celui qui parle (« moi ») garde sa fiche, jamais écrasée."""
         sexe_a = liens.sexe_du_lien(lien)
-        self.store.personnes.reference(a, sexe=sexe_a)
-        self.store.personnes.reference(b)
+        return self.store.personnes.reference(a, sexe=sexe_a), self.store.personnes.reference(b)
 
     def _designation(self, value):
         value = " ".join(str(value or "").split())[:60]
@@ -221,6 +225,35 @@ class Interlocuteurs:
             self.store.activity.log("rattrapage", fiches=crees, sexes=sexes)
         return crees, sexes
 
+    def migrer(self):
+        """Migration des relations enregistrées avant la liste fermée de liens : chacune reçoit son type (`t`), déduit de son texte
+        (« marié à » => conjoint ; tout ce qui n'est pas reconnu => autre, texte conservé), sa clé de dédoublonnage recalculée et ses
+        identifiants de personnes (ia, ib) complétés. Le texte du souvenir n'est jamais modifié. Idempotent : une relation qui a déjà un
+        type n'est pas touchée. Retourne (relations typées, identifiants complétés)."""
+        typees = ids = 0
+        self.synchroniser_noms()                              # personnes renommées avant que les relations suivent
+        for rec in list(self.store.records.values()):
+            rel = rec.get("rel")
+            if rec["t"] != "relation" or not rel:
+                continue
+            nouveau = dict(rel)
+            if not rel.get("t"):
+                t = liens.type_lien(rel.get("l", "")) or "autre"
+                info = liens.analyser(rel.get("a", ""), rel.get("l", ""), rel.get("b", ""), t)
+                nouveau.update(t=t, cle=info["cle"], inv=info["inv"])
+                typees += 1
+            for cote, champ in (("a", "ia"), ("b", "ib")):
+                if not rel.get(champ):
+                    trouve = self._id_of(rel.get(cote, ""))
+                    if trouve:
+                        nouveau[champ] = trouve
+                        ids += 1
+            if nouveau != rel:
+                self.store.update(rec["id"], {"rel": nouveau}, src="migration")
+        if typees or ids:
+            self.store.activity.log("migration_liens", typees=typees, ids=ids)
+        return typees, ids
+
     # ------------------------------------------------------------------ moteur de parenté
     def famille(self):
         """Famille déduite des relations stockées. Le sexe d'une personne vient de sa fiche (champ modifiable), sinon des mots des
@@ -231,12 +264,12 @@ class Interlocuteurs:
             rel = rec.get("rel")
             if rec["t"] != "relation" or not rel:
                 continue
-            t = liens.type_lien(rel.get("l", ""))
+            t = liens.type_de(rel)
             if not t:
                 continue
-            liste.append({"a": rel.get("a", ""), "b": rel.get("b", ""), "type": t})
+            liste.append({"a": self._bout(rel, "a"), "b": self._bout(rel, "b"), "type": t})
             sexe = liens.sexe_du_lien(rel.get("l", ""))
-            ident = self._ident(rel.get("a", ""))
+            ident = self._ident(self._bout(rel, "a"))
             if sexe and ident:
                 deduit.setdefault(ident, sexe)               # anciens liens, sans fiche : le sexe vient des mots
         def sexe_de(ident):
@@ -283,9 +316,9 @@ class Interlocuteurs:
         vus = {ident} | {o[0] for o in out}
         for rec in self.store.records.values():
             rel = rec.get("rel")
-            if rec["t"] != "relation" or not rel or liens.type_lien(rel.get("l", "")) not in ("", "ami", "voisin", "collegue"):
+            if rec["t"] != "relation" or not rel or liens.type_de(rel) not in ("", "ami", "voisin", "collegue"):
                 continue
-            a, b = self._ident(rel.get("a", "")), self._ident(rel.get("b", ""))
+            a, b = self._ident(self._bout(rel, "a")), self._ident(self._bout(rel, "b"))
             autre = b if a == ident else a if b == ident else ""
             if autre and autre not in vus:
                 vus.add(autre)
@@ -336,10 +369,49 @@ class Interlocuteurs:
                 return person["nom"]
         return fam.noms.get(ident, ident.split(":", 1)[-1].capitalize())
 
+    def _bout(self, rel, cote):
+        """Extrémité d'une relation, à passer à `_ident` : « id:pN » quand la fiche désignée par `ia`/`ib` existe (l'identifiant est la
+        référence : renommer une personne ne casse aucun lien), sinon le nom écrit (anciens liens, nom pas encore connu)."""
+        ident = rel.get("i" + cote, "")
+        return "id:" + ident if ident and self.store.personnes.get(ident) else rel.get(cote, "")
+
+    def _nom_bout(self, rel, cote):
+        """Nom lisible d'une extrémité (celui de la fiche si elle existe), pour comparer aux mots d'une question."""
+        person = self.store.personnes.get(rel.get("i" + cote, "")) if rel.get("i" + cote) else None
+        return self.store.personnes.full(person) if person else rel.get(cote, "")
+
+    def synchroniser_noms(self, pid=None):
+        """Remet à jour le nom, le texte et la clé des relations dont la fiche (`ia`/`ib`) a été renommée depuis (ou fusionnée), pour que
+        le texte et la recherche suivent. `pid` : une seule personne ; sinon toutes. Retourne le nombre de relations réécrites."""
+        n = 0
+        for rec in list(self.store.records.values()):
+            rel = rec.get("rel")
+            if rec["t"] != "relation" or not rel:
+                continue
+            nouveau = dict(rel)
+            for cote in ("a", "b"):
+                ident = rel.get("i" + cote, "")
+                person = self.store.personnes.get(ident) if ident and (pid is None or ident == pid) else None
+                if person and [p["id"] for p in self.store.personnes.find(rel.get(cote, ""))] != [person["id"]]:
+                    nouveau[cote] = person["nom"]
+            if nouveau == rel:
+                continue
+            t = rel.get("t") or liens.type_lien(rel.get("l", "")) or "autre"
+            info = liens.analyser(nouveau["a"], rel.get("l", ""), nouveau["b"], t)
+            nouveau.update(cle=info["cle"], inv=info["inv"])
+            self.store.update(rec["id"], {"rel": nouveau, "txt": f"{nouveau['a']} est {liens.article(rel.get('l', ''))} {nouveau['b']}"},
+                              src="renommage")
+            n += 1
+        if n:
+            self.store.activity.log("relations_renommees", n=n)
+        return n
+
     def _ident(self, name):
         """Identité stable d'un nom : « id:p3 » si une seule personne connue le porte (« Marion », « Marion Cousinier »,
         un surnom), sinon le prénom seul (« nom:marion »), pour qu'une personne pas encore connue soit quand même
         reconnue d'un lien à l'autre. Un nom ambigu (deux Marion) reste sur le prénom."""
+        if name.startswith("id:"):
+            return name if self.store.personnes.get(name[3:]) else ""
         found = self.store.personnes.find(name)
         if len(found) == 1:
             return "id:" + found[0]["id"]
@@ -349,7 +421,7 @@ class Interlocuteurs:
     def _ends(self, rec):
         """Identités des deux extrémités d'une relation (recalculées à la lecture : valables aussi pour les anciens liens)."""
         rel = rec.get("rel") or {}
-        return {i for i in (self._ident(rel.get("a", "")), self._ident(rel.get("b", ""))) if i}
+        return {i for i in (self._ident(self._bout(rel, "a")), self._ident(self._bout(rel, "b"))) if i}
 
     def _names_in(self, question):
         """Identités des personnes citées dans la question : prénoms et surnoms de personnes connues, et extrémités de liens."""
@@ -363,9 +435,9 @@ class Interlocuteurs:
             rel = r.get("rel")
             if rel:
                 for side in ("a", "b"):
-                    name = rel.get(side, "")
+                    name = self._nom_bout(rel, side)
                     if key(name) and (set(key(name).split(" ")) & words):
-                        wanted.add(self._ident(name))
+                        wanted.add(self._ident(self._bout(rel, side)))
         wanted.discard("")
         return wanted
 

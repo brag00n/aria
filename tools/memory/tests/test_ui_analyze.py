@@ -333,6 +333,13 @@ class UiGrapheTests(UiCase):
         self.assertIn("Paul", {v["nom"] for v in n2["voisins"]})
         self.assertEqual(self.call("GET", "/api/graphe?id=" + self.ids["Olivier"] + "&niveau=42")[1]["niveau"], 5)
 
+    def test_renommer_une_personne_conserve_ses_liens(self):
+        self.call("POST", "/api/personne/update", {"id": self.ids["Lucy"], "nom": "Clémence"})
+        g = self.call("GET", "/api/graphe?id=" + self.ids["Olivier"] + "&niveau=2")[1]
+        self.assertIn("Clémence", {x["nom"] for x in g["voisins"]})
+        rel = next(r for r in self.store.records.values() if r["t"] == "relation" and "Clémence" in r["txt"])
+        self.assertEqual(rel["rel"]["a"], "Clémence")
+
     def test_api_graphe_inconnu(self):
         status, g = self.call("GET", "/api/graphe?id=p404")
         self.assertEqual(status, 404)

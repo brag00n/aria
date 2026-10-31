@@ -508,11 +508,21 @@ class CompletionEtLiensTests(Base):
         self.assertTrue(self.i.relier("moi", "père de", "Marion").startswith("Déjà connu"))
         self.assertFalse(self.i.relier("Marion", "père de", "moi").startswith("Déjà connu"))   # sens opposé : un autre lien
 
-    def test_un_lien_inconnu_est_garde_tel_quel(self):
+    def test_un_lien_hors_liste_est_refuse_avec_la_liste(self):
         self.i.identifier("Olivier")
-        reponse = self.i.relier("Tiphaine", "belle-mère de", "Paul")
+        reponse = self.i.relier("Tiphaine", "beau-frère de", "Paul")
+        self.assertIn("Lien inconnu", reponse)
+        self.assertIn("conjoint", reponse)
+        self.assertEqual([r for r in self.s.records.values() if r["t"] == "relation"], [])      # rien d'enregistré de travers
+
+    def test_autre_avec_precision_est_garde_sans_calcul(self):
+        self.i.identifier("Olivier")
+        reponse = self.i.relier("Tiphaine", "autre", "Paul", "marraine de")
         self.assertTrue(reponse.startswith("OK"))
         self.assertNotIn("donc", reponse)
+        rel = next(r for r in self.s.records.values() if r["t"] == "relation")["rel"]
+        self.assertEqual((rel["t"], rel["l"]), ("autre", "marraine de"))
+        self.assertIn("Lien inconnu", self.i.relier("Tiphaine", "autre", "Paul"))             # la précision est obligatoire
 
     def test_liens_conserves_apres_rechargement(self):
         self.i.identifier("Olivier")
@@ -921,6 +931,179 @@ class GrapheTests(Base):
         self.assertIsNone(self.i.graphe("p999"))
         seul = self.s.personnes.add("Seul")
         self.assertEqual(self.i.graphe(seul["id"])["voisins"], [])
+
+
+class ListeFermeeTests(Base):
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+        self.i.identifier("Olivier", "Cousinier")
+
+    def rels(self):
+        return [r["rel"] for r in self.s.records.values() if r["t"] == "relation"]
+
+    def test_identifiants_de_la_liste(self):
+        for t in ("conjoint", "parent", "enfant", "fratrie", "demi", "beauparent", "beauenfant", "ami", "collegue", "voisin"):
+            self.assertTrue(self.i.relier("Paul" + t, t, "moi").startswith("OK"), t)
+        self.assertEqual([r["t"] for r in self.rels()],
+                         ["conjoint", "parent", "enfant", "fratrie", "demi", "beauparent", "beauenfant", "ami", "collegue", "voisin"])
+
+    def test_marie_a_est_un_conjoint(self):
+        self.assertTrue(self.i.relier("Charles-Henri", "marié à", "Nathalie").startswith("OK"))
+        self.assertEqual(self.rels()[0]["t"], "conjoint")
+
+    def test_les_mots_courants_restent_acceptes(self):
+        self.i.relier("Tiphaine", "femme de", "moi")
+        self.assertEqual(self.rels()[0]["t"], "conjoint")
+        self.assertEqual(self.s.personnes.find("Tiphaine")[0]["sexe"], "f")                  # le sexe est déduit du mot
+
+    def test_identifiant_nu_ne_dit_pas_le_sexe(self):
+        self.i.relier("Tiphaine", "conjoint", "moi")
+        self.assertEqual(self.s.personnes.find("Tiphaine")[0]["sexe"], "")
+
+    def test_meme_lien_dans_les_deux_sens_une_seule_fois(self):
+        self.i.relier("Marion", "enfant", "Olivier")
+        self.assertIn("Déjà connu", self.i.relier("Olivier", "parent", "Marion"))
+        self.i.relier("Paul", "fratrie", "Marion")
+        self.assertIn("Déjà connu", self.i.relier("Marion", "fratrie", "Paul"))
+
+    def test_le_moteur_utilise_le_type(self):
+        self.i.relier("Charles-Henri", "conjoint", "Nathalie")
+        self.i.relier("Corentin", "enfant", "Nathalie")
+        self.i.relier("Corentin", "enfant", "Charles-Henri")
+        import parente
+        fam = self.i.famille()
+        self.assertEqual(parente.lien(fam, self.i._ident("Corentin"), self.i._ident("Charles-Henri")), "un parent")
+
+    def test_demi_et_beauparent_declares(self):
+        self.i.relier("Paul", "demi", "Marion")
+        self.i.relier("Anna", "beauparent", "Marion")
+        self.assertEqual({r["a"]: r["t"] for r in self.rels()}, {"Paul": "demi", "Anna": "beauparent"})
+
+    def test_autre_dont_la_precision_est_un_lien_connu(self):
+        self.i.relier("Tiphaine", "autre", "moi", "femme de")
+        self.assertEqual(self.rels()[0]["t"], "conjoint")
+
+
+class MigrationTests(Base):
+    """Relations enregistrées avant la liste fermée : sans type, ids partiels, textes libres."""
+
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        from liens import analyser
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+        self.i.identifier("Olivier", "Cousinier")
+        for a, l, b in [("Tiphaine", "femme de", "Olivier"), ("Charles-Henri", "marié à", "Nathalie"),
+                        ("Charles-Henri", "beau-frère de", "Olivier Cousinier"), ("Marion", "fille de", "Olivier"),
+                        ("Marion", "demi-sœur de", "Paul")]:
+            info = analyser(a, l, b)
+            self.s.add(f"{a} est {l} {b}", "relation", "", src="llm",
+                       rel={"a": a, "l": l, "b": b, "ia": "", "ib": "", "cle": info["cle"], "inv": info["inv"]})
+        self.i.rattraper()
+
+    def rels(self):
+        return [r for r in self.s.records.values() if r["t"] == "relation"]
+
+    def types(self):
+        return {r["rel"]["a"] + "/" + r["rel"]["b"]: r["rel"].get("t") for r in self.rels()}
+
+    def test_chaque_relation_recoit_un_type(self):
+        typees, ids = self.i.migrer()
+        self.assertEqual(typees, 5)
+        self.assertGreater(ids, 0)
+        t = self.types()
+        self.assertEqual(t["Tiphaine/Olivier"], "conjoint")
+        self.assertEqual(t["Charles-Henri/Nathalie"], "conjoint")          # « marié à » était ignoré avant
+        self.assertEqual(t["Charles-Henri/Olivier Cousinier"], "autre")    # beau-frère : texte conservé, sans calcul
+        self.assertEqual(t["Marion/Olivier"], "enfant")
+        self.assertEqual(t["Marion/Paul"], "demi")
+
+    def test_le_texte_et_le_lien_d_origine_sont_conserves(self):
+        avant = {r["id"]: (r["txt"], r["rel"]["l"]) for r in self.rels()}
+        self.i.migrer()
+        self.assertEqual(avant, {r["id"]: (r["txt"], r["rel"]["l"]) for r in self.rels()})
+
+    def test_idempotent(self):
+        self.i.migrer()
+        self.assertEqual(self.i.migrer(), (0, 0))
+
+    def test_les_ids_sont_completes(self):
+        self.i.migrer()
+        rel = next(r["rel"] for r in self.rels() if r["rel"]["a"] == "Tiphaine")
+        self.assertEqual((rel["ia"], rel["ib"]), (self.s.personnes.find("Tiphaine")[0]["id"], self.s.personnes.find("Olivier")[0]["id"]))
+
+    def test_marie_a_devient_visible_au_moteur(self):
+        self.i.migrer()
+        g = self.i.graphe(self.s.personnes.find("Nathalie")[0]["id"])
+        v = {x["nom"]: x for x in g["voisins"]}
+        self.assertEqual(v["Charles-Henri"]["categorie"], "famille")
+        self.assertEqual(v["Charles-Henri"]["lien"], "le mari")
+
+    def test_la_migration_survit_au_rechargement(self):
+        self.i.migrer()
+        self.s.close()
+        again = self.make(active="")
+        self.assertTrue(all(r["rel"].get("t") for r in again.records.values() if r["t"] == "relation"))
+        from interlocuteur import Interlocuteurs
+        self.assertEqual(Interlocuteurs(again).migrer(), (0, 0))
+
+
+class RenommageTests(Base):
+    """Renommer une personne ne doit pas faire perdre ses liens."""
+
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+        self.i.identifier("Olivier", "Cousinier")
+        self.i.relier("Marion", "enfant", "moi")
+        self.i.relier("Lucy", "ami", "Marion")
+        self.lucy = self.s.personnes.find("Lucy")[0]["id"]
+        self.marion = self.s.personnes.find("Marion")[0]["id"]
+
+    def voisins(self, pid):
+        return {v["nom"]: v for v in self.i.graphe(pid)["voisins"]}
+
+    def test_sans_synchronisation_le_moteur_suit_deja_l_identifiant(self):
+        self.s.personnes.update(self.lucy, nom="Clémence")
+        self.assertIn("Clémence", self.voisins(self.marion))             # lien retrouvé par l'identifiant, avant toute réécriture
+        self.assertEqual(self.voisins(self.marion)["Clémence"]["categorie"], "connaissance")
+        self.assertIn("Marion", self.voisins(self.lucy))
+
+    def test_la_synchronisation_reecrit_le_nom_le_texte_et_la_cle(self):
+        self.s.personnes.update(self.lucy, nom="Clémence")
+        self.assertEqual(self.i.synchroniser_noms(self.lucy), 1)
+        rec = next(r for r in self.s.records.values() if r["t"] == "relation" and r["rel"]["l"] and "Clémence" in r["txt"])
+        self.assertEqual((rec["rel"]["a"], rec["rel"]["ia"]), ("Clémence", self.lucy))
+        self.assertEqual(rec["txt"], "Clémence est ami(e) de Marion")
+        self.assertIn("clemence", rec["rel"]["cle"])
+        res, _ = self.s.search("Clémence", touch=False)
+        self.assertTrue(res)                                              # la recherche retrouve le nouveau nom
+        self.assertEqual(self.i.synchroniser_noms(self.lucy), 0)          # idempotent
+
+    def test_le_nom_de_famille_modifie_aussi(self):
+        self.s.personnes.update(self.marion, nom="Manon", compl="Dupont")
+        self.i.synchroniser_noms(self.marion)
+        self.assertIn("Manon", {r["rel"]["a"] for r in self.s.records.values() if r["t"] == "relation"})
+        self.assertEqual(self.voisins(self.lucy)["Manon"]["categorie"], "connaissance")
+
+    def test_pas_de_reecriture_si_le_nom_ecrit_designe_deja_la_fiche(self):
+        self.assertEqual(self.i.synchroniser_noms(), 0)
+
+    def test_la_migration_rattrape_un_renommage_deja_fait(self):
+        self.s.personnes.update(self.lucy, nom="Clémence")                # comme le renommage fait depuis la page avant ce correctif
+        self.i.migrer()
+        self.assertIn("Clémence", {r["rel"]["a"] for r in self.s.records.values() if r["t"] == "relation"})
+
+    def test_la_famille_suit_aussi_un_renommage(self):
+        self.s.personnes.update(self.marion, nom="Manon")
+        v = self.voisins(self.s.personnes.find("Olivier")[0]["id"])
+        self.assertEqual(v["Manon"]["categorie"], "famille")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ déjà présent dans l'image. Les données sont **100 % locales**, en JSONL lisi
 | `rechercher_souvenir(question, limite)` | retrouve les souvenirs de l'interlocuteur actif et ceux du foyer ; question vide = les plus importants |
 | `oublier(id)` | oublie un souvenir (il reste dans l'archive) |
 | `identifier_interlocuteur(nom, complement, surnom)` | désigne (ou crée) la personne qui parle ; signale les homonymes |
-| `relier(personne_a, lien, personne_b)` | mémorise un lien entre deux personnes (« moi » = l'interlocuteur actif) |
+| `relier(personne_a, lien, personne_b, precision)` | mémorise « a est le `lien` de b » (« moi » = l'interlocuteur actif) ; `lien` est pris dans une **liste fermée** : `conjoint`, `parent`, `enfant`, `fratrie`, `demi`, `beauparent`, `beauenfant`, `ami`, `collegue`, `voisin`, ou `autre` + `precision` (ex. marraine de). Hors liste : refus avec la liste. Le sexe vient de la fiche de la personne, pas du lien |
 | `ui_etat(activer)` | **caché au LLM** (préfixe `ui_`) : interlocuteurs, actif et consigne du tour, pour l'interface d'Aria |
 
 ## Interlocuteurs
@@ -49,7 +49,7 @@ Exemples de lignes :
 {"op":"update","ts":"…","id":"m_6edcbd","set":{"tags":["pinned"]}}      {"op":"del","ts":"…","id":"m_6edcbd","why":"user"}
 ```
 `src` : `llm` (outil MCP), `ui` (page de gestion) ou `main` (ajouté à la main). Dates en UTC. `o` : propriétaire (vide = partagé).
-Ligne de relation : `{"id":"m_b2d7bb","t":"relation","txt":"Tiphaine est la femme de Olivier","o":"","rel":{"a":"Tiphaine","l":"femme de","b":"Olivier","ia":"p2","ib":"p1"},"tags":["core"],…}`.
+Les extrémités d'une relation sont retrouvées par l'**identifiant** de leur fiche (`ia`, `ib`), jamais par le nom : renommer une personne dans la page (ou fusionner deux personnes) ne casse aucun lien, et le texte du souvenir est réécrit avec le nouveau nom (`synchroniser_noms`). Au démarrage, `migrer()` donne un type (`t`) aux relations plus anciennes, déduit de leur texte (« marié à » => `conjoint`, ce qui n'est pas reconnu => `autre`), complète leurs identifiants de personnes et ne touche ni au texte ni au lien d'origine ; elle est idempotente. Ligne de relation : `{"id":"m_b2d7bb","t":"relation","txt":"Tiphaine est la femme de Olivier","o":"","rel":{"a":"Tiphaine","l":"femme de","b":"Olivier","t":"conjoint","ia":"p2","ib":"p1"},"tags":["core"],…}`.
 Personne : `{"id":"p1","nom":"Olivier","compl":"Cousinier","surnom":"Oli","c":"2026-10-30T18:42:26+00:00"}`.
 
 ## Consulter et modifier à la main

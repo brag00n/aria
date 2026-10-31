@@ -5,7 +5,7 @@ Cinq outils pour le LLM (chaque outil de plus coûte du temps de prompt aux peti
   rechercher_souvenir(question)                   retrouve ses souvenirs et ceux du foyer (question vide = les plus importants)
   oublier(id)                                     oublie un souvenir (archivé, jamais perdu en silence)
   identifier_interlocuteur(nom, complement)       désigne (ou crée) la personne qui parle
-  relier(personne_a, lien, personne_b)            mémorise un lien entre deux personnes
+  relier(personne_a, lien, personne_b, precision) mémorise « a est le <lien> de b » (liste fermée de liens)
 Un outil caché au LLM (préfixe ui_), pour Aria seule : ui_etat(activer) -> interlocuteurs, actif et consigne du tour.
 
 Variables d'environnement :
@@ -41,6 +41,7 @@ interlocuteurs = Interlocuteurs(store)
 if not store.read_only:
     try:
         interlocuteurs.rattraper()          # fiches et sexes des personnes citées dans d'anciens liens (idempotent)
+        interlocuteurs.migrer()             # type de chaque ancien lien (liste fermée), identifiants de personnes (idempotent)
     except Exception as e:                  # jamais bloquant : le serveur doit démarrer
         activity.warn(f"rattrapage des fiches impossible : {e}")
 
@@ -59,9 +60,9 @@ def identifier_interlocuteur(nom: str, complement: str = "", surnom: str = "") -
 
 
 @mcp.tool(name="relier")
-def relier(personne_a: str, lien: str, personne_b: str) -> str:
-    """Mémorise un lien entre deux personnes, par exemple Tiphaine, femme de, Olivier. « moi » désigne l'interlocuteur actuel."""
-    return interlocuteurs.relier(personne_a, lien, personne_b)
+def relier(personne_a: str, lien: str, personne_b: str, precision: str = "") -> str:
+    """personne_a est le <lien> de personne_b. lien: conjoint, parent, enfant, fratrie, demi, beauparent, beauenfant, ami, collegue, voisin, ou autre + precision. « moi » = l'interlocuteur."""
+    return interlocuteurs.relier(personne_a, lien, personne_b, precision)
 
 
 @mcp.tool(name="ui_etat")
