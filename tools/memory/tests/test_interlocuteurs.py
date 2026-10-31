@@ -1106,5 +1106,65 @@ class RenommageTests(Base):
         self.assertEqual(v["Manon"]["categorie"], "famille")
 
 
+class RelierFichesTests(Base):
+    """Création d'un lien depuis la page de gestion : deux fiches désignées par identifiant, sans interlocuteur actif."""
+
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+        self.a = self.s.personnes.add("Tiphaine", "Cousinier")["id"]
+        self.b = self.s.personnes.add("Olivier", "Cousinier")["id"]
+        self.c = self.s.personnes.add("Paul")["id"]
+
+    def rels(self):
+        return [r for r in self.s.records.values() if r["t"] == "relation"]
+
+    def test_cree_une_relation_typee_avec_les_deux_identifiants(self):
+        ok, rid = self.i.relier_fiches(self.a, "conjoint", self.b)
+        self.assertTrue(ok)
+        rel = self.s.records[rid]["rel"]
+        self.assertEqual((rel["t"], rel["ia"], rel["ib"]), ("conjoint", self.a, self.b))
+        self.assertEqual(self.s.records[rid]["o"], "")                                  # une relation est partagée
+        self.assertIn("core", self.s.records[rid]["tags"])
+
+    def test_sans_interlocuteur_actif(self):
+        self.assertEqual(self.s.active, "")
+        self.assertTrue(self.i.relier_fiches(self.a, "ami", self.c)[0])
+
+    def test_le_moteur_voit_le_nouveau_lien(self):
+        self.i.relier_fiches(self.c, "enfant", self.a)
+        v = {x["nom"]: x for x in self.i.graphe(self.a)["voisins"]}
+        self.assertEqual(v["Paul"]["categorie"], "famille")
+
+    def test_doublon_dans_l_autre_sens_refuse(self):
+        self.assertTrue(self.i.relier_fiches(self.a, "enfant", self.b)[0])
+        ok, msg = self.i.relier_fiches(self.b, "parent", self.a)
+        self.assertFalse(ok)
+        self.assertIn("déjà connu", msg)
+        self.assertEqual(len(self.rels()), 1)
+
+    def test_refus(self):
+        self.assertFalse(self.i.relier_fiches(self.a, "conjoint", self.a)[0])           # elle-même
+        self.assertFalse(self.i.relier_fiches(self.a, "conjoint", "p99")[0])            # inconnue
+        self.assertFalse(self.i.relier_fiches("", "conjoint", self.b)[0])
+        self.assertFalse(self.i.relier_fiches(self.a, "cousin", self.b)[0])             # hors liste
+        self.assertFalse(self.i.relier_fiches(self.a, "autre", self.b)[0])              # précision obligatoire
+        self.assertEqual(self.rels(), [])
+
+    def test_autre_avec_precision(self):
+        ok, rid = self.i.relier_fiches(self.a, "autre", self.c, "marraine de")
+        self.assertTrue(ok)
+        self.assertEqual((self.s.records[rid]["rel"]["t"], self.s.records[rid]["rel"]["l"]), ("autre", "marraine de"))
+
+    def test_un_mot_dit_le_sexe_seulement_s_il_est_inconnu(self):
+        self.i.relier_fiches(self.c, "autre", self.a, "femme de")
+        self.assertEqual(self.s.personnes.get(self.c)["sexe"], "f")
+        self.s.personnes.update(self.a, sexe="m")
+        self.i.relier_fiches(self.a, "autre", self.b, "mère de")
+        self.assertEqual(self.s.personnes.get(self.a)["sexe"], "m")                     # une valeur saisie n'est jamais écrasée
+
+
 if __name__ == "__main__":
     unittest.main()

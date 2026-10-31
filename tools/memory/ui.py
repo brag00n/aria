@@ -155,6 +155,11 @@ def make_handler(store, activity, token):
                 status, rec = store.add(str(body.get("texte", "")), str(body.get("type", "fait")),
                                         body.get("tags", ""), src="ui", owner=owner)      # sans propriétaire précisé : l'interlocuteur actif
                 return self._json({"statut": status, "id": rec["id"] if rec else None})
+            if path == "/api/relation/add":
+                from interlocuteur import Interlocuteurs
+                ok, msg = Interlocuteurs(store).relier_fiches(str(body.get("a", "")), str(body.get("lien", "")), str(body.get("b", "")),
+                                                              str(body.get("precision", "")), src="ui")
+                return self._json({"ok": ok, "id": msg if ok else None, "erreur": None if ok else msg})
             rid = str(body.get("id", ""))
             if path == "/api/update":
                 changes = {}
@@ -291,7 +296,12 @@ const hdr=()=>Object.assign({'Content-Type':'application/json'},TOKEN?{'X-Token'
 const get=async u=>(await fetch(u,{headers:hdr()})).json();
 const post=async(u,b)=>(await fetch(u,{method:'POST',headers:hdr(),body:JSON.stringify(b)})).json();
 const say=t=>{$('#msg').textContent=t;setTimeout(()=>{$('#msg').textContent=''},4000)};
-let tab='mem',sortKey='cree',sortDir=-1,query='',fType='',fState='',fOwner='',PERSONS=[];
+let tab='mem',sortKey='cree',sortDir=-1,query='',pq='',rq='',pf={champ:'',sexe:'',statut:'',souv:''},rf={champ:'',pers:'',lien:'',cat:''},fType='',fState='',fOwner='',PERSONS=[];
+const norm=t=>String(t||'').normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();
+const match=(q,...champs)=>!norm(q).trim()||norm(q).trim().split(/\s+/).every(w=>champs.some(c=>norm(c).includes(w)));
+const listbox=(etat,cle,choix)=>el('select',{title:cle,onchange:e=>{etat[cle]=e.target.value;render()}},...choix.map(c=>el('option',{value:c[0],selected:c[0]===etat[cle]},c[1])));
+const CAT_LIEN={conjoint:'famille',parent:'famille',enfant:'famille',fratrie:'famille',demi:'famille',beauparent:'famille',beauenfant:'famille'};
+const catDe=r=>CAT_LIEN[(r.rel&&r.rel.t)||'autre']||'connaissance';
 const OWNER_TXT=id=>(PERSONS.find(p=>p.id===id)||{label:id?'? '+id:'Foyer (partagé)'}).label;
 
 // ---- Modale d'édition : tous les champs modifiables d'un souvenir, d'une relation ou d'une personne
@@ -545,17 +555,52 @@ async function renderPersons(main){
   const nom=el('input',{placeholder:'Prénom',size:12}),compl=el('input',{placeholder:'Nom de famille',size:14}),sur=el('input',{placeholder:'Surnom',size:10});
   const add=el('button',{onclick:async()=>{if(!nom.value.trim())return;const r=await post('/api/personne/add',{nom:nom.value,compl:compl.value,surnom:sur.value});say(r.ok?'Ajoutée':'Impossible');render()}},'Ajouter');
   const people=PERSONS.filter(p=>!p.special);
-  main.append(el('div',{className:'bar'},nom,compl,sur,add),
+  const inpP=el('input',{placeholder:'Rechercher une personne…',value:pq,onchange:e=>{pq=e.target.value;render()}});
+  const barreP=el('div',{className:'bar'},inpP,
+    listbox(pf,'champ',[['','Dans : tous les champs'],['nom','Dans : prénom'],['compl','Dans : nom de famille'],['surnom','Dans : surnom'],['id','Dans : identifiant']]),
+    listbox(pf,'sexe',[['','Sexe : tous'],['f','Sexe : féminin'],['m','Sexe : masculin'],['?','Sexe : inconnu']]),
+    listbox(pf,'statut',[['','Statut : tous'],['connue','Connues par Aria'],['citee','Seulement citées']]),
+    listbox(pf,'souv',[['','Souvenirs : tous'],['avec','Avec souvenirs'],['sans','Sans souvenir']]),
+    el('button',{title:'Effacer les filtres',onclick:()=>{pq='';pf={champ:'',sexe:'',statut:'',souv:''};render()}},'✕'));
+  const filtreP=p=>match(pq,...(pf.champ?[p[pf.champ]]:[p.label,p.nom,p.compl,p.surnom,p.id]))
+    &&(!pf.sexe||(pf.sexe==='?'?!p.sexe:p.sexe===pf.sexe))&&(!pf.statut||(pf.statut==='citee'?p.citee:!p.citee))
+    &&(!pf.souv||(pf.souv==='avec'?p.souvenirs>0:p.souvenirs===0));
+  const filtre=pq.trim()||pf.sexe||pf.statut||pf.souv||pf.champ;
+  const liste=PERSONS.filter(p=>p.special?!filtre:filtreP(p));
+  main.append(barreP,el('div',{className:'bar'},nom,compl,sur,add),
     el('table',{},el('tr',{},...['Personne','Prénom','Nom','Surnom','Sexe','Souvenirs',''].map(h=>el('th',{},h))),
-      ...PERSONS.map(p=>p.special?el('tr',{},el('td',{},p.label),el('td',{colSpan:4,className:'mut'},'souvenirs sans propriétaire (relations, foyer, anciens souvenirs)'),el('td',{},String(p.souvenirs)),el('td',{})):
+      ...liste.map(p=>p.special?el('tr',{},el('td',{},p.label),el('td',{colSpan:4,className:'mut'},'souvenirs sans propriétaire (relations, foyer, anciens souvenirs)'),el('td',{},String(p.souvenirs)),el('td',{})):
         el('tr',{},el('td',{},p.label+(p.actif?' ● actif':'')+(p.citee?' (citée)':'')),el('td',{},p.nom),el('td',{},p.compl),el('td',{},p.surnom),el('td',{},p.sexe==='f'?'F':p.sexe==='m'?'M':'?'),el('td',{},String(p.souvenirs)),
           el('td',{},el('button',{title:'Graphe des relations',onclick:()=>openGraph(p.id)},'🕸'),' ',el('button',{title:'Modifier',onclick:()=>editPerson(p)},'✎'),' ',
             el('button',{title:'Fusionner dans une autre personne',onclick:()=>mergePerson(p)},'⇢'),' ',
             el('button',{title:'Supprimer',onclick:async()=>{if(!confirm('Supprimer '+p.label+' ?'))return;const r=await post('/api/personne/delete',{id:p.id});say(r.ok?'Supprimée':(r.erreur||'Impossible'));render()}},'🗑'))))));
 }
 async function renderRelations(main){
-  const rows=await get('/api/relations');
-  main.append(el('p',{className:'mut'},'Liens entre personnes, partagés par tout le foyer et jamais oubliés. Aria les enregistre avec l\\'outil « relier ».'),
+  const tous=await get('/api/relations');
+  const gens=PERSONS.filter(p=>!p.special);
+  const selA=el('select',{},el('option',{value:''},'Personne…'),...gens.map(p=>el('option',{value:p.id},p.label)));
+  const selB=el('select',{},el('option',{value:''},'Personne…'),...gens.map(p=>el('option',{value:p.id},p.label)));
+  const selL=el('select',{},...optionsOf(LIENS_TYPES,'conjoint'));
+  const prec=el('input',{placeholder:'précision (pour « autre »)',size:20});
+  const ajout=el('button',{onclick:async()=>{
+    const r=await post('/api/relation/add',{a:selA.value,lien:selL.value,b:selB.value,precision:prec.value});
+    say(r.ok?'Relation ajoutée':(r.erreur||'Impossible'));if(r.ok)render()}},'Ajouter');
+  const creation=el('div',{className:'bar'},el('span',{className:'mut'},'Nouvelle relation :'),selA,el('span',{className:'mut'},'est'),selL,el('span',{className:'mut'},'de'),selB,prec,ajout);
+  const quiOptions=[['','Personne : toutes'],...gens.map(p=>[p.id,'Personne : '+p.label])];
+  const ab=r=>[(r.rel&&r.rel.a)||'',(r.rel&&r.rel.b)||''];
+  const champsTxt=r=>({pers:ab(r),lien:[(r.rel&&r.rel.l)||''],texte:[r.texte]})[rf.champ]||[...ab(r),(r.rel&&r.rel.l)||'',r.texte,r.id];
+  const rows=tous.filter(r=>match(rq,...champsTxt(r))
+    &&(!rf.pers||(r.rel&&(r.rel.ia===rf.pers||r.rel.ib===rf.pers)))
+    &&(!rf.lien||((r.rel&&r.rel.t)||'autre')===rf.lien)&&(!rf.cat||catDe(r)===rf.cat));
+  const inpR=el('input',{placeholder:'Rechercher une relation…',value:rq,onchange:e=>{rq=e.target.value;render()}});
+  const barreR=el('div',{className:'bar'},inpR,
+    listbox(rf,'champ',[['','Dans : tous les champs'],['pers','Dans : personnes'],['lien','Dans : lien'],['texte','Dans : texte']]),
+    listbox(rf,'pers',quiOptions),
+    listbox(rf,'lien',[['','Lien : tous'],...LIENS_TYPES.map(l=>[l[0],'Lien : '+l[1]])]),
+    listbox(rf,'cat',[['','Type : tous'],['famille','Famille'],['connaissance','Connaissance']]),
+    el('button',{title:'Effacer les filtres',onclick:()=>{rq='';rf={champ:'',pers:'',lien:'',cat:''};render()}},'✕'),
+    el('span',{className:'mut'},rows.length+' / '+tous.length));
+  main.append(creation,barreR,el('p',{className:'mut'},'Liens entre personnes, partagés par tout le foyer et jamais oubliés. Aria les enregistre avec l\\'outil « relier ».'),
     el('table',{},el('tr',{},...['Personne','Lien','Personne','Souvenir',''].map(h=>el('th',{},h))),
       ...rows.map(r=>el('tr',{},el('td',{},(r.rel&&r.rel.a)||'?'),el('td',{},(r.rel&&r.rel.l)||''),el('td',{},(r.rel&&r.rel.b)||'?'),el('td',{className:'mut'},r.texte),
         el('td',{},el('button',{title:'Modifier',onclick:()=>editRelation(r)},'✎'),' ',el('button',{title:'Oublier',onclick:async()=>{if(confirm('Oublier cette relation ?')){await post('/api/delete',{id:r.id});render()}}},'🗑'))))));

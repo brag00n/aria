@@ -330,6 +330,10 @@ class UiSexeTests(UiCase):
         self.assertEqual(status, 200)
         self.assertTrue(all(r["type"] == "relation" for r in rows))
 
+    def test_recherche_dans_les_onglets_personnes_et_relations(self):
+        for mot in ("Rechercher une personne", "Rechercher une relation", "const match="):
+            self.assertIn(mot, ui.PAGE)
+
     def test_la_page_propose_connue_par_aria(self):
         self.assertIn("Connue par Aria", ui.PAGE)
 
@@ -384,6 +388,32 @@ class UiGrapheTests(UiCase):
         self.assertIn("Clémence", {x["nom"] for x in g["voisins"]})
         rel = next(r for r in self.store.records.values() if r["t"] == "relation" and "Clémence" in r["txt"])
         self.assertEqual(rel["rel"]["a"], "Clémence")
+
+    def test_api_creer_une_relation(self):
+        tiphaine, olivier = self.ids["Tiphaine"], self.ids["Olivier"]
+        paul = self.call("POST", "/api/personne/add", {"nom": "Paul"})[1]["id"]
+        x = self.call("POST", "/api/relation/add", {"a": paul, "lien": "enfant", "b": tiphaine})[1]
+        self.assertTrue(x["ok"])
+        rows = self.call("GET", "/api/relations")[1]
+        self.assertIn(x["id"], {r["id"] for r in rows})
+        self.assertEqual(next(r for r in rows if r["id"] == x["id"])["rel"]["t"], "enfant")
+        g = self.call("GET", "/api/graphe?id=" + tiphaine)[1]
+        self.assertIn("Paul", {v["nom"] for v in g["voisins"]})
+
+    def test_api_creer_une_relation_refus(self):
+        tiphaine, olivier = self.ids["Tiphaine"], self.ids["Olivier"]
+        for corps in ({"a": tiphaine, "lien": "conjoint", "b": tiphaine}, {"a": tiphaine, "lien": "zzz", "b": olivier},
+                      {"a": "", "lien": "ami", "b": olivier}, {"a": tiphaine, "lien": "autre", "b": olivier},
+                      {"a": tiphaine, "lien": "conjoint", "b": olivier}):                  # ce dernier existe déjà
+            x = self.call("POST", "/api/relation/add", corps)[1]
+            self.assertFalse(x["ok"], corps)
+            self.assertTrue(x["erreur"])
+
+    def test_la_page_propose_filtres_et_creation_de_relation(self):
+        for mot in ("Nouvelle relation", "Dans : tous les champs", "Sexe : tous", "Statut : tous", "Lien : tous", "/api/relation/add"):
+            self.assertIn(mot, ui.PAGE)
+        creation = ui.PAGE[ui.PAGE.index("ntype=el('select'"):][:200]
+        self.assertNotIn("relation", creation)                                             # plus de type « relation » à la création d'un souvenir
 
     def test_api_graphe_inconnu(self):
         status, g = self.call("GET", "/api/graphe?id=p404")

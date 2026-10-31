@@ -124,6 +124,31 @@ class Interlocuteurs:
             return f"Déjà connu : {text}."
         return self.refus(status)
 
+    def relier_fiches(self, id_a, lien, id_b, precision="", src="ui"):
+        """Crée une relation entre deux fiches désignées par leur identifiant (page de gestion : pas d'ambiguïté de nom, pas besoin
+        d'interlocuteur actif). Retourne (ok, identifiant du souvenir ou message d'erreur)."""
+        pa, pb = self.store.personnes.get(id_a or ""), self.store.personnes.get(id_b or "")
+        if not (pa and pb):
+            return False, "choisis deux personnes connues"
+        if pa["id"] == pb["id"]:
+            return False, "une personne ne peut pas être liée à elle-même"
+        t, lien = liens.choisir(lien, precision)
+        if t is None:
+            return False, "lien hors liste, ou précision manquante pour « autre »"
+        a, b = self.store.personnes.label(pa), self.store.personnes.label(pb)
+        info = liens.analyser(a, lien, b, t)
+        for rec in self.store.records.values():
+            if rec["t"] == "relation" and (rec.get("rel") or {}).get("cle") == info["cle"]:
+                return False, f"déjà connu : {rec['txt']}"
+        sexe = liens.sexe_du_lien(lien)
+        if sexe and not pa.get("sexe"):
+            self.store.personnes.update(pa["id"], sexe=sexe)
+        rel = {"a": a, "l": lien, "b": b, "t": t, "ia": pa["id"], "ib": pb["id"], "cle": info["cle"], "inv": info["inv"]}
+        status, rec = self.store.add(f"{a} est {liens.article(lien)} {b}", "relation", "", src=src, rel=rel, owner="")
+        if status == "added":
+            return True, rec["id"]
+        return False, self.refus(status)
+
     @staticmethod
     def refus(status):
         return {
