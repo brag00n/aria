@@ -257,6 +257,11 @@ class Personnes:
                 return False
             if "sexe" in changes:
                 person["sexe"] = _sexe(changes["sexe"])
+            if "ref" in changes:                       # True = seulement citée (hors de la liste des interlocuteurs), False = interlocutrice
+                if changes["ref"]:
+                    person["ref"] = True
+                else:
+                    person.pop("ref", None)
             for field in ("nom", "compl", "surnom"):
                 if field in changes:
                     value = _clean(changes[field])

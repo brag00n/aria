@@ -202,6 +202,10 @@ def make_handler(store, activity, token):
                 return self._json({"ok": bool(person), "id": person["id"] if person else None})
             if path == "/api/personne/update":
                 fields = {k: body[k] for k in ("nom", "compl", "surnom", "sexe") if k in body}
+                if "connue" in body:                      # connue d'Aria = a déjà discuté avec elle = présente dans la liste des interlocuteurs
+                    if not body["connue"] and store.active == rid:
+                        return self._json({"ok": False, "erreur": "cette personne est l'interlocuteur actif : choisis d'abord quelqu'un d'autre"})
+                    fields["ref"] = not body["connue"]
                 ok = store.personnes.update(rid, **fields)
                 if ok and ("nom" in fields or "compl" in fields):
                     from interlocuteur import Interlocuteurs
@@ -270,6 +274,7 @@ pre{background:var(--card);border:1px solid var(--line);padding:8px;overflow:aut
 #modal input,#modal select,#modal textarea{width:100%;box-sizing:border-box;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
 #modal textarea{min-height:80px;resize:vertical}
 #modal .row{display:flex;gap:10px}#modal .row>div{flex:1}
+#modal .chk{display:flex;align-items:center;gap:6px;margin-top:10px}#modal .chk input{width:auto}
 #modal .info{margin-top:10px;font-size:12px;color:var(--mut)}
 #modal .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 #modal .err{color:var(--warn);margin-top:8px;min-height:1em}
@@ -352,12 +357,14 @@ function editRelation(r){
 function editPerson(p, retour){
   const nom = el('input',{value:p.nom}), compl = el('input',{value:p.compl}), sur = el('input',{value:p.surnom});
   const sexe = el('select',{}, ...optionsOf([['','inconnu'],['f','féminin'],['m','masculin']], p.sexe||''));
+  const connue = el('input',{type:'checkbox',checked:!p.citee});
   openModal('Modifier la personne', [
     el('div',{className:'row'}, field('Prénom', nom), field('Nom de famille', compl)),
     el('div',{className:'row'}, field('Surnom (comment elle veut être appelée)', sur), field('Sexe (pour dire fille, tante, grand-mère...)', sexe)),
+    el('label',{className:'chk'}, connue, ' Connue par Aria (a déjà discuté avec elle : figure dans la liste des interlocuteurs)'),
   ], `Identifiant ${p.id} · créée ${p.cree} · ${p.souvenirs} souvenir(s)${p.actif?' · interlocuteur actif':''}${p.citee?' · seulement citée (pas encore interlocutrice)':''}`, async ()=>{
-    const x = await post('/api/personne/update', {id:p.id, nom:nom.value, compl:compl.value, surnom:sur.value, sexe:sexe.value});
-    return x.ok ? true : 'Le prénom est obligatoire';
+    const x = await post('/api/personne/update', {id:p.id, nom:nom.value, compl:compl.value, surnom:sur.value, sexe:sexe.value, connue:connue.checked});
+    return x.ok ? true : (x.erreur || 'Le prénom est obligatoire');
   }, retour);
 }
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -505,17 +512,19 @@ async function render(){
 }
 async function renderMem(main){
   const rows=await get('/api/memories?q='+encodeURIComponent(query));
-  let list=rows.filter(r=>(!fType||r.type===fType)&&(!fState||r.etat===fState)&&(fOwner===''||(fOwner==='_foyer'?!r.o:r.o===fOwner)));
+  const nbRel=rows.filter(r=>r.type==='relation').length;
+  let list=rows.filter(r=>(fType?r.type===fType:r.type!=='relation')&&(!fState||r.etat===fState)&&(fOwner===''||(fOwner==='_foyer'?!r.o:r.o===fOwner)));
   list.sort((a,b)=>(a[sortKey]>b[sortKey]?1:-1)*sortDir);
   const inpQ=el('input',{placeholder:'Rechercher…',value:query,onchange:e=>{query=e.target.value;render()}});
-  const selT=el('select',{onchange:e=>{fType=e.target.value;render()}},...['','fait','preference','tache','ephemere','foyer','relation'].map(v=>el('option',{value:v,selected:v===fType},v||'tous les types')));
+  const selT=el('select',{onchange:e=>{fType=e.target.value;render()}},...['','fait','preference','tache','ephemere','foyer','relation'].map(v=>el('option',{value:v,selected:v===fType},v||'tous les types (hors relations)')));
   const selS=el('select',{onchange:e=>{fState=e.target.value;render()}},...['','actif','masque','protege'].map(v=>el('option',{value:v,selected:v===fState},v||'tous les états')));
   const selO=el('select',{onchange:e=>{fOwner=e.target.value;render()}},el('option',{value:''},'tous les propriétaires'),el('option',{value:'_foyer',selected:fOwner==='_foyer'},'Foyer (partagé)'),...PERSONS.filter(p=>!p.special).map(p=>el('option',{value:p.id,selected:p.id===fOwner},p.label)));
   const nowner=el('select',{},...PERSONS.filter(p=>!p.special).map(p=>el('option',{value:p.id},p.label)));
-  const nt=el('input',{placeholder:'Nouveau souvenir…',size:40}),ntype=el('select',{},...['fait','preference','tache','ephemere','foyer','relation'].map(v=>el('option',{value:v},v))),ntags=el('input',{placeholder:'tags',size:14});
+  const nt=el('input',{placeholder:'Nouveau souvenir…',size:40}),ntype=el('select',{},...['fait','preference','tache','ephemere','foyer'].map(v=>el('option',{value:v},v))),ntags=el('input',{placeholder:'tags',size:14});
   const add=el('button',{onclick:async()=>{if(!nt.value.trim())return;const r=await post('/api/add',{texte:nt.value,type:ntype.value,tags:ntags.value,o:nowner.value});say(r.statut);render()}},'Ajouter');
   const th=(k,t)=>el('th',{onclick:()=>{sortDir=(sortKey===k)?-sortDir:-1;sortKey=k;render()}},t+(sortKey===k?(sortDir>0?' ▲':' ▼'):''));
-  main.append(el('div',{className:'bar'},inpQ,selT,selS,selO),el('div',{className:'bar'},nt,ntype,ntags,el('span',{className:'mut'},'pour'),nowner,add),
+  const aide=(!fType&&nbRel)?el('p',{className:'mut'},nbRel+' relation(s) entre personnes ne sont pas listées ici : elles se gèrent dans l’onglet Relations. ',el('a',{href:'#',onclick:e=>{e.preventDefault();document.querySelector('nav button[data-t=rel]').click()}},'Ouvrir Relations')):'';
+  main.append(el('div',{className:'bar'},inpQ,selT,selS,selO),aide,el('div',{className:'bar'},nt,ntype,ntags,el('span',{className:'mut'},'pour'),nowner,add),
     el('table',{},el('tr',{},th('texte','Souvenir'),th('type','Type'),th('proprietaire','Propriétaire'),th('eff','Importance'),th('tags','Tags'),th('cree','Créé'),th('hits','Rappels'),th('etat','État'),el('th',{},'')),
     ...list.map(r=>el('tr',{className:r.etat},
       el('td',{},r.texte,el('div',{className:'mut'},r.id+' · '+r.src)),el('td',{},r.type),

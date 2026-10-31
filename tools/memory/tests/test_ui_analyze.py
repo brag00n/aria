@@ -288,6 +288,51 @@ class UiSexeTests(UiCase):
         person = next(p for p in self.call("GET", "/api/personnes")[1] if p["id"] == pid)
         self.assertEqual(person["sexe"], "m")
 
+    def test_connue_d_aria_ajoute_ou_retire_de_la_liste_des_interlocuteurs(self):
+        from interlocuteur import Interlocuteurs
+        i = Interlocuteurs(self.store)
+        i.identifier("Olivier")
+        i.relier("Tiphaine", "conjoint", "moi")
+        tiphaine = self.store.personnes.find("Tiphaine")[0]["id"]
+        liste = lambda: {p["label"] for p in self.store.personnes.listing()}
+        self.assertNotIn("Tiphaine", liste())                                         # seulement citée
+        self.assertTrue(self.call("POST", "/api/personne/update", {"id": tiphaine, "connue": True})[1]["ok"])
+        self.assertIn("Tiphaine", liste())
+        row = next(p for p in self.call("GET", "/api/personnes")[1] if p["id"] == tiphaine)
+        self.assertFalse(row["citee"])
+        self.assertTrue(self.call("POST", "/api/personne/update", {"id": tiphaine, "connue": False})[1]["ok"])
+        self.assertNotIn("Tiphaine", liste())
+        self.assertTrue(next(p for p in self.call("GET", "/api/personnes")[1] if p["id"] == tiphaine)["citee"])
+        # ses liens et ses fiches restent intacts
+        self.assertTrue(i.graphe(tiphaine)["voisins"])
+
+    def test_on_ne_retire_pas_l_interlocuteur_actif(self):
+        pid = self.call("POST", "/api/personne/add", {"nom": "Paul"})[1]["id"]
+        self.store.active = pid
+        x = self.call("POST", "/api/personne/update", {"id": pid, "connue": False})[1]
+        self.assertFalse(x["ok"])
+        self.assertIn("actif", x["erreur"])
+        self.assertIn("Paul", {p["label"] for p in self.store.personnes.listing()})
+
+    def test_modifier_sans_toucher_au_statut_le_conserve(self):
+        from interlocuteur import Interlocuteurs
+        i = Interlocuteurs(self.store)
+        i.identifier("Olivier")
+        i.relier("Tiphaine", "conjoint", "moi")
+        tiphaine = self.store.personnes.find("Tiphaine")[0]["id"]
+        self.call("POST", "/api/personne/update", {"id": tiphaine, "surnom": "Titi"})
+        self.assertTrue(self.store.personnes.get(tiphaine).get("ref"))
+
+    def test_les_relations_ne_sont_plus_listees_dans_les_souvenirs(self):
+        self.assertIn("Ouvrir Relations", ui.PAGE)                       # renvoi vers l'onglet Relations
+        self.assertIn("r.type!=='relation'", ui.PAGE)                    # masquées par défaut dans l'onglet Souvenirs
+        status, rows = self.call("GET", "/api/relations")                # toujours servies par leur propre onglet
+        self.assertEqual(status, 200)
+        self.assertTrue(all(r["type"] == "relation" for r in rows))
+
+    def test_la_page_propose_connue_par_aria(self):
+        self.assertIn("Connue par Aria", ui.PAGE)
+
     def test_les_personnes_citees_sont_signalees(self):
         from interlocuteur import Interlocuteurs
         i = Interlocuteurs(self.store)
