@@ -33,10 +33,29 @@ def normalize(text):
     return _NON_ALNUM.sub(" ", t).strip()
 
 
+# Pluriels irréguliers en -aux / -eux : singulier correspondant (liste fermée, complétée au besoin)
+_PLURIELS_IRREGULIERS = {"travaux": "travail", "vitraux": "vitrail", "coraux": "corail", "emaux": "email", "soupiraux": "soupirail",
+                         "baux": "bail", "yeux": "oeil", "ciaux": "ciel", "aieux": "aieul"}
+# Mots en -au / -eau dont le pluriel en -aux ne vient PAS d'un singulier en -al
+_AUX_SANS_AL = frozenset(("tuyaux", "noyaux", "boyaux", "joyaux", "landaux", "fourneaux", "sarraux", "hoyaux", "etaux", "eaux"))
+
+
+def _singulier(token):
+    """Pluriel -> singulier pour les cas irréguliers : « animaux » -> « animal », « chevaux » -> « cheval », « travaux » -> « travail ».
+    Les pluriels réguliers (-s, -x) sont traités par stem. Heuristique sans dictionnaire : un mot en -aux (hors -eaux et liste fermée
+    d'exceptions) vient d'un singulier en -al."""
+    if token in _PLURIELS_IRREGULIERS:
+        return _PLURIELS_IRREGULIERS[token]
+    if token.endswith("aux") and not token.endswith("eaux") and token not in _AUX_SANS_AL and len(token) >= 5:
+        return token[:-3] + "al"
+    return token
+
+
 def stem(token):
-    """Racinisation légère : pluriel puis un suffixe courant. Les nombres sont laissés tels quels."""
+    """Racinisation légère : pluriel (régulier et en -aux) puis un suffixe courant. Les nombres sont laissés tels quels."""
     if token.isdigit() or len(token) <= 3:
         return token
+    token = _singulier(token)
     if token.endswith(("s", "x")):
         token = token[:-1]
     for suffix in _SUFFIXES:

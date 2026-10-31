@@ -47,12 +47,50 @@ class TextprocTests(unittest.TestCase):
         self.assertEqual(textproc.analyze("préfère"), textproc.analyze("préférée"))
         self.assertEqual(textproc.analyze("volet"), textproc.analyze("volets"))
 
+    def test_pluriels_en_aux(self):
+        for pluriel, singulier in [("animaux", "animal"), ("chevaux", "cheval"), ("journaux", "journal"), ("familiaux", "familial"),
+                                   ("hôpitaux", "hôpital"), ("généraux", "général"), ("travaux", "travail"), ("yeux", "œil"),
+                                   ("vitraux", "vitrail")]:
+            self.assertEqual(textproc.analyze(pluriel), textproc.analyze(singulier.replace("œ", "oe")), pluriel)
+
+    def test_les_mots_en_eau_et_les_exceptions_en_au_ne_deviennent_pas_al(self):
+        for pluriel, singulier in [("bateaux", "bateau"), ("châteaux", "château"), ("gâteaux", "gâteau"), ("tuyaux", "tuyau"),
+                                   ("noyaux", "noyau"), ("eaux", "eau")]:
+            self.assertEqual(textproc.analyze(pluriel), textproc.analyze(singulier), pluriel)
+
+    def test_pluriels_reguliers_inchanges(self):
+        for pluriel, singulier in [("enfants", "enfant"), ("amis", "ami"), ("chats", "chat"), ("films", "film")]:
+            self.assertEqual(textproc.analyze(pluriel), textproc.analyze(singulier), pluriel)
+
     def test_chiffres_conserves(self):
         self.assertIn("19", textproc.analyze("19 degrés"))
 
     def test_idempotence_sur_la_requete(self):
         a = textproc.analyze("Quelle température préfère Marion ?")
         self.assertEqual(a, textproc.analyze("quelle temperature prefere marion"))
+
+
+class PlurielDansLaRechercheTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="memplur_")
+        self.s = store_mod.Store(Path(self.tmp), "default", clock=Clock(), lock_instance=False)
+        self.s.active = "p1"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_animaux_retrouve_un_souvenir_etiquete_animal(self):
+        self.s.add("La chatte s'appelle Réglisse", "foyer", "animal,chat")
+        self.s.add("Marion préfère 19 degrés", "preference", "temperature")
+        res, fallback = self.s.search("animaux de la maison", 5, touch=False)
+        self.assertFalse(fallback)
+        self.assertEqual([r["txt"] for r in res], ["La chatte s'appelle Réglisse"])
+
+    def test_le_singulier_retrouve_un_souvenir_au_pluriel(self):
+        self.s.add("Les chevaux sont au pré", "fait")
+        res, fallback = self.s.search("cheval", 5, touch=False)
+        self.assertFalse(fallback)
+        self.assertEqual(len(res), 1)
 
 
 class ScoringTests(unittest.TestCase):
