@@ -205,5 +205,43 @@ class Phrase(unittest.TestCase):
         self.assertNotIn("inconnu", res)
 
 
+class Immediats(unittest.TestCase):
+    def setUp(self):
+        self.f = famille(("tiphaine", "conjoint", "olivier"), ("tiphaine", "parent", "marion"), ("tiphaine", "parent", "emma"),
+                         ("olivier", "parent", "marion"), sexes=SEXES)
+
+    def liens(self, a):
+        return {b: (nom, fam) for b, nom, fam in parente.immediats(self.f, a)}
+
+    def test_marion_voit_ses_parents_et_sa_soeur(self):
+        r = self.liens("marion")
+        self.assertEqual(r["tiphaine"], ("la mère", "parent"))
+        self.assertEqual(r["olivier"], ("le père", "parent"))
+        self.assertEqual(r["emma"], ("la sœur", "fratrie"))
+        self.assertEqual(set(r), {"tiphaine", "olivier", "emma"})
+
+    def test_tiphaine_voit_son_conjoint_et_ses_enfants(self):
+        r = self.liens("tiphaine")
+        self.assertEqual(r["olivier"], ("le mari", "conjoint"))
+        self.assertEqual(r["marion"], ("la fille", "enfant"))
+        self.assertEqual(r["emma"], ("la fille", "enfant"))
+
+    def test_le_pere_presume_apparait(self):
+        self.assertEqual(self.liens("emma")["olivier"], ("le père", "parent"))
+
+    def test_pas_de_soi_meme_ni_de_doublon(self):
+        for a in ("marion", "tiphaine", "olivier", "emma"):
+            ids = [b for b, _, _ in parente.immediats(self.f, a)]
+            self.assertNotIn(a, ids)
+            self.assertEqual(len(ids), len(set(ids)))
+
+    def test_personne_isolee(self):
+        self.assertEqual(parente.immediats(self.f, "inconnu"), [])
+
+    def test_fratrie_declaree_sans_parent(self):
+        f = famille(("marion", "fratrie", "paul"), sexes=SEXES)
+        self.assertEqual({b: n for b, n, _ in parente.immediats(f, "marion")}, {"paul": "le frère"})
+
+
 if __name__ == "__main__":
     unittest.main()

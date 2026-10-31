@@ -34,6 +34,11 @@ LIENS_COURANTS = ("femme", "mari", "epoux", "epouse", "fille", "fils", "pere", "
                   "voisine", "collegue", "enfant", "parent", "compagnon", "compagne")
 
 
+# Familles de liens comptées comme « famille » (les autres sont des « connaissances ») ; sert à colorer le graphe de la page
+MAX_NIVEAU = 5
+CATEGORIE_FAMILLE = frozenset(("conjoint", "parent", "enfant", "fratrie"))
+
+
 class Interlocuteurs:
     """Façade au-dessus d'un Store : désigne l'interlocuteur actif et fabrique les réponses des outils."""
 
@@ -270,6 +275,59 @@ class Interlocuteurs:
     def _question_de_famille(self, question):
         """La question porte-t-elle sur la famille entière de l'interlocuteur plutôt que sur une personne précise ?"""
         return bool(set(key(question).split()) & self._MOTS_FAMILLE)
+
+    def _proches(self, ident, fam):
+        """Proches immédiats d'une identité : [(identité, nom du lien, famille du lien)]. Parenté calculée (présomptions comprises),
+        puis liens libres (amis, voisins, collègues et tout lien que le moteur de parenté ne range pas)."""
+        out = list(parente.immediats(fam, ident))
+        vus = {ident} | {o[0] for o in out}
+        for rec in self.store.records.values():
+            rel = rec.get("rel")
+            if rec["t"] != "relation" or not rel or liens.type_lien(rel.get("l", "")) not in ("", "ami", "voisin", "collegue"):
+                continue
+            a, b = self._ident(rel.get("a", "")), self._ident(rel.get("b", ""))
+            autre = b if a == ident else a if b == ident else ""
+            if autre and autre not in vus:
+                vus.add(autre)
+                out.append((autre, rel.get("l", ""), "autre"))
+        return out
+
+    def graphe(self, pid, niveau=1):
+        """Relations d'une personne jusqu'à `niveau` (1 à 5, 1 par défaut), pour la page de gestion : {"centre": {...}, "niveau": n,
+        "voisins": [...]}. Niveau 1 = proches immédiats ; niveau 2 = leurs proches immédiats, etc. (parcours en largeur, chaque personne
+        n'apparaît qu'une fois, à son niveau le plus proche). Chaque voisin : `n` (clé du nœud), `de` (clé du nœud d'où il est atteint,
+        le centre au niveau 1), `niveau`, `id` (si une fiche existe), nom, `lien` (nom du lien PAR RAPPORT à `de`), `famille` du lien et
+        CATÉGORIE générale « famille » ou « connaissance » qui sert à colorer le graphe. None si la personne n'existe pas."""
+        centre = self.store.personnes.get(pid)
+        if not centre:
+            return None
+        try:
+            niveau = max(1, min(MAX_NIVEAU, int(niveau)))
+        except (TypeError, ValueError):
+            niveau = 1
+        moi = "id:" + pid
+        fam = self.famille()
+        voisins, vus, front = [], {moi}, [moi]
+        for n in range(1, niveau + 1):
+            suivant = []
+            for source in front:
+                for ident, nom_lien, famille in self._proches(source, fam):
+                    if ident in vus:
+                        continue
+                    vus.add(ident)
+                    suivant.append(ident)
+                    personne = self.store.personnes.get(ident[3:]) if ident.startswith("id:") else None
+                    voisins.append({"n": ident, "de": source, "niveau": n, "id": personne["id"] if personne else "",
+                                    "compl": personne["compl"] if personne else "",
+                                    "nom": self._libelle(ident, fam), "citee": bool(personne.get("ref")) if personne else True,
+                                    "sexe": (personne or {}).get("sexe", ""), "lien": nom_lien, "famille": famille,
+                                    "categorie": "famille" if famille in CATEGORIE_FAMILLE else "connaissance"})
+            front = suivant
+            if not front:
+                break
+        return {"centre": {"id": centre["id"], "n": moi, "nom": centre["nom"], "compl": centre["compl"],
+                           "complet": self.store.personnes.full(centre), "sexe": centre.get("sexe", ""), "citee": bool(centre.get("ref"))},
+                "niveau": niveau, "voisins": voisins}
 
     def _libelle(self, ident, fam):
         if ident.startswith("id:"):

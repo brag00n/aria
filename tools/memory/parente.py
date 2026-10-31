@@ -313,3 +313,30 @@ def tous_les_liens(fam, a, personnes):
         if nom_lien:
             resultats[b] = nom_lien
     return resultats
+
+
+def immediats(fam, a):
+    """Proches immédiats de a, sous forme de liste de (identité, nom du lien de cette personne par rapport à a, famille du lien).
+    Famille du lien : 'conjoint', 'parent' (b est un parent de a), 'enfant' (b est un enfant de a), 'fratrie'.
+    Comprend les parents PRÉSUMÉS (voir parents_de) : le graphe montre ce que le moteur répond, pas seulement ce qui est déclaré."""
+    vus = {}
+
+    def ajouter(b, famille):
+        if b != a and b not in vus:
+            vus[b] = (b, lien(fam, a, b) or "", famille)
+
+    for b in fam.conjoints.get(a, ()):
+        ajouter(b, "conjoint")
+    for b in parents_de(fam, a):
+        ajouter(b, "parent")
+    for enfant, _ in list(fam.parents.items()):
+        if a in parents_de(fam, enfant):
+            ajouter(enfant, "enfant")
+    for b in list(fam.fratrie.get(a, ())) + list(fam.demi.get(a, ())):
+        ajouter(b, "fratrie")
+    # frères et sœurs par les parents (connus ou présumés)
+    for parent in parents_de(fam, a):
+        for enfant in list(fam.parents):
+            if enfant != a and parent in parents_de(fam, enfant):
+                ajouter(enfant, "fratrie")
+    return list(vus.values())

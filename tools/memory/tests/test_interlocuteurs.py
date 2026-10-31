@@ -846,5 +846,82 @@ class RattrapageEtFamilleTests(Base):
             self.assertFalse(self.i._question_de_famille(q), q)
 
 
+class GrapheTests(Base):
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        self.s = self.make(active="")
+        self.i = Interlocuteurs(self.s)
+        self.i.identifier("Olivier", "Cousinier")
+        self.i.relier("Tiphaine", "femme de", "moi")
+        self.i.relier("Marion", "fille de", "moi")
+        self.i.relier("Tiphaine", "mère de", "Marion")
+        self.i.relier("Lucy", "amie de", "Marion")
+        self.ids = {p["nom"]: p["id"] for p in self.s.personnes.items}
+
+    def voisins(self, nom):
+        return {v["nom"]: v for v in self.i.graphe(self.ids[nom])["voisins"]}
+
+    def test_le_centre_est_la_personne_demandee(self):
+        g = self.i.graphe(self.ids["Marion"])
+        self.assertEqual((g["centre"]["id"], g["centre"]["nom"]), (self.ids["Marion"], "Marion"))
+
+    def test_proches_et_categories(self):
+        v = self.voisins("Marion")
+        self.assertEqual(set(v), {"Tiphaine", "Olivier", "Lucy"})
+        self.assertEqual(v["Tiphaine"]["lien"], "la mère")
+        self.assertEqual(v["Tiphaine"]["categorie"], "famille")
+        self.assertEqual(v["Olivier"]["categorie"], "famille")
+        self.assertEqual(v["Lucy"]["categorie"], "connaissance")
+
+    def test_recentrage(self):
+        v = self.voisins("Tiphaine")
+        self.assertEqual(v["Marion"]["lien"], "la fille")
+        self.assertNotIn("Lucy", v)
+        self.assertTrue(all(self.i.graphe(x["id"]) for x in self.voisins("Marion").values()))
+
+    def test_connaissance_symetrique(self):
+        v = self.voisins("Lucy")
+        self.assertEqual(set(v), {"Marion"})
+        self.assertEqual(v["Marion"]["categorie"], "connaissance")
+
+    def test_niveau_par_defaut_et_bornes(self):
+        self.assertEqual(self.i.graphe(self.ids["Marion"])["niveau"], 1)
+        self.assertEqual(self.i.graphe(self.ids["Marion"], 0)["niveau"], 1)
+        self.assertEqual(self.i.graphe(self.ids["Marion"], 99)["niveau"], 5)
+        self.assertEqual(self.i.graphe(self.ids["Marion"], "abc")["niveau"], 1)
+
+    def test_niveau_2_ajoute_les_proches_des_proches(self):
+        self.i.relier("Paul", "ami de", "Lucy")
+        n1 = {v["nom"] for v in self.i.graphe(self.ids["Marion"], 1)["voisins"]}
+        g2 = self.i.graphe(self.ids["Marion"], 2)
+        n2 = {v["nom"]: v for v in g2["voisins"]}
+        self.assertNotIn("Paul", n1)
+        self.assertEqual(n2["Paul"]["niveau"], 2)
+        self.assertEqual(n2["Lucy"]["niveau"], 1)
+        self.assertEqual(n2["Paul"]["de"], n2["Lucy"]["n"])          # rattaché à Lucy, par qui il est atteint
+        self.assertEqual(n2["Lucy"]["de"], g2["centre"]["n"])
+        self.assertTrue(n1 <= set(n2))                                 # le niveau 2 contient le niveau 1
+
+    def test_chaque_personne_une_seule_fois(self):
+        for niveau in range(1, 6):
+            noms = [v["nom"] for v in self.i.graphe(self.ids["Marion"], niveau)["voisins"]]
+            self.assertEqual(len(noms), len(set(noms)))
+            self.assertNotIn("Marion", noms)
+
+    def test_niveau_trop_grand_s_arrete_quand_il_n_y_a_plus_personne(self):
+        self.assertEqual(len(self.i.graphe(self.ids["Marion"], 5)["voisins"]), 3)
+
+    def test_noms_de_famille_pour_les_noeuds(self):
+        g = self.i.graphe(self.ids["Olivier"])
+        self.assertEqual((g["centre"]["nom"], g["centre"]["compl"]), ("Olivier", "Cousinier"))
+        self.assertEqual({v["nom"]: v["compl"] for v in g["voisins"]}["Tiphaine"], "")
+
+    def test_personne_inconnue_et_isolee(self):
+        self.assertIsNone(self.i.graphe("p999"))
+        seul = self.s.personnes.add("Seul")
+        self.assertEqual(self.i.graphe(seul["id"])["voisins"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
