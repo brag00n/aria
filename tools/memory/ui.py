@@ -126,6 +126,10 @@ def make_handler(store, activity, token):
                                     "cree": p["c"], "souvenirs": counts.get(p["id"], 0),
                                     "actif": p["id"] == store.active} for p in store.personnes.items]
                                    + [{"id": "", "label": "Foyer (partagé)", "souvenirs": counts.get("", 0), "actif": False, "special": True}])
+            if url.path == "/api/graphe":
+                from interlocuteur import Interlocuteurs
+                graphe = Interlocuteurs(store).graphe((q.get("id") or [""])[0], (q.get("niveau") or ["1"])[0])
+                return self._json(graphe if graphe else {"erreur": "personne inconnue"}, 200 if graphe else 404)
             if url.path == "/api/relations":
                 return self._json([view(r, now) for r in store.records.values() if r["t"] == "relation"])
             if url.path == "/api/stats":
@@ -238,6 +242,15 @@ th{cursor:pointer;color:var(--mut);font-weight:600;white-space:nowrap}
 .bar{display:flex;gap:8px;margin:8px 0;flex-wrap:wrap}
 pre{background:var(--card);border:1px solid var(--line);padding:8px;overflow:auto;max-height:60vh}
 #msg{color:var(--warn);margin-left:8px}
+:root{--fam:#2a6df4;--con:#e07b00;--ctr:#1c1c1e}
+@media (prefers-color-scheme:dark){:root{--fam:#6c9bff;--con:#f0a35a;--ctr:#ececf0}}
+#modal .wide{min-width:min(760px,92vw)}
+#graph{width:100%;height:auto;max-height:70vh;min-height:300px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+#graph .node{cursor:pointer}#graph .node:hover circle{stroke-width:4}
+#graph text{font:12px system-ui,sans-serif;fill:var(--fg);pointer-events:none}
+#graph .edge-label{font-size:11px;fill:var(--mut)}
+.legend{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin:6px 0;font-size:12px;color:var(--mut)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:5px;vertical-align:-1px}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:10}
 #modal .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 20px;min-width:360px;max-width:92vw;max-height:90vh;overflow:auto}
 #modal h2{font-size:15px;margin:0 0 10px}
@@ -266,17 +279,18 @@ const OWNER_TXT=id=>(PERSONS.find(p=>p.id===id)||{label:id?'? '+id:'Foyer (parta
 
 // ---- Modale d'édition : tous les champs modifiables d'un souvenir, d'une relation ou d'une personne
 function field(label, node){ return el('div',{}, el('label',{},label), node); }
-function openModal(title, fields, info, onSave){
+function openModal(title, fields, info, onSave, retour){
   closeModal();
   const err = el('div',{className:'err'});
   const save = el('button',{onclick:async()=>{ err.textContent=''; const res = await onSave(); if(res===true){closeModal();render()} else err.textContent = res || 'Impossible'; }},'Enregistrer');
   const cancel = el('button',{onclick:closeModal},'Annuler');
   const box = el('div',{id:'modal',onclick:e=>{if(e.target===box)closeModal()}},
     el('div',{className:'card'}, el('h2',{},title), ...fields, info?el('div',{className:'info'},info):'', err, el('div',{className:'btns'},cancel,save)));
+  box._retour = retour || null;
   document.body.append(box);
   const first = box.querySelector('input,textarea,select'); if(first) first.focus();
 }
-function closeModal(){ const m=$('#modal'); if(m) m.remove(); }
+function closeModal(){ const m=$('#modal'); if(!m) return; m.remove(); const back = m._retour; m._retour = null; if(back) back(); }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 const optionsOf = (values, current) => values.map(v=>el('option',{value:v[0],selected:v[0]===current},v[1]));
 const TYPES = [['fait','fait'],['preference','préférence'],['tache','tâche'],['ephemere','éphémère'],['foyer','foyer (partagé)'],['relation','relation (partagée)']];
@@ -318,7 +332,7 @@ function editRelation(r){
     return x.ok ? true : (x.erreur || 'Impossible');
   });
 }
-function editPerson(p){
+function editPerson(p, retour){
   const nom = el('input',{value:p.nom}), compl = el('input',{value:p.compl}), sur = el('input',{value:p.surnom});
   const sexe = el('select',{}, ...optionsOf([['','inconnu'],['f','féminin'],['m','masculin']], p.sexe||''));
   openModal('Modifier la personne', [
@@ -327,8 +341,124 @@ function editPerson(p){
   ], `Identifiant ${p.id} · créée ${p.cree} · ${p.souvenirs} souvenir(s)${p.actif?' · interlocuteur actif':''}${p.citee?' · seulement citée (pas encore interlocutrice)':''}`, async ()=>{
     const x = await post('/api/personne/update', {id:p.id, nom:nom.value, compl:compl.value, surnom:sur.value, sexe:sexe.value});
     return x.ok ? true : 'Le prénom est obligatoire';
-  });
+  }, retour);
 }
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs={}, ...kids) => { const e = document.createElementNS(SVGNS, tag);
+  for(const k in attrs) e.setAttribute(k, attrs[k]); kids.flat().forEach(c=>e.append(c)); return e; };
+const CAT_COLOR = {famille:'var(--fam)', connaissance:'var(--con)'};
+const CAT_NAME = {famille:'Famille', connaissance:'Connaissance'};
+
+// Graphe des relations immédiates d'une personne : elle est au centre, ses proches autour ; un clic sur un proche le recentre
+async function openGraph(pid, niv0){
+  const box = el('div',{id:'graph-host'});
+  const title = el('h2',{}, 'Relations');
+  let courant = pid, niveau = niv0 || 1;
+  const choix = el('select',{title:'Niveau des relations (1 = proches immédiats)'}, ...[1,2,3,4,5].map(n=>el('option',{value:String(n),selected:n===niveau}, 'Niveau ' + n)));
+  choix.onchange = ()=>{ niveau = parseInt(choix.value, 10) || 1; show(courant); };
+  const legend = el('div',{className:'legend'},
+    el('span',{}, el('i',{style:'background:var(--fam)'}), 'Famille'),
+    el('span',{}, el('i',{style:'background:var(--con)'}), 'Connaissance'),
+    choix,
+    el('span',{className:'mut'}, 'Cliquez sur une personne pour recentrer le graphe'));
+  const close = el('button',{onclick:closeModal},'Fermer');
+  closeModal();
+  const modal = el('div',{id:'modal',onclick:e=>{if(e.target===modal)closeModal()}},
+    el('div',{className:'card wide'}, title, legend, box, el('div',{className:'btns'}, close)));
+  document.body.append(modal);
+
+  async function show(id){
+    courant = id;
+    box.replaceChildren(el('p',{className:'mut'},'Chargement…'));
+    const g = await get('/api/graphe?id=' + encodeURIComponent(id) + '&niveau=' + niveau);
+    if(g.erreur){ box.replaceChildren(el('p',{className:'err'}, g.erreur)); return; }
+    title.textContent = 'Relations de ' + g.centre.complet;
+    drawGraph(box, g, show, ()=>editerCentre(g.centre.id));
+  }
+  // le clic sur la personne centrale ouvre son édition ; la fenêtre du graphe est rouverte (même niveau) à la fermeture
+  function editerCentre(id){
+    const p = PERSONS.find(x=>x.id===id);
+    if(!p) return;
+    modal.remove();
+    editPerson(p, ()=>openGraph(id, niveau));
+  }
+  show(pid);
+}
+
+// Prénom, et nom de famille dessous s'il est connu (tronqués pour tenir dans le cercle)
+function nodeText(node, x, y, nom, compl, centre){
+  const cut = (t, n)=>t.length > n ? t.slice(0, n - 1) + '…' : t;
+  const style = centre ? 'fill:var(--bg);font-weight:600' : '';
+  const a = svgEl('text',{x:x,y:y + (compl ? -1 : 4),'text-anchor':'middle',style:style});
+  a.textContent = cut(nom, 10);
+  node.append(a);
+  if(compl){
+    const b = svgEl('text',{x:x,y:y + 12,'text-anchor':'middle',style:style + ';font-size:10px;opacity:.85'});
+    b.textContent = cut(compl, 11);
+    node.append(b);
+  }
+}
+
+function drawGraph(box, g, onPick, onEditCentre){
+  const niv = g.niveau || 1;
+  const W = 720 + 140*(niv-1), H = 420 + 120*(niv-1), cx = W/2, cy = H/2;
+  const svg = svgEl('svg',{id:'graph',viewBox:`0 0 ${W} ${H}`,preserveAspectRatio:'xMidYMid meet'});
+  const step = Math.min((cx - 60), (cy - 46)) / niv;
+  const rn = niv > 1 ? 28 : 31;
+  // arbre : chaque personne est rattachée à celle d'où elle est atteinte ; son secteur d'angle est proportionnel à ses descendantes
+  const enfants = {};
+  g.voisins.forEach(v=>{ (enfants[v.de] = enfants[v.de] || []).push(v); });
+  const poids = {};
+  const peser = k=>{ poids[k] = (enfants[k]||[]).reduce((s,v)=>s + peser(v.n), 0) || 1; return poids[k]; };
+  peser(g.centre.n);
+  const pos = {}; pos[g.centre.n] = {x:cx, y:cy};
+  const liste = [];
+  const placer = (k, a0, a1)=>{
+    let a = a0;
+    (enfants[k]||[]).forEach(v=>{
+      const part = (a1 - a0) * poids[v.n] / poids[k];
+      const m = a + part/2, r = step * v.niveau;
+      pos[v.n] = {x: cx + r*Math.cos(m), y: cy + r*Math.sin(m)};
+      liste.push(v);
+      placer(v.n, a, a + part);
+      a += part;
+    });
+  };
+  const depart = -Math.PI/2;
+  placer(g.centre.n, depart, depart + 2*Math.PI);
+  if(niv === 1 && liste.length === 1) pos[liste[0].n] = {x: cx + 200, y: cy};
+  // arêtes d'abord (sous les nœuds), avec le libellé du lien au milieu
+  liste.forEach(v=>{
+    const p = pos[v.n], s = pos[v.de];
+    const color = CAT_COLOR[v.categorie] || CAT_COLOR.connaissance;
+    svg.append(svgEl('line',{x1:s.x,y1:s.y,x2:p.x,y2:p.y,stroke:color,'stroke-width':2.5,'stroke-linecap':'round',opacity:0.85}));
+    const lab = svgEl('text',{x:(s.x+p.x)/2,y:(s.y+p.y)/2 - 4,'text-anchor':'middle',class:'edge-label'});
+    lab.textContent = v.lien || '';
+    svg.append(lab);
+  });
+  // proches
+  liste.forEach(v=>{
+    const p = pos[v.n];
+    const color = CAT_COLOR[v.categorie] || CAT_COLOR.connaissance;
+    const cliquable = !!v.id;                      // sans fiche (nom pas encore connu), on ne peut pas recentrer
+    const node = svgEl('g',{class:'node',style:cliquable?'':'cursor:default'},
+      svgEl('circle',{cx:p.x,cy:p.y,r:rn,fill:'var(--card)',stroke:color,'stroke-width':3}));
+    nodeText(node, p.x, p.y, v.nom, v.compl, false);
+    node.append(svgEl('title',{}, document.createTextNode(v.nom + ' — ' + (v.lien || 'lien') + ' (' + CAT_NAME[v.categorie] + ', niveau ' + v.niveau + ')' + (v.citee ? ' · jamais interlocuteur' : ''))));
+    if(cliquable) node.addEventListener('click', ()=>onPick(v.id));
+    svg.append(node);
+  });
+  // centre
+  const ctr = svgEl('g',{class:'node'},
+    svgEl('circle',{cx,cy,r:38,fill:'var(--ctr)',stroke:'var(--ctr)','stroke-width':3}));
+  nodeText(ctr, cx, cy, g.centre.nom, g.centre.compl, true);
+  if(onEditCentre){ ctr.style.cursor = 'pointer'; ctr.addEventListener('click', onEditCentre); ctr.append(svgEl('title',{}, document.createTextNode('Modifier la personne'))); }
+  svg.append(ctr);
+  const parts = [svg];
+  if(!g.voisins.length) parts.unshift(el('p',{className:'mut'},'Aucune relation connue pour cette personne.'));
+  box.replaceChildren(...parts);
+}
+
 function mergePerson(p){
   const others = PERSONS.filter(o=>!o.special && o.id!==p.id);
   if(!others.length){ say('Aucune autre personne vers qui fusionner'); return; }
@@ -393,7 +523,7 @@ async function renderPersons(main){
     el('table',{},el('tr',{},...['Personne','Prénom','Nom','Surnom','Sexe','Souvenirs',''].map(h=>el('th',{},h))),
       ...PERSONS.map(p=>p.special?el('tr',{},el('td',{},p.label),el('td',{colSpan:4,className:'mut'},'souvenirs sans propriétaire (relations, foyer, anciens souvenirs)'),el('td',{},String(p.souvenirs)),el('td',{})):
         el('tr',{},el('td',{},p.label+(p.actif?' ● actif':'')+(p.citee?' (citée)':'')),el('td',{},p.nom),el('td',{},p.compl),el('td',{},p.surnom),el('td',{},p.sexe==='f'?'F':p.sexe==='m'?'M':'?'),el('td',{},String(p.souvenirs)),
-          el('td',{},el('button',{title:'Modifier',onclick:()=>editPerson(p)},'✎'),' ',
+          el('td',{},el('button',{title:'Graphe des relations',onclick:()=>openGraph(p.id)},'🕸'),' ',el('button',{title:'Modifier',onclick:()=>editPerson(p)},'✎'),' ',
             el('button',{title:'Fusionner dans une autre personne',onclick:()=>mergePerson(p)},'⇢'),' ',
             el('button',{title:'Supprimer',onclick:async()=>{if(!confirm('Supprimer '+p.label+' ?'))return;const r=await post('/api/personne/delete',{id:p.id});say(r.ok?'Supprimée':(r.erreur||'Impossible'));render()}},'🗑'))))));
 }

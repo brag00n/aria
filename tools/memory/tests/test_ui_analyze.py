@@ -299,6 +299,51 @@ class UiSexeTests(UiCase):
         self.assertEqual(rows["Tiphaine"]["sexe"], "f")
 
 
+class UiGrapheTests(UiCase):
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        i = Interlocuteurs(self.store)
+        i.identifier("Olivier")
+        i.relier("Tiphaine", "femme de", "moi")
+        i.relier("Lucy", "amie de", "moi")
+        self.ids = {p["nom"]: p["id"] for p in self.store.personnes.items}
+
+    def test_api_graphe(self):
+        status, g = self.call("GET", "/api/graphe?id=" + self.ids["Olivier"])
+        self.assertEqual(status, 200)
+        self.assertEqual(g["centre"]["nom"], "Olivier")
+        v = {x["nom"]: x for x in g["voisins"]}
+        self.assertEqual(v["Tiphaine"]["categorie"], "famille")
+        self.assertEqual(v["Lucy"]["categorie"], "connaissance")
+
+    def test_api_graphe_recentre(self):
+        g = self.call("GET", "/api/graphe?id=" + self.ids["Tiphaine"])[1]
+        self.assertEqual(g["centre"]["nom"], "Tiphaine")
+        self.assertIn("Olivier", {x["nom"] for x in g["voisins"]})
+
+    def test_api_graphe_niveau(self):
+        self.store.personnes.add("Paul")
+        from interlocuteur import Interlocuteurs
+        Interlocuteurs(self.store).relier("Paul", "ami de", "Lucy")
+        n1 = self.call("GET", "/api/graphe?id=" + self.ids["Olivier"])[1]
+        n2 = self.call("GET", "/api/graphe?id=" + self.ids["Olivier"] + "&niveau=2")[1]
+        self.assertEqual((n1["niveau"], n2["niveau"]), (1, 2))
+        self.assertNotIn("Paul", {v["nom"] for v in n1["voisins"]})
+        self.assertIn("Paul", {v["nom"] for v in n2["voisins"]})
+        self.assertEqual(self.call("GET", "/api/graphe?id=" + self.ids["Olivier"] + "&niveau=42")[1]["niveau"], 5)
+
+    def test_api_graphe_inconnu(self):
+        status, g = self.call("GET", "/api/graphe?id=p404")
+        self.assertEqual(status, 404)
+        self.assertIn("erreur", g)
+        self.assertEqual(self.call("GET", "/api/graphe")[0], 404)
+
+    def test_la_page_propose_le_graphe_colore(self):
+        for mot in ("openGraph", "--fam", "--con"):
+            self.assertIn(mot, ui.PAGE)
+
+
 class UiTokenTests(UiCase):
     token = "secret-test"
 

@@ -69,6 +69,7 @@ Variable `MEMORY_UI_PORT` (ex. 7870) dans l'entrée `memoire` de `configs/defaul
 cherche, ajoute, modifie, **attribue à une personne**, protège (📌), oublie et restaure les souvenirs, gère les **personnes** (création,
 renommage, fusion) et les **relations**, et affiche archive, statistiques et journal. Elle voit tous les souvenirs, quel que soit l'interlocuteur actif. Pour l'atteindre
 depuis le PC hôte, publier le port dans `docker-compose.yml` **sur 127.0.0.1 uniquement** : `"127.0.0.1:7870:7870"`.
+Le bouton 🕸 d'une personne (onglet Personnes) ouvre un **graphe de ses relations immédiates** (route `GET /api/graphe?id=`) : la personne au centre, ses proches autour, en bleu la famille (conjoint, parents, enfants, fratrie), en orange les connaissances (amis, voisins, collègues). Un clic sur un proche recentre le graphe sur lui. Un sélecteur règle le niveau (1 par défaut, 5 au maximum, `&niveau=` dans la route) : le niveau 2 ajoute les proches des proches, et ainsi de suite.
 Autres variables : `MEMORY_UI_TOKEN` (jeton, à passer en `?token=`), `MEMORY_UI_HOSTS` (noms d'hôte supplémentaires autorisés).
 
 ## Variables d'environnement
