@@ -856,6 +856,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
     ).then(refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
 
 if __name__ == "__main__":
+    import asyncio
     import contextlib
 
     @contextlib.asynccontextmanager
@@ -863,14 +864,22 @@ if __name__ == "__main__":
         """Connecte les serveurs MCP au démarrage d'Aria (et non à la première question) : leurs pages éventuelles
         (ex. gestion de la mémoire) sont disponibles tout de suite, et le premier échange ne paie plus ce démarrage."""
         manager = getattr(llm.engine, "mcp_manager", None)
-        if manager is not None:
+
+        async def connecter():
             try:
                 await manager.ensure_connected()
             except Exception as e:                  # ne jamais empêcher Aria de démarrer à cause d'un serveur MCP
                 utils.log_info("MCP", f"❌ Connexion au démarrage impossible : {type(e).__name__}: {e}")
+
+        # La connexion se fait en tâche de fond : Gradio n'attend que 5 s que le serveur soit prêt, et le lifespan le retarde
+        # tant qu'il n'a pas rendu la main (jeedom, recherche web, mémoire : plusieurs secondes). Un message qui arrive avant la fin
+        # attend le verrou de ensure_connected, comme avant.
+        tache = asyncio.create_task(connecter()) if manager is not None else None
         try:
             yield
         finally:
+            if tache is not None and not tache.done():
+                tache.cancel()
             if manager is not None:
                 await manager.close()
 
