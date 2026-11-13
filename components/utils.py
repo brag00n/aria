@@ -159,6 +159,8 @@ class TtsQueue:
         return audio
 
     def _enqueue(self, text):
+        if self.tts is None:           # accès tiers en texte seul : rien à synthétiser
+            return
         self.count += 1
         cf = _TTS_EXECUTOR.submit(self._run, self.count, text)
         # cf (concurrent.futures) sert à annuler un bloc pas encore démarré ; le future asyncio sert à l'attendre
