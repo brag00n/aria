@@ -44,6 +44,7 @@ class SessionRegistry:
         self.sessions = {}
         self._lock = None
         self._reaper = None
+        self._loop = None
 
     def _guard(self):
         if self._lock is None:
@@ -58,6 +59,7 @@ class SessionRegistry:
         """Session de (clé, session client), créée à la demande. Lève SessionError (code HTTP dans `.code`)."""
         client_session = "".join(c for c in str(client_session or "default") if c.isalnum() or c in "-_")[:40] or "default"
         sid = self.sid_of(key_rec["id"], client_session)
+        self._loop = asyncio.get_running_loop()          # pour request_close_key, appelée depuis un autre thread
         async with self._guard():
             s = self.sessions.get(sid)
             if s and not s.closed.is_set():
@@ -132,6 +134,12 @@ class SessionRegistry:
         """Ferme toutes les sessions d'une clé (révocation ou changement de profil)."""
         for sid in [sid for sid, s in self.sessions.items() if s.key_id == key_id]:
             await self.close(sid)
+
+    def request_close_key(self, key_id):
+        """Ferme les sessions d'une clé depuis un AUTRE thread (page d'administration) : la fermeture est planifiée dans la boucle de l'API."""
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.close_key(key_id), loop)
 
     async def close_all(self):
         for sid in list(self.sessions):

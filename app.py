@@ -60,7 +60,7 @@ from components import visualizer, mic_toggle
 from components.language import Language, normalize
 from components.conversation import Conversation
 from components import https
-from components import memory_tab
+from components import memory_tab, access_tab
 from components import interlocuteur
 from components import history as history_mod
 utils.log_info("app","Stt, Llm, Tts chargés")
@@ -813,6 +813,13 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
             with gr.TabItem("🧠 Mémoire") as memory_tab_item:
                 gr.HTML(memory_tab.html(_memory_port))
             memory_tab_item.select(None, None, None, js=memory_tab.js_reload())
+
+        # --- ONGLET ACCÈS TIERS (clés API des applications tierces) : seulement si "access.enabled" est vrai dans la config ---
+        _access_port = access_tab.admin_port(config)
+        if _access_port:
+            with gr.TabItem("🔑 Accès tiers") as access_tab_item:
+                gr.HTML(access_tab.html(_access_port))
+            access_tab_item.select(None, None, None, js=access_tab.js_reload())
 
     ariaHmi.load(None, None, None, js=JS_ON_LOAD)
     # Au chargement de la page : liste à jour (ou masquée si le serveur de mémoire est absent)

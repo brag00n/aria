@@ -10,7 +10,7 @@ import threading
 
 import components.utils as utils
 
-DEFAULTS = {"enabled": False, "port": 7861, "max_sessions": 8, "session_ttl_s": 900,
+DEFAULTS = {"enabled": False, "port": 7861, "admin_port": 7871, "max_sessions": 8, "session_ttl_s": 900,
             "data_dir": "models/api_access", "profiles_dir": "configs/mcp"}
 
 
@@ -19,10 +19,11 @@ def settings(config):
     s.update((config or {}).get("access") or {})
     try:
         s["port"] = int(s["port"])
+        s["admin_port"] = int(s["admin_port"])
         s["max_sessions"] = max(1, int(s["max_sessions"]))
         s["session_ttl_s"] = max(30, int(s["session_ttl_s"]))
     except (TypeError, ValueError):
-        s.update({k: DEFAULTS[k] for k in ("port", "max_sessions", "session_ttl_s")})
+        s.update({k: DEFAULTS[k] for k in ("port", "admin_port", "max_sessions", "session_ttl_s")})
     return s
 
 
@@ -38,7 +39,7 @@ def make_decoder():
 
 
 def build(config, stt, tts, language=None):
-    """Assemble les dépendances réelles. Retourne (app Starlette, deps, store de clés)."""
+    """Assemble les dépendances réelles. Retourne (app Starlette, deps, store de clés, profils)."""
     from . import api, keys, profile, sessions
     s = settings(config)
     store = keys.KeyStore(utils.aria_path(*s["data_dir"].split("/")))
@@ -50,7 +51,7 @@ def build(config, stt, tts, language=None):
         utils.log_info("ACCESS", f"{event} " + " ".join(f"{k}={v}" for k, v in fields.items()))
 
     deps = api.Deps(keys=store, sessions=registry, stt=stt, tts=tts, decode_audio=make_decoder(), on_audit=audit)
-    return api.create_app(deps), deps, store
+    return api.create_app(deps), deps, store, profiles
 
 
 def start(config, stt, tts, https_args, language=None):
@@ -59,7 +60,15 @@ def start(config, stt, tts, https_args, language=None):
     if not s["enabled"]:
         return None
     import uvicorn
-    app, deps, _ = build(config, stt, tts, language)
+    app, deps, store, profiles = build(config, stt, tts, language)
+    admin = None
+    if s["admin_port"]:
+        from . import admin_ui
+        try:
+            admin, _token = admin_ui.start(store, profiles, deps.sessions, s["admin_port"], audit=deps.on_audit)
+            utils.log_info("ACCESS", f"Page d'administration sur le port {s['admin_port']} (publié sur 127.0.0.1 seulement)")
+        except OSError as e:
+            utils.log_info("ACCESS", f"❌ Page d'administration non démarrée : {e}")
     conf = {"host": "0.0.0.0", "port": s["port"], "log_level": "warning", "access_log": False}
     if https_args.get("ssl_certfile"):
         conf.update(ssl_certfile=https_args["ssl_certfile"], ssl_keyfile=https_args["ssl_keyfile"])
@@ -70,9 +79,11 @@ def start(config, stt, tts, https_args, language=None):
         try:
             await server.serve()
         finally:
+            store.flush()
             await deps.sessions.close_all()
 
     threading.Thread(target=lambda: asyncio.run(run()), name="aria-access", daemon=True).start()
     scheme = "https" if conf.get("ssl_certfile") else "http"
     utils.log_info("ACCESS", f"API des applications tierces sur {scheme}://0.0.0.0:{s['port']}/v1/")
+    server.admin = admin
     return server
