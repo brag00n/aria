@@ -12,6 +12,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -22,6 +23,12 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from . import security
+
+# Fichiers publics : nom d'URL -> (chemin relatif à static/, type MIME). Rien d'autre n'est jamais servi.
+PUBLIC_FILES = {
+    "aria-client.js": (("aria-client.js",), "application/javascript; charset=utf-8"),
+    "silero_vad.onnx": (("silero_v6.2", "silero_vad.onnx"), "application/octet-stream"),
+}
 
 TOOL_NOTICE_RE = re.compile(r"\n\n> 🛠️ Outil utilisé : `([^`]+)`\n\n")
 
@@ -37,6 +44,7 @@ class Deps:
     on_audit: object = None          # (événement: str, **champs) -> None
     rate_per_ip: int = 120           # requêtes par minute et par IP
     max_audio_s: float = 30.0
+    static_dir: str = ""             # dossier `static/` d'Aria : aria-client.js et le modèle du VAD y sont servis (liste fermée)
     extra: dict = field(default_factory=dict)
 
 
@@ -189,7 +197,25 @@ def create_app(deps):
         deps.sessions.reset(session)
         return JSONResponse({"ok": True}, headers=cors)
 
-    routes = []
+    async def asset(request):
+        """Fichiers publics du client : le script et ses ressources (liste fermée, jamais de chemin libre). Sans clé : ce sont des fichiers
+        publics, utiles avant même d'avoir une clé ; le CORS est ouvert en lecture seule pour que `<script src>` et le chargement du
+        modèle fonctionnent depuis n'importe quelle page."""
+        name = request.path_params.get("name") or request.url.path.lstrip("/")
+        entry = PUBLIC_FILES.get(name)
+        if not entry or not deps.static_dir:
+            return error(404, "not_found", "introuvable")
+        path = os.path.join(deps.static_dir, *entry[0])
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            return error(404, "not_found", "introuvable")
+        headers = {"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff",
+                   "Cross-Origin-Resource-Policy": "cross-origin"}
+        return Response(data, media_type=entry[1], headers=headers)
+
+    routes = [Route("/aria-client.js", asset, methods=["GET"]), Route("/assets/{name}", asset, methods=["GET"])]
     for path, handler in (("/v1/health", health), ("/v1/turn", turn), ("/v1/stop", stop), ("/v1/reset", reset)):
         routes.append(Route(path, handler, methods=["GET"] if path.endswith("health") else ["POST"]))
         routes.append(Route(path, preflight, methods=["OPTIONS"]))

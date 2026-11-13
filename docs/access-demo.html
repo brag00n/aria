@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aria - page tierce de démonstration</title>
+<style>
+  :root { --bg:#fafafa; --fg:#1c1c1e; --mut:#6b6b70; --line:#d9d9de; --card:#fff; --acc:#2a6df4; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161618; --fg:#ececf0; --mut:#9a9aa3; --line:#33333a; --card:#1f1f23; --acc:#6c9bff; --warn:#f0a35a; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:16px; }
+  h1 { font-size:18px; }
+  fieldset { border:1px solid var(--line); border-radius:8px; background:var(--card); margin:12px 0; }
+  label { display:block; color:var(--mut); font-size:12px; margin:8px 0 2px; }
+  input, button { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
+  input { width:100%; box-sizing:border-box; }
+  button { cursor:pointer; margin:4px 4px 4px 0; }
+  button.on { border-color:var(--acc); color:var(--acc); }
+  #etat { display:inline-block; padding:2px 10px; border-radius:12px; border:1px solid var(--line); font-size:13px; }
+  #etat.hearing, #etat.speaking { border-color:var(--acc); color:var(--acc); }
+  #log { white-space:pre-wrap; min-height:5em; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
+  .user { color:var(--mut); }
+  .tool { color:var(--mut); font-size:13px; }
+  .err { color:var(--warn); }
+  .mut { color:var(--mut); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Page tierce de démonstration</h1>
+  <p class="mut">Cette page est servie depuis <strong>une autre origine</strong> que celle d'Aria : l'API ne répond que si l'origine de cette page figure
+  dans les domaines autorisés de la clé. Lancer par exemple <code>python -m http.server 8080</code> dans le dossier <code>docs</code>,
+  puis ouvrir <code>http://localhost:8080/access-demo.html</code> (autoriser l'origine <code>http://localhost:8080</code> dans l'onglet « Accès tiers »).
+  Le micro exige HTTPS ou localhost, et le navigateur doit avoir accepté une fois le certificat d'Aria (ouvrir l'adresse ci-dessous dans un onglet).</p>
+
+  <fieldset>
+    <legend>Connexion</legend>
+    <label for="base">Adresse de l'API d'Aria</label>
+    <input id="base" value="https://localhost:7861">
+    <label for="key">Clé API</label>
+    <input id="key" type="password" placeholder="ak_…" autocomplete="off">
+    <button id="connect">Se connecter</button> <span id="etat">déconnecté</span>
+  </fieldset>
+
+  <fieldset>
+    <legend>Conversation</legend>
+    <button id="mic" disabled>🎙 Écouter</button>
+    <button id="stop" disabled>⏹ Arrêter Aria</button>
+    <button id="mute" disabled>🔊 Son actif</button>
+    <button id="reset" disabled>🧹 Nouvelle conversation</button>
+    <label for="texte">Saisie texte</label>
+    <input id="texte" placeholder="Écrire à Aria puis Entrée" disabled>
+  </fieldset>
+
+  <div id="log" aria-live="polite"></div>
+</main>
+
+<script>
+  const $ = id => document.getElementById(id);
+  let aria = null;
+  let reponse = null;
+
+  function ligne(classe, texte) {
+    const d = document.createElement('div');
+    d.className = classe;
+    d.textContent = texte;                         // textContent : jamais de HTML venant d'Aria dans la page
+    $('log').append(d);
+    return d;
+  }
+  function active(on) {
+    for (const id of ['mic', 'stop', 'mute', 'reset', 'texte']) $(id).disabled = !on;
+  }
+
+  $('connect').onclick = async () => {
+    const base = $('base').value.trim().replace(/\/+$/, '');
+    const apiKey = $('key').value.trim();
+    if (aria) { aria.destroy(); aria = null; }
+    try {
+      const r = await fetch(base + '/v1/health', { headers: { Authorization: 'Bearer ' + apiKey } });
+      if (!r.ok) throw new Error((await r.json()).error.message);
+    } catch (e) {
+      ligne('err', 'Connexion impossible : ' + e.message + ' (certificat non accepté, origine non autorisée ou clé invalide ?)');
+      return;
+    }
+    // Le script du client est servi par Aria elle-même
+    if (!window.AriaClient) {
+      await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = base + '/aria-client.js'; s.onload = ok; s.onerror = ko; document.head.append(s); });
+    }
+    aria = AriaClient.create({ baseUrl: base, apiKey, voice: true });
+    aria.on('state', s => { $('etat').textContent = s; $('etat').className = s; $('mic').classList.toggle('on', s !== 'idle'); });
+    aria.on('user_text', t => { ligne('user', 'Vous : ' + t); reponse = null; });
+    aria.on('text', t => { if (!reponse) reponse = ligne('', ''); reponse.textContent = 'Aria : ' + t; });
+    aria.on('tool', n => ligne('tool', '🛠 outil utilisé : ' + n));
+    aria.on('error', e => ligne('err', 'Erreur (' + e.code + ') : ' + e.message));
+    aria.on('done', () => { reponse = null; });
+    active(true);
+    ligne('mut', 'Connecté.');
+  };
+
+  $('mic').onclick = async () => {
+    try {
+      if (aria.state === 'idle') { await aria.start(); $('mic').textContent = '🎙 Écoute en cours (cliquer pour couper)'; }
+      else { aria.stop(); $('mic').textContent = '🎙 Écouter'; }
+    } catch (e) { ligne('err', 'Micro impossible : ' + e.message); }
+  };
+  $('stop').onclick = () => aria.interrupt();
+  $('mute').onclick = () => {
+    const coupe = $('mute').textContent.includes('actif');
+    aria.mute(coupe);
+    $('mute').textContent = coupe ? '🔇 Son coupé' : '🔊 Son actif';
+  };
+  $('reset').onclick = async () => { await aria.reset(); $('log').replaceChildren(); ligne('mut', 'Nouvelle conversation.'); };
+  $('texte').onkeydown = e => {
+    if (e.key !== 'Enter' || !$('texte').value.trim()) return;
+    const t = $('texte').value; $('texte').value = '';
+    ligne('user', 'Vous : ' + t); reponse = null;
+    aria.say(t);
+  };
+</script>
+</body>
+</html>

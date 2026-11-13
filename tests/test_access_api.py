@@ -327,6 +327,40 @@ class SessionsTests(ApiCase):
         self.assertEqual(self.client.get("/v1/health").status_code, 401)
 
 
+class FichiersPublicsTests(ApiCase):
+    def setUp(self):
+        super().setUp()
+        (self.tmp / "static" / "silero_v6.2").mkdir(parents=True)
+        (self.tmp / "static" / "aria-client.js").write_text("window.AriaClient={};", "utf-8")
+        (self.tmp / "static" / "silero_v6.2" / "silero_vad.onnx").write_bytes(b"onnx")
+        (self.tmp / "static" / "secret.txt").write_text("ne pas servir", "utf-8")
+        self.deps.static_dir = str(self.tmp / "static")
+
+    def test_le_script_est_servi_sans_cle_avec_le_bon_type(self):
+        r = self.client.get("/aria-client.js")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("javascript", r.headers["content-type"])
+        self.assertEqual(r.text, "window.AriaClient={};")
+        self.assertEqual(r.headers["x-content-type-options"], "nosniff")
+
+    def test_le_modele_vad_est_servi(self):
+        r = self.client.get("/assets/silero_vad.onnx")
+        self.assertEqual((r.status_code, r.content), (200, b"onnx"))
+        self.assertEqual(r.headers["access-control-allow-origin"], "*")                    # fichiers publics : lecture seule depuis toute page
+
+    def test_liste_fermee_aucun_autre_fichier(self):
+        for chemin in ("/assets/secret.txt", "/assets/../secret.txt", "/assets/..%2Fsecret.txt", "/assets/%2e%2e/aria-client.js",
+                       "/assets/keys.json", "/assets/", "/static/aria-client.js"):
+            self.assertEqual(self.client.get(chemin).status_code, 404, chemin)
+
+    def test_sans_dossier_statique_configure(self):
+        self.deps.static_dir = ""
+        self.assertEqual(self.client.get("/aria-client.js").status_code, 404)
+
+    def test_les_routes_d_api_restent_protegees(self):
+        self.assertEqual(self.client.get("/v1/health").status_code, 401)
+
+
 class ProfilTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="accprof_"))

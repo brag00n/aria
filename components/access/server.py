@@ -50,7 +50,8 @@ def build(config, stt, tts, language=None):
     def audit(event, **fields):
         utils.log_info("ACCESS", f"{event} " + " ".join(f"{k}={v}" for k, v in fields.items()))
 
-    deps = api.Deps(keys=store, sessions=registry, stt=stt, tts=tts, decode_audio=make_decoder(), on_audit=audit)
+    deps = api.Deps(keys=store, sessions=registry, stt=stt, tts=tts, decode_audio=make_decoder(), on_audit=audit,
+                    static_dir=utils.aria_path("static"))
     return api.create_app(deps), deps, store, profiles
 
 
