@@ -224,12 +224,23 @@ const lignes=t=>t.split(/[\\n,]+/).map(x=>x.trim()).filter(Boolean);
 function profilSelect(courant){
   return el('select',{},el('option',{value:''},'(aucun : aucun outil)'),...PROFILS.map(p=>el('option',{value:p.name,selected:p.name===courant},p.name+(p.description?' - '+p.description:''))));
 }
+// Copie dans le presse-papiers. navigator.clipboard n'existe que sur une page sécurisée (https ou localhost) : cette page est servie en http sur
+// 127.0.0.1 dans un cadre, donc repli par sélection du texte et document.execCommand. Si rien ne marche, le texte reste sélectionné pour Ctrl+C.
+async function copier(texte,zone){
+  const selectionner=()=>{const r=document.createRange();r.selectNodeContents(zone);const s=getSelection();s.removeAllRanges();s.addRange(r)};
+  try{ if(navigator.clipboard&&window.isSecureContext){ await navigator.clipboard.writeText(texte); say('Copiée dans le presse-papiers'); return } }catch(e){}
+  selectionner();
+  let ok=false;
+  try{ ok=document.execCommand('copy') }catch(e){}
+  say(ok?'Copiée dans le presse-papiers':'Copie impossible : la clé est sélectionnée, faites Ctrl+C');
+}
 function secretModal(titre,secret){
   closeModal();
+  const zone=el('code',{className:'secret'},secret);
   const box=el('div',{id:'modal'},el('div',{className:'card'},el('h2',{},titre),
     el('p',{},'Copiez cette clé maintenant : elle ne sera plus jamais affichée.'),
-    el('code',{className:'secret'},secret),
-    el('div',{className:'btns'},el('button',{onclick:()=>{navigator.clipboard&&navigator.clipboard.writeText(secret);say('Copiée')}},'Copier'),
+    zone,
+    el('div',{className:'btns'},el('button',{onclick:()=>copier(secret,zone)},'Copier'),
       el('button',{onclick:()=>{closeModal();render()}},'J\\u2019ai copié la clé'))));
   document.body.append(box);
 }

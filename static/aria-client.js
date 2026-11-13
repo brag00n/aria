@@ -13,7 +13,8 @@
  *
  * Événements : state, text, user_text, tool, audio-start, audio-end, done, error({code, message}).
  * Options : baseUrl, apiKey, voice (true), speak (true : lire la réponse), session ("default"), vad {positive, negative, redemption, minFrames},
- *           modelUrl (modèle Silero, par défaut servi par Aria), cdn {ort, vad} (adresses des bibliothèques du VAD).
+ *           modelUrl (modèle Silero, par défaut servi par Aria), cdn {ort, vad} (adresses des bibliothèques du VAD),
+ *           debug (false : trace dans la console les événements du VAD et les envois, utile quand l'écoute ne réagit pas).
  * Le VAD (détection de parole) est exécuté dans le navigateur : seule la phrase détectée est envoyée à Aria.
  */
 (function (root) {
@@ -64,6 +65,13 @@
     var AudioCtor = o.Audio || root.Audio;
     var loadScript = o.loadScript || loadScriptDefault;
 
+    function trace() {
+      if (!o.debug || !root.console) return;
+      var a = Array.prototype.slice.call(arguments);
+      a.unshift('[AriaClient]');
+      root.console.log.apply(root.console, a);
+    }
+
     var handlers = {};
     var state = 'idle';
     var listening = false;
@@ -76,6 +84,9 @@
     var current = null;
     var ducked = false;
     var seen = {};
+    var framesSeen = 0;
+    var peak = 0;
+    var lastTrace = 0;
 
     function on(name, fn) { (handlers[name] = handlers[name] || []).push(fn); return api; }
     function off(name, fn) { handlers[name] = (handlers[name] || []).filter(function (f) { return f !== fn; }); return api; }
@@ -86,6 +97,7 @@
     }
     function setState(s) {
       if (s === state || destroyed) return;
+      trace('état :', state, '->', s);
       state = s;
       emit('state', s);
     }
@@ -224,6 +236,7 @@
       if (!o.voice) throw new Error('AriaClient : la voix est désactivée (option voice)');
       if (destroyed) throw new Error('AriaClient : client détruit');
       if (vadInst) { vadInst.start(); listening = true; setState('listening'); return; }
+      trace('chargement du VAD (ort, vad-web) ; modèle :', o.modelUrl || (base + '/assets/silero_vad.onnx'));
       if (typeof root.ort === 'undefined') await loadScript(cdn.ort);
       if (typeof root.vad === 'undefined') await loadScript(cdn.vad);
       if (root.ort && root.ort.env) root.ort.env.logLevel = 'error';
@@ -234,12 +247,26 @@
         negativeSpeechThreshold: v.negative != null ? v.negative : 0.4,
         redemptionFrames: v.redemption != null ? v.redemption : 20,
         minSpeechFrames: v.minFrames != null ? v.minFrames : 3,
+        onFrameProcessed: o.debug ? function (probs) {
+          // une trace par seconde : probabilité de parole MAXIMALE de la période (0 à 100 %) ; le seuil de détection est affiché en tête
+          framesSeen++;
+          peak = Math.max(peak, probs.isSpeech || 0);
+          var now = Date.now();
+          if (now - lastTrace >= 1000) {
+            trace('VAD : parole ' + Math.round(peak * 100) + ' % (max sur 1 s, seuil ' + Math.round((v.positive != null ? v.positive : 0.8) * 100) + ' %), ' +
+                  framesSeen + ' trame(s) reçues depuis le début');
+            lastTrace = now;
+            peak = 0;
+          }
+        } : function () {},
         onSpeechStart: function () {
+          trace('VAD : début de parole');
           if (playing) duck();                                         // il parle pendant qu'Aria parle : sa voix baisse
           setState('hearing');
         },
-        onVADMisfire: function () { unduck(); setState(abortCtl ? 'thinking' : playing ? 'speaking' : idleState()); },
+        onVADMisfire: function () { trace('VAD : parole trop courte (ignorée)'); unduck(); setState(abortCtl ? 'thinking' : playing ? 'speaking' : idleState()); },
         onSpeechEnd: function (audio) {
+          trace('VAD : fin de parole,', (audio.length / 16000).toFixed(1), 's audio envoyées à Aria');
           unduck();
           stopPlayback();                                              // la parole de l'utilisateur coupe la réponse en cours
           var wav = root.vad.utils.encodeWAV(audio);
@@ -248,6 +275,7 @@
       });
       await vadInst.start();
       listening = true;
+      trace('VAD prêt : micro ouvert, en attente de parole');
       setState('listening');
     }
 

@@ -110,6 +110,12 @@ class GardeTests(AdminCase):
         self.assertEqual(self.call("GET", "/api/nope")[0], 404)
         self.assertEqual(self.call("POST", "/api/nope", {"a": 1})[0], 404)
 
+    def test_copie_de_la_cle_avec_repli_hors_page_securisee(self):
+        # la page est servie en http sur 127.0.0.1 dans un cadre : navigator.clipboard y est absent, il faut un repli
+        self.assertIn("isSecureContext", admin_ui.PAGE)
+        self.assertIn("execCommand('copy')", admin_ui.PAGE)
+        self.assertIn("Ctrl+C", admin_ui.PAGE)
+
     def test_la_page_ne_contient_pas_innerHTML(self):
         self.assertNotIn("innerHTML", admin_ui.PAGE)
         self.assertEqual(admin_ui.PAGE.count("</script>"), 1)

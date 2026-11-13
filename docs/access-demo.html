@@ -86,7 +86,7 @@
     if (!window.AriaClient) {
       await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = base + '/aria-client.js'; s.onload = ok; s.onerror = ko; document.head.append(s); });
     }
-    aria = AriaClient.create({ baseUrl: base, apiKey, voice: true });
+    aria = AriaClient.create({ baseUrl: base, apiKey, voice: true, debug: true });   // debug : trace du VAD dans la console
     aria.on('state', s => { $('etat').textContent = s; $('etat').className = s; $('mic').classList.toggle('on', s !== 'idle'); });
     aria.on('user_text', t => { ligne('user', 'Vous : ' + t); reponse = null; });
     aria.on('text', t => { if (!reponse) reponse = ligne('', ''); reponse.textContent = 'Aria : ' + t; });
@@ -101,7 +101,7 @@
     try {
       if (aria.state === 'idle') { await aria.start(); $('mic').textContent = '🎙 Écoute en cours (cliquer pour couper)'; }
       else { aria.stop(); $('mic').textContent = '🎙 Écouter'; }
-    } catch (e) { ligne('err', 'Micro impossible : ' + e.message); }
+    } catch (e) { console.error('[démo] micro :', e); ligne('err', 'Micro impossible : ' + (e && e.message || e)); }
   };
   $('stop').onclick = () => aria.interrupt();
   $('mute').onclick = () => {
