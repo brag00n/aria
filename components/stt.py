@@ -1,3 +1,4 @@
+import threading
 import components.utils as utils
 from .stt_whisper import SttWhisper
 from .stt_fasterwhisper import SttFasterWhisper
@@ -18,9 +19,13 @@ class Stt:
             utils.log_info("STT", "Initialisation du moteur Whisper (Hugging Face) 🤗")
             self.engine = SttWhisper(self.params)
 
+    # Un seul modèle STT pour toute l'application (interface Aria et accès tiers) : il n'est pas réentrant
+    lock = threading.Lock()
+
     def transcribe_translate(self, audio_path):
-        """Transcrit un fichier audio en texte via le moteur sélectionné."""
-        return self.engine.transcribe_translate(audio_path)
+        """Transcrit un fichier audio en texte via le moteur sélectionné (une transcription à la fois)."""
+        with self.lock:
+            return self.engine.transcribe_translate(audio_path)
 
 # import warnings
 # import torch

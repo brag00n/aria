@@ -884,5 +884,11 @@ if __name__ == "__main__":
                 await manager.close()
 
     # HTTPS optionnel (config "https") : nécessaire pour le micro depuis un autre poste ou un smartphone
-    ariaHmi.launch(server_name="0.0.0.0", server_port=7860, app_kwargs={"lifespan": _mcp_lifespan},
-                   **https.launch_args(config.get("https")))
+    _https_args = https.launch_args(config.get("https"))
+    # Accès des applications tierces par clé API (config "access", désactivé par défaut) : API sur un port dédié
+    try:
+        from components.access import server as access_server
+        access_server.start(config, stt, tts, _https_args, language=language)
+    except Exception as e:                          # jamais empêcher Aria de démarrer à cause de cette option
+        utils.log_info("ACCESS", f"❌ API tierce non démarrée : {type(e).__name__}: {e}")
+    ariaHmi.launch(server_name="0.0.0.0", server_port=7860, app_kwargs={"lifespan": _mcp_lifespan}, **_https_args)
