@@ -23,6 +23,17 @@
   .tool { color:var(--mut); font-size:13px; }
   .err { color:var(--warn); }
   .mut { color:var(--mut); font-size:13px; }
+
+  /* Visuel personnalisé : tout est du CSS de la page tierce. Le client écrit seulement data-aria-state et --aria-level sur #halo. */
+  #halo { --aria-level:0; width:120px; height:120px; margin:8px auto; border-radius:50%; display:grid; place-items:center; font-size:36px;
+          background:var(--card); border:3px solid var(--line); transition:border-color .2s, background .2s;
+          box-shadow:0 0 calc(8px + var(--aria-level) * 46px) calc(var(--aria-level) * 14px) color-mix(in srgb, var(--halo, var(--acc)) 55%, transparent); }
+  #halo[data-aria-state="listening"] { --halo:#16a34a; border-color:#16a34a; }
+  #halo[data-aria-state="hearing"]   { --halo:#16a34a; border-color:#16a34a; background:color-mix(in srgb, #16a34a 14%, var(--card)); }
+  #halo[data-aria-state="thinking"]  { --halo:#d97706; border-color:#d97706; animation:pulse 1s ease-in-out infinite; }
+  #halo[data-aria-state="speaking"]  { --halo:var(--acc); border-color:var(--acc); background:color-mix(in srgb, var(--acc) 14%, var(--card)); }
+  @keyframes pulse { 50% { transform:scale(1.06); } }
+  canvas#onde { display:block; width:100%; height:64px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
 </style>
 </head>
 <body>
@@ -48,9 +59,16 @@
     <button id="stop" disabled>⏹ Arrêter Aria</button>
     <button id="mute" disabled>🔊 Son actif</button>
     <button id="reset" disabled>🧹 Nouvelle conversation</button>
+    <label for="consignes">Consignes de l'application (prompt système, fixé à la création de la session)</label>
+    <input id="consignes" value="Tu es l'assistante d'un site de démonstration. Réponds en une ou deux phrases courtes.">
     <label for="texte">Saisie texte</label>
     <input id="texte" placeholder="Écrire à Aria puis Entrée" disabled>
   </fieldset>
+
+  <div id="halo" aria-hidden="true">🎙</div>
+  <canvas id="onde" width="720" height="64" aria-hidden="true"></canvas>
+  <p class="mut">Halo : état et niveau sonore liés par <code>aria.bindState(element)</code> (habillage en CSS). Forme d'onde de la voix d'Aria : dessinée par la
+  page avec <code>aria.analyser("voice")</code>.</p>
 
   <div id="log" aria-live="polite"></div>
 </main>
@@ -86,16 +104,42 @@
     if (!window.AriaClient) {
       await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = base + '/aria-client.js'; s.onload = ok; s.onerror = ko; document.head.append(s); });
     }
-    aria = AriaClient.create({ baseUrl: base, apiKey, voice: true, debug: true });   // debug : trace du VAD dans la console
+    // systemPrompt : consignes de l'application, qui complètent celles de la clé ; fixées à la création de la session (ici : une session par connexion)
+    aria = AriaClient.create({ baseUrl: base, apiKey, voice: true, debug: true, session: 'demo-' + Date.now().toString(36),
+                               systemPrompt: $('consignes').value });
+    aria.bindState($('halo'));                      // data-aria-state et --aria-level sur l'élément : le style est entièrement celui de la page
+    dessinerOnde();
     aria.on('state', s => { $('etat').textContent = s; $('etat').className = s; $('mic').classList.toggle('on', s !== 'idle'); });
     aria.on('user_text', t => { ligne('user', 'Vous : ' + t); reponse = null; });
     aria.on('text', t => { if (!reponse) reponse = ligne('', ''); reponse.textContent = 'Aria : ' + t; });
     aria.on('tool', n => ligne('tool', '🛠 outil utilisé : ' + n));
     aria.on('error', e => ligne('err', 'Erreur (' + e.code + ') : ' + e.message));
+    aria.on('warning', w => ligne('mut', 'Avertissement (' + w.code + ') : ' + w.message));
     aria.on('done', () => { reponse = null; });
     active(true);
     ligne('mut', 'Connecté.');
   };
+
+  // Forme d'onde de la voix d'Aria, dessinée par la page à partir de l'AnalyserNode Web Audio fourni par le client.
+  function dessinerOnde() {
+    const canvas = $('onde'), ctx = canvas.getContext('2d');
+    const an = aria.analyser('voice');
+    const buf = new Uint8Array(an ? an.fftSize : 1024);
+    (function boucle() {
+      if (!aria) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--acc') || '#2a6df4';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      if (an) an.getByteTimeDomainData(buf); else buf.fill(128);
+      for (let i = 0; i < buf.length; i++) {
+        const x = i / (buf.length - 1) * canvas.width, y = buf[i] / 255 * canvas.height;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+      requestAnimationFrame(boucle);
+    })();
+  }
 
   $('mic').onclick = async () => {
     try {

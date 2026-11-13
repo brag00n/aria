@@ -27,34 +27,154 @@ Le serveur de mémoire personnelle n'est jamais ajouté : s'il est utile à une 
 
 ## Intégration dans une page
 
+Le client JavaScript n'impose **aucune interface** : pas de bouton, pas de style. La page tierce dessine ses propres commandes et sa propre
+visualisation avec son CSS, et pilote Aria par les méthodes et les événements ci-dessous.
+
+### Démarrage minimal
+
 ```html
 <script src="https://ARIA:7861/aria-client.js"></script>
 <script>
-  const aria = AriaClient.create({ baseUrl: "https://ARIA:7861", apiKey: "ak_…", voice: true });
-  aria.on("text", t => zone.textContent = t);     // texte de la réponse (cumulé)
-  aria.on("state", s => console.log(s));          // idle | listening | hearing | thinking | speaking
-  await aria.start();                             // écoute le micro
-  aria.say("Quelle heure est-il ?");              // saisie texte
+  const aria = AriaClient.create({ baseUrl: "https://ARIA:7861", apiKey: "ak_…" });
+  aria.on("text", t => reponse.textContent = t);          // texte de la réponse (cumulé)
+  monBoutonMicro.onclick = () => aria.listening ? aria.stop() : aria.start();
+  monChamp.onkeydown = e => { if (e.key === "Enter") aria.say(monChamp.value); };
 </script>
 ```
-Méthodes : `start()`, `stop()`, `say(texte)`, `interrupt()`, `reset()`, `mute(true|false)`, `destroy()`. Événements : `state`, `text`, `user_text`,
-`tool`, `audio-start`, `audio-end`, `done`, `error({code, message})`. Options : `session`, `speak`, `vad`, `modelUrl`, `cdn`.
-Une page de démonstration est dans `docs/access-demo.html`.
+`start()` est asynchrone et peut échouer (micro refusé, VAD introuvable) : l'entourer d'un `try/catch`. Les écritures dans la page se font en `textContent`,
+jamais en `innerHTML` : le texte vient d'un modèle de langage.
 
-À savoir : le **micro exige une page en HTTPS** (ou `localhost`) ; le navigateur doit avoir **accepté une fois le certificat** d'Aria (ouvrir
-`https://ARIA:7861/v1/health` dans un onglet) ; le VAD est chargé depuis jsDelivr (option `cdn` pour le changer).
+### Options de `AriaClient.create({…})`
+
+| Option | Défaut | Rôle |
+|---|---|---|
+| `baseUrl`, `apiKey` | obligatoires | adresse de l'API d'Aria et clé API |
+| `voice` | `true` | `false` : texte seulement, `start()` est refusé |
+| `speak` | `true` | demander la réponse en voix ; `mute(true)` la coupe sans changer l'option |
+| `session` | `"default"` | identifiant de session : historique et outils indépendants (un par utilisateur final de la page, par exemple) |
+| `systemPrompt` | aucun | consignes de l'application pour le LLM, fixées à la création de la session (voir « Prompt système de l'application ») |
+| `vad` | `{}` | sensibilité de l'écoute : `positive` (0,8), `negative` (0,4), `redemption` (20 trames de silence), `minFrames` (3) |
+| `modelUrl` | servi par Aria | adresse du modèle Silero du VAD |
+| `cdn` | jsDelivr | `{ort, vad}` : adresses des deux bibliothèques du VAD, pour les héberger ailleurs |
+| `analyser` | `false` | prépare d'emblée l'analyse du son (sinon elle l'est dès qu'on s'abonne à `level` ou qu'on appelle `analyser()`) |
+| `debug` | `false` | trace dans la console l'état, le VAD (probabilité de parole par seconde) et les envois |
+
+### Commandes
+
+| Méthode | Effet |
+|---|---|
+| `await start()` | ouvre le micro et écoute (la page doit être en HTTPS ou sur `localhost`) |
+| `stop()` | arrête l'écoute ; une réponse en cours continue |
+| `say(texte)` | envoie une saisie texte |
+| `interrupt()` | coupe la réponse en cours (lecture et génération) |
+| `reset()` | efface l'historique de la session |
+| `mute(true)` / `mute(false)` | coupe ou rétablit la voix d'Aria (le texte continue) |
+| `destroy()` | libère le micro, la lecture et l'analyse ; le client est inutilisable ensuite |
+| `on(nom, fn)`, `off(nom, fn)` | abonnement aux événements |
+| `analyser("voice")` ou `analyser("mic")` | `AnalyserNode` Web Audio (voir plus bas) |
+| `bindState(élément)` | habillage en CSS pur (voir plus bas) ; renvoie la fonction qui le retire |
+| `state`, `listening`, `muted` | état courant (lecture seule) |
+
+### Événements
+
+| Événement | Données | Quand |
+|---|---|---|
+| `state` | `"idle"`, `"listening"`, `"hearing"`, `"thinking"` ou `"speaking"` | à chaque changement d'état |
+| `text` | texte cumulé de la réponse | pendant la génération (le texte entier à chaque fois : remplacer, ne pas ajouter) |
+| `user_text` | transcription de ce que l'utilisateur a dit | après un tour vocal |
+| `tool` | nom de l'outil utilisé | une fois par outil et par tour (le texte, lui, ne contient pas cette ligne) |
+| `audio-start` | `{id, text, element}` | début d'un bloc de voix : `text` est la phrase dite, `element` le `<audio>` qui la joue |
+| `audio-end` | rien | fin de la voix de la réponse |
+| `level` | `{source: "mic" ou "voice", value: 0 à 1}` | niveau sonore toutes les 50 ms (voir plus bas) |
+| `done` | `{ms}`, `{stopped:true}` ou `{empty:true}` | fin du tour |
+| `warning` | `{code, message}` | avertissement sans gravité, par exemple `system_ignored` (voir « Prompt système de l'application ») |
+| `error` | `{code, message}` | erreur réseau, quota, clé refusée, modèle… (codes dans la section API) |
+
+Signification des états : `idle` (rien), `listening` (micro ouvert, silence), `hearing` (l'utilisateur parle), `thinking` (Aria réfléchit),
+`speaking` (Aria parle). Parler pendant qu'Aria parle baisse sa voix, puis la coupe quand la phrase est terminée et envoyée.
+
+### Prompt système de l'application
+
+L'application peut donner ses propres consignes au LLM (nom du site, ton, sujets, contexte de la page) avec l'option `systemPrompt`, **à l'initialisation** :
+
+```js
+const aria = AriaClient.create({
+  baseUrl: "https://ARIA:7861", apiKey: "ak_…",
+  session: "utilisateur-42",
+  systemPrompt: "Tu es l'assistante du site Bleu, une boutique de vélos. Tu tutoies. L'utilisateur est sur la page « Entretien »."
+});
+```
+- **Il complète, il ne remplace pas.** Le message système d'une session est celui du profil de la clé (fixé par l'administrateur d'Aria : règles, limites, outils),
+  suivi des consignes de l'application sous le titre « Consignes de l'application ». Un prompt qui demande d'ignorer les règles précédentes n'enlève rien : les
+  règles du profil restent en tête. Les outils disponibles sont toujours ceux du profil.
+- **Il est fixé à la création de la session.** Le client l'envoie à chaque tour, mais le serveur ne le retient qu'au premier tour de la session `(clé, session)`.
+  Un prompt différent envoyé ensuite est ignoré et l'événement `warning` (`code: "system_ignored"`) l'indique. Pour changer de consignes, utiliser une autre
+  valeur de `session` (nouvel historique) ; `reset()` efface l'historique mais garde les consignes.
+- **Limites :** 4000 caractères au plus (`413`, code `too_large`, sans consommer de quota), un texte seulement (`400` sinon), caractères de contrôle retirés,
+  retours à la ligne conservés. Un prompt vide équivaut à aucun prompt.
+- **En appel direct :** champ `system` du corps de `POST /v1/turn` (voir la section API).
+- **Ne pas y mettre de secret** : le texte passe par le navigateur de l'utilisateur et n'est pas confidentiel.
+
+### Habiller son propre visuel
+
+**1. En CSS seulement : `bindState(élément)`.** Le client écrit sur l'élément l'attribut `data-aria-state` et la variable CSS `--aria-level`
+(0 à 1, niveau sonore de la voix d'Aria quand elle parle, du micro quand l'utilisateur parle). Tout le style reste celui de la page :
+
+```html
+<div id="halo"></div>
+<style>
+  #halo { --aria-level: 0; width: 96px; height: 96px; border-radius: 50%; border: 3px solid #ccc;
+          box-shadow: 0 0 calc(8px + var(--aria-level) * 40px) #2a6df4; }
+  #halo[data-aria-state="listening"] { border-color: #16a34a; }
+  #halo[data-aria-state="thinking"]  { animation: pulse 1s infinite; }
+  #halo[data-aria-state="speaking"]  { border-color: #2a6df4; }
+</style>
+<script> aria.bindState(document.getElementById("halo")); </script>
+```
+`bindState(el, {level: false})` ne pose que l'état (pas de mesure du niveau, donc aucune analyse audio).
+
+**2. Niveau sonore : l'événement `level`.** Une valeur 0 à 1 toutes les 50 ms, pour une jauge, une animation ou un avatar :
+```js
+aria.on("level", ({source, value}) => { if (source === "voice") bouche.style.transform = `scaleY(${0.2 + value})`; });
+```
+`source` vaut `"voice"` (la voix d'Aria, un dernier `0` est envoyé à la fin) ou `"mic"` (celle de l'utilisateur, seulement pendant l'écoute).
+
+**3. Forme d'onde ou spectre : `analyser()`.** Renvoie un `AnalyserNode` standard, à lire dans la boucle d'animation de la page :
+```js
+const an = aria.analyser("voice");               // "mic" : null tant que l'écoute n'est pas démarrée
+const data = new Uint8Array(an.fftSize);
+(function dessiner() { an.getByteTimeDomainData(data); /* …dessiner sur un canvas… */ requestAnimationFrame(dessiner); })();
+```
+`an.getByteFrequencyData(…)` donne le spectre. L'analyseur de la voix est inséré avant les haut-parleurs : le son reste audible. Celui du micro n'est
+**jamais** relié aux haut-parleurs (pas d'écho). L'analyse n'est installée que si la page la demande, pour ne rien coûter aux pages qui n'en ont pas besoin.
+
+**4. Suivre le texte dit : `audio-start`.** `text` donne la phrase en cours de lecture (sous-titres, surbrillance) et `element` l'élément `<audio>` du bloc
+(durée, `currentTime`, pause).
+
+Un exemple complet (halo CSS, forme d'onde, boutons) est dans `docs/access-demo.html`.
+
+### Exigences et pièges
+
+- Le **micro exige une page en HTTPS** (ou `localhost`) ; le navigateur doit avoir **accepté une fois le certificat** d'Aria (ouvrir
+  `https://ARIA:7861/v1/health` dans un onglet).
+- La lecture audio exige un **geste de l'utilisateur** (clic) avant la première réponse vocale : appeler `start()` ou `say()` depuis un gestionnaire de clic.
+- Le VAD est chargé depuis jsDelivr (option `cdn` pour l'héberger ailleurs) ; le modèle vient d'Aria.
+- Un gestionnaire d'événement qui lève une exception est consigné dans la console mais ne casse jamais le client.
+- Un seul tour à la fois par session : un nouveau `say()` ou une nouvelle phrase remplace le tour en cours.
+- Si l'écoute ne réagit pas, passer `debug: true` : la console indique la probabilité de parole vue par le VAD. Un niveau constant très bas vient presque
+  toujours du micro (coupé, mauvais périphérique) et non d'Aria.
 
 ## API (HTTP, `Authorization: Bearer ak_…` ou `X-Api-Key`)
 
 | Route | Rôle |
 |---|---|
-| `POST /v1/turn` | `{"text": "…"}` ou `{"audio": "data:audio/wav;base64,…", "session": "…", "speak": true}` ; réponse `text/event-stream` |
+| `POST /v1/turn` | `{"text": "…"}` ou `{"audio": "data:audio/wav;base64,…", "session": "…", "speak": true, "system": "consignes de l'application"}` ; réponse `text/event-stream` |
 | `POST /v1/stop` | coupe la réponse en cours de la session |
 | `POST /v1/reset` | efface l'historique de la session |
 | `GET /v1/health` | vérifie la clé |
 | `GET /aria-client.js`, `GET /assets/silero_vad.onnx` | fichiers publics du client |
 
-Événements du flux : `state`, `user_text`, `text`, `tool`, `audio` (`{id, format, data, text}`, wav en base64), `done`, `error`. Une session est
+Événements du flux : `state`, `user_text`, `text`, `tool`, `audio` (`{id, format, data, text}`, wav en base64), `warning`, `done`, `error`. Une session est
 identifiée par `(clé, session)` : historique et outils indépendants. Codes : 401 clé invalide, 403 origine refusée ou voix interdite, 413 trop gros,
 429 débit / quota / blocage, 503 trop de sessions.
 
@@ -68,5 +188,5 @@ Une clé sans domaine autorisé refuse tout navigateur ; un client hors navigate
 
 ## Tests
 
-`node tests/test_aria_client.js` (client) ; dans le conteneur : `python -m unittest discover -s tests` après copie du dossier `tests/`
+`node tests/test_aria_client.js` (client, avec un faux Web Audio) ; dans le conteneur : `python -m unittest discover -s tests` après copie du dossier `tests/`
 (les tests de l'API nécessitent `starlette`, absent du poste hôte).

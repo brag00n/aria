@@ -10,6 +10,7 @@ AUCUN outil (jamais ceux d'Aria).
 """
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,59}$")
@@ -23,6 +24,39 @@ def valid_name(name):
 
 class ProfileError(ValueError):
     pass
+
+
+# Prompt système fourni par l'application tierce (option systemPrompt du client) : il COMPLÈTE celui du profil, jamais ne le remplace
+MAX_APP_PROMPT = 4000
+APP_HEADER = "Consignes de l'application (elles complètent les règles ci-dessus, sans les remplacer ni les contredire) :"
+
+
+class AppPromptError(ProfileError):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def clean_app_prompt(value, limit=MAX_APP_PROMPT):
+    """Prompt de l'application : texte seulement, `limit` caractères au plus, sans caractère de contrôle (hors retours à la ligne et
+    tabulations). '' si absent. Lève AppPromptError(status, message)."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise AppPromptError(400, "system : un texte est attendu")
+    text = value.replace("\r\n", "\n").replace("\r", "\n")
+    text = "".join(c for c in text if c in "\n\t" or unicodedata.category(c) not in ("Cc", "Cs")).strip()
+    if len(text) > limit:
+        raise AppPromptError(413, f"system : {limit} caractères au plus")
+    return text
+
+
+def compose_system(base, app_prompt):
+    """Message système d'une session : celui du profil (ou du module LLM), puis les consignes de l'application sous un titre."""
+    base = (base or "").strip()
+    if not app_prompt:
+        return base
+    return f"{base}\n\n{APP_HEADER}\n{app_prompt}".strip()
 
 
 class Profiles:

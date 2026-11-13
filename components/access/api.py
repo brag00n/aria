@@ -23,6 +23,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from . import security
+from .profile import AppPromptError, clean_app_prompt
 
 # Fichiers publics : nom d'URL -> (chemin relatif à static/, type MIME). Rien d'autre n'est jamais servi.
 PUBLIC_FILES = {
@@ -131,9 +132,9 @@ def create_app(deps):
             return None, error(400, "bad_json", "un objet JSON est attendu", cors)
         return body, None
 
-    async def get_session(rec, body, cors):
+    async def get_session(rec, body, cors, app_prompt=""):
         try:
-            return await deps.sessions.get(rec, body.get("session")), None
+            return await deps.sessions.get(rec, body.get("session"), app_prompt), None
         except Exception as e:
             code = getattr(e, "code", 500)
             return None, error(code, "session", getattr(e, "message", "session impossible"), cors)
@@ -160,7 +161,11 @@ def create_app(deps):
                 return error(403, "voice_disabled", "la voix n'est pas disponible pour cette clé", cors)
             if not isinstance(audio, str) or "," not in audio[:80]:
                 return error(400, "bad_request", "audio : data URI base64 attendue", cors)
-        session, err = await get_session(rec, body, cors)
+        try:
+            app_prompt = clean_app_prompt(body.get("system"))
+        except AppPromptError as e:
+            return error(e.status, "bad_request" if e.status == 400 else "too_large", str(e), cors)
+        session, err = await get_session(rec, body, cors, app_prompt)
         if err:
             return err
         if not quota.take(rec["id"], rec["limits"]["daily_turns"]):
@@ -168,7 +173,8 @@ def create_app(deps):
             return error(429, "quota", "quota quotidien atteint", cors)
         speak = bool(body.get("speak", True)) and bool(deps.tts) and rec["voice"]
         headers = {**cors, "Cache-Control": "no-store", "X-Accel-Buffering": "no"}
-        return StreamingResponse(_stream_turn(deps, session, rec, text, audio, speak, audit), media_type="text/event-stream",
+        ignored = bool(app_prompt) and app_prompt != session.app_prompt          # la session existe déjà avec d'autres consignes
+        return StreamingResponse(_stream_turn(deps, session, rec, text, audio, speak, audit, ignored), media_type="text/event-stream",
                                  headers=headers)
 
     async def stop(request):
@@ -224,7 +230,7 @@ def create_app(deps):
     return app
 
 
-async def _stream_turn(deps, session, rec, text, audio, speak, audit):
+async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=False):
     """Flux SSE d'un tour. Un seul tour à la fois par session ; « stop » coupe la réponse en cours."""
     if session.lock.locked():
         yield _sse("error", {"code": "busy", "message": "un tour est déjà en cours dans cette session"})
@@ -235,6 +241,9 @@ async def _stream_turn(deps, session, rec, text, audio, speak, audit):
         t0 = time.perf_counter()
         try:
             yield _sse("state", {"state": "thinking"})
+            if ignored:
+                yield _sse("warning", {"code": "system_ignored", "message": "la session existe déjà : ses consignes sont fixées à sa création "
+                                                                          "(utilisez une autre session pour changer de consignes)"})
             if audio is not None:
                 try:
                     raw = base64.b64decode(audio.split(",", 1)[1], validate=False)

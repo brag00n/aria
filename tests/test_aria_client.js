@@ -195,6 +195,195 @@ test('start : charge ort puis vad, crée le VAD avec le modèle d’Aria, envoie
   delete g.ort; delete g.vad;
 });
 
+// ---------------------------------------------------------------- prompt système de l'application
+test('systemPrompt : envoyé dans le champ system, nettoyé, à chaque tour', async () => {
+  const { c, log } = client({ '/v1/turn': () => ({ ok: true, status: 200, body: streamOf(sse([['done', {}]])) }) }, { systemPrompt: '  Tu es l’assistante du site Bleu.  ' });
+  await c.say('un');
+  await c.say('deux');
+  const bodies = log.filter(l => l.url === '/v1/turn').map(l => JSON.parse(l.init.body));
+  assert.strictEqual(bodies.length, 2);
+  assert.ok(bodies.every(b => b.system === 'Tu es l’assistante du site Bleu.'));
+});
+
+test('systemPrompt : absent ou vide => pas de champ system', async () => {
+  for (const extra of [{}, { systemPrompt: '' }, { systemPrompt: '   ' }]) {
+    const { c, log } = client({ '/v1/turn': { ok: true, status: 200, body: streamOf(sse([['done', {}]])) } }, extra);
+    await c.say('x');
+    assert.ok(!('system' in JSON.parse(log[0].init.body)), JSON.stringify(extra));
+  }
+});
+
+test('systemPrompt : un non-texte est refusé à la création', () => {
+  assert.throws(() => AriaClient.create({ baseUrl: 'https://a', apiKey: 'k', systemPrompt: 42 }), /texte/);
+  assert.throws(() => AriaClient.create({ baseUrl: 'https://a', apiKey: 'k', systemPrompt: { a: 1 } }), /texte/);
+});
+
+test('systemPrompt : accompagne aussi les tours vocaux', async () => {
+  const g = globalThis; g.ort = undefined; g.vad = undefined;
+  let created = null;
+  const loadScript = async src => {
+    if (src.includes('ort')) g.ort = { env: {} };
+    else g.vad = { MicVAD: { new: async o => { created = o; return { start: async () => {}, pause() {}, destroy() {} }; } }, utils: { encodeWAV: () => new ArrayBuffer(4), arrayBufferToBase64: () => 'QQ==' } };
+  };
+  const { c, log } = client({ '/v1/turn': { ok: true, status: 200, body: streamOf(sse([['done', {}]])) } }, { loadScript, systemPrompt: 'Consignes' });
+  await c.start();
+  created.onSpeechEnd(new Float32Array(4));
+  await tick(30);
+  const b = JSON.parse(log.find(l => l.url === '/v1/turn').init.body);
+  assert.strictEqual(b.system, 'Consignes');
+  assert.ok(b.audio);
+  delete g.ort; delete g.vad;
+});
+
+test('avertissement du serveur relayé en événement warning, sans être une erreur', async () => {
+  const { c, seen } = client({ '/v1/turn': { ok: true, status: 200, body: streamOf(sse([['warning', { code: 'system_ignored', message: 'déjà créée' }], ['done', {}]])) } });
+  const warns = [];
+  c.on('warning', w => warns.push(w));
+  await c.say('x');
+  assert.deepStrictEqual(warns, [{ code: 'system_ignored', message: 'déjà créée' }]);
+  assert.strictEqual(seen.errors.length, 0);
+  assert.strictEqual(seen.done, 1);
+});
+
+test('erreur 413 sur le prompt : relayée, le client reste utilisable', async () => {
+  const { c, seen } = client({ '/v1/turn': { ok: false, status: 413, statusText: 'x', json: async () => ({ error: { code: 'too_large', message: 'system : 4000 caractères au plus' } }) } },
+    { systemPrompt: 'x'.repeat(5000) });
+  await c.say('x');
+  assert.strictEqual(seen.errors[0].code, 'too_large');
+  assert.strictEqual(c.state, 'idle');
+});
+
+// ---------------------------------------------------------------- visualisation : niveaux, analyseur, liaison CSS
+class FakeAnalyser {
+  constructor(level) { this.level = level; this.fftSize = 1024; this.smoothingTimeConstant = 0; this.connected = []; }
+  connect(n) { this.connected.push(n); return n; }
+  getByteTimeDomainData(buf) { for (let i = 0; i < buf.length; i++) buf[i] = 128 + Math.round((i % 2 ? 1 : -1) * this.level * 128); }
+}
+function fakeAudioContext(levels) {
+  const made = [];
+  class AC {
+    constructor() { this.state = 'running'; this.destination = { dest: true }; this.sources = []; AC.last = this; }
+    createAnalyser() { const a = new FakeAnalyser(levels.next ? levels.next() : levels.value); made.push(a); return a; }
+    createMediaElementSource(el) { const n = { el, connect(t) { this.to = t; } }; this.sources.push(n); return n; }
+    createMediaStreamSource(st) { const n = { st, connect(t) { this.to = t; } }; this.sources.push(n); return n; }
+    resume() {} close() { this.closed = true; }
+  }
+  AC.made = made;
+  return AC;
+}
+class FakeEl {
+  constructor() { this.attrs = {}; this.props = {}; this.style = { setProperty: (k, v) => { this.props[k] = v; }, removeProperty: k => { delete this.props[k]; } }; }
+  setAttribute(k, v) { this.attrs[k] = v; } removeAttribute(k) { delete this.attrs[k]; }
+}
+const WAV = Buffer.from('RIFFx').toString('base64');
+const voiceBody = () => streamOf(sse([['audio', { id: 'a1', data: WAV, text: 'Un' }], ['done', {}]]));
+
+test('level : sans abonné, aucune analyse n’est créée', async () => {
+  const AC = fakeAudioContext({ value: 0.3 });
+  const { c } = client({ '/v1/turn': { ok: true, status: 200, body: voiceBody() } }, { AudioContext: AC });
+  await c.say('x'); await tick(40);
+  assert.strictEqual(AC.made.length, 0);
+});
+
+test('level : abonné => la voix d’Aria passe par un analyseur relié aux haut-parleurs, et le niveau est émis', async () => {
+  const AC = fakeAudioContext({ value: 0.2 });
+  class LongAudio extends FakeAudio { play() { setTimeout(() => this.onended && this.onended(), 220); return Promise.resolve(); } }
+  const { c } = client({ '/v1/turn': { ok: true, status: 200, body: voiceBody() } }, { AudioContext: AC, Audio: LongAudio });
+  const levels = [];
+  c.on('level', l => levels.push(l));
+  await c.say('x'); await tick(160);
+  assert.strictEqual(AC.made.length, 1);
+  assert.deepStrictEqual(AC.made[0].connected, [AC.last.destination]);             // le son reste audible
+  assert.strictEqual(AC.last.sources.length, 1);
+  assert.strictEqual(AC.last.sources[0].to, AC.made[0]);
+  const voice = levels.filter(l => l.source === 'voice');
+  assert.ok(voice.length >= 2, 'plusieurs mesures pendant la parole');
+  assert.ok(voice.every(l => l.value > 0 && l.value <= 1), 'niveaux entre 0 et 1');
+  await tick(200);
+  assert.strictEqual(levels.filter(l => l.source === 'voice').pop().value, 0);       // un dernier 0 à la fin de la parole
+  c.destroy();
+  assert.ok(AC.last.closed);
+});
+
+test('audio-start donne l’élément audio et le texte du bloc', async () => {
+  const { c } = client({ '/v1/turn': { ok: true, status: 200, body: voiceBody() } });
+  let got = null;
+  c.on('audio-start', e => { got = e; });
+  await c.say('x'); await tick(30);
+  assert.strictEqual(got.text, 'Un');
+  assert.ok(got.element instanceof FakeAudio);
+});
+
+test('analyser("voice") : même instance à chaque appel ; "mic" : null tant que le micro n’est pas ouvert', async () => {
+  const AC = fakeAudioContext({ value: 0.1 });
+  const { c } = client({}, { AudioContext: AC });
+  const a = c.analyser('voice');
+  assert.ok(a && typeof a.getByteTimeDomainData === 'function');
+  assert.strictEqual(c.analyser('voice'), a);
+  assert.strictEqual(c.analyser('mic'), null);
+  c.destroy();
+});
+
+test('analyser("mic") après start : relié au flux du micro, pas aux haut-parleurs', async () => {
+  const AC = fakeAudioContext({ value: 0.1 });
+  const g = globalThis; g.ort = undefined; g.vad = undefined;
+  const stream = { id: 'flux' };
+  const loadScript = async src => {
+    if (src.includes('ort')) g.ort = { env: {} };
+    else g.vad = { MicVAD: { new: async () => ({ stream, start: async () => {}, pause() {}, destroy() {} }) }, utils: {} };
+  };
+  const { c } = client({}, { AudioContext: AC, loadScript });
+  await c.start();
+  const mic = c.analyser('mic');
+  assert.ok(mic);
+  assert.deepStrictEqual(mic.connected, []);
+  assert.strictEqual(AC.last.sources[0].st, stream);
+  assert.strictEqual(c.listening, true);
+  delete g.ort; delete g.vad;
+});
+
+test('bindState : data-aria-state et --aria-level sur l’élément, et retrait propre', async () => {
+  const AC = fakeAudioContext({ value: 0.2 });
+  const { c } = client({ '/v1/turn': { ok: true, status: 200, body: voiceBody() } }, { AudioContext: AC });
+  const el = new FakeEl();
+  const unbind = c.bindState(el);
+  assert.strictEqual(el.attrs['data-aria-state'], 'idle');
+  await c.say('x'); await tick(40);
+  assert.ok(['thinking', 'speaking', 'idle'].includes(el.attrs['data-aria-state']));
+  unbind();
+  assert.strictEqual(el.attrs['data-aria-state'], undefined);
+  assert.strictEqual(el.props['--aria-level'], undefined);
+  c.destroy();
+});
+
+test('bindState suit les états', async () => {
+  const { c } = client({ '/v1/turn': { ok: true, status: 200, body: streamOf(sse([['text', { text: 'a' }], ['done', {}]])) } });
+  const el = new FakeEl();
+  const seen = [];
+  c.bindState(el, { level: false });
+  c.on('state', () => seen.push(el.attrs['data-aria-state']));
+  await c.say('x');
+  assert.deepStrictEqual(seen, ['thinking', 'idle']);
+  assert.strictEqual(el.attrs['data-aria-state'], 'idle');
+});
+
+test('un gestionnaire qui lève ne casse pas le client', async () => {
+  const { c, seen } = client({ '/v1/turn': { ok: true, status: 200, body: streamOf(sse([['text', { text: 'a' }], ['done', {}]])) } });
+  c.on('text', () => { throw new Error('page tierce boguée'); });
+  const orig = console.error; console.error = () => {};
+  await c.say('x');
+  console.error = orig;
+  assert.strictEqual(seen.done, 1);
+});
+
+test('mute / muted / listening exposés', () => {
+  const { c } = client({});
+  assert.strictEqual(c.muted, false);
+  c.mute(true);
+  assert.strictEqual(c.muted, true);
+  assert.strictEqual(c.listening, false);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try { await fn(); console.log('ok  ', name); } catch (e) { ko++; console.log('KO  ', name, '\n     ', e.message); }

@@ -11,10 +11,16 @@
  *     aria.interrupt();  aria.stop();  aria.destroy();
  *   </script>
  *
- * Événements : state, text, user_text, tool, audio-start, audio-end, done, error({code, message}).
+ * Événements : state, text, user_text, tool, audio-start, audio-end, done, error({code, message}), warning({code, message}), level({source, value}).
+ * Aucune interface n'est imposée : la page tierce dessine ses propres boutons et sa propre visualisation (voir docs/access.md) :
+ *   aria.on("level", ({source, value}) => …)   niveau sonore 0..1 de "mic" (votre voix) ou "voice" (celle d'Aria), une mesure toutes les 50 ms
+ *   aria.analyser("voice" | "mic")             AnalyserNode Web Audio pour un spectre ou une forme d'onde personnalisés
+ *   aria.bindState(element)                    écrit data-aria-state et la variable CSS --aria-level sur l'élément : habillage en CSS pur
  * Options : baseUrl, apiKey, voice (true), speak (true : lire la réponse), session ("default"), vad {positive, negative, redemption, minFrames},
+ *           systemPrompt (consignes de l'application, fixées à la création de la session ; elles complètent celles de la clé, 4000 caractères au plus),
  *           modelUrl (modèle Silero, par défaut servi par Aria), cdn {ort, vad} (adresses des bibliothèques du VAD),
- *           debug (false : trace dans la console les événements du VAD et les envois, utile quand l'écoute ne réagit pas).
+ *           debug (false : trace dans la console les événements du VAD et les envois, utile quand l'écoute ne réagit pas),
+ *           analyser (false : prépare d'emblée l'analyse du son ; sinon elle l'est dès qu'on écoute "level" ou qu'on appelle analyser()).
  * Le VAD (détection de parole) est exécuté dans le navigateur : seule la phrase détectée est envoyée à Aria.
  */
 (function (root) {
@@ -60,6 +66,8 @@
     var o = Object.assign({ voice: true, speak: true, session: 'default', vad: {}, cdn: {} }, options || {});
     if (!o.baseUrl || !o.apiKey) throw new Error('AriaClient : baseUrl et apiKey sont obligatoires');
     var base = String(o.baseUrl).replace(/\/+$/, '');
+    var systemPrompt = typeof o.systemPrompt === 'string' ? o.systemPrompt.trim() : '';
+    if (o.systemPrompt != null && typeof o.systemPrompt !== 'string') throw new Error('AriaClient : systemPrompt doit être un texte');
     var cdn = Object.assign({}, DEFAULT_CDN, o.cdn);
     var fetchFn = o.fetch || (root.fetch && root.fetch.bind(root));
     var AudioCtor = o.Audio || root.Audio;
@@ -87,8 +95,18 @@
     var framesSeen = 0;
     var peak = 0;
     var lastTrace = 0;
+    var audioCtx = null;
+    var voiceAnalyser = null;
+    var micAnalyser = null;
+    var voiceWanted = !!o.analyser;
+    var levelTimer = null;
+    var lastVoiceLevel = 0;
 
-    function on(name, fn) { (handlers[name] = handlers[name] || []).push(fn); return api; }
+    function on(name, fn) {
+      (handlers[name] = handlers[name] || []).push(fn);
+      if (name === 'level') { voiceWanted = true; startLevels(); }
+      return api;
+    }
     function off(name, fn) { handlers[name] = (handlers[name] || []).filter(function (f) { return f !== fn; }); return api; }
     function emit(name, payload) {
       (handlers[name] || []).slice().forEach(function (fn) {
@@ -108,6 +126,83 @@
       setState(idleState());
     }
 
+    // ---------------------------------------------------------------- analyse du son (visualisation côté page tierce)
+    function context() {
+      if (!audioCtx) {
+        var AC = o.AudioContext || root.AudioContext || root.webkitAudioContext;
+        if (!AC) return null;
+        audioCtx = new AC();
+      }
+      try { if (audioCtx.state === 'suspended' && audioCtx.resume) audioCtx.resume(); } catch (e) { /* sans effet */ }
+      return audioCtx;
+    }
+    function makeAnalyser() {
+      var c = context();
+      if (!c) return null;
+      var a = c.createAnalyser();
+      a.fftSize = 1024;
+      a.smoothingTimeConstant = 0.6;
+      return a;
+    }
+    function ensureVoiceAnalyser() {
+      if (!voiceAnalyser) {
+        voiceAnalyser = makeAnalyser();
+        if (voiceAnalyser) voiceAnalyser.connect(audioCtx.destination);        // le son d'Aria reste audible : il passe par l'analyseur
+      }
+      return voiceAnalyser;
+    }
+    function ensureMicAnalyser() {
+      if (!micAnalyser && vadInst && vadInst.stream) {
+        micAnalyser = makeAnalyser();
+        if (micAnalyser) audioCtx.createMediaStreamSource(vadInst.stream).connect(micAnalyser);   // pas relié aux haut-parleurs
+      }
+      return micAnalyser;
+    }
+    function connectVoice(audio) {
+      try {
+        if (!ensureVoiceAnalyser()) return;
+        audioCtx.createMediaElementSource(audio).connect(voiceAnalyser);
+      } catch (e) { trace('analyse de la voix impossible :', e && e.message); }
+    }
+    function readLevel(an) {
+      var buf = new Uint8Array(an.fftSize);
+      an.getByteTimeDomainData(buf);
+      var sum = 0;
+      for (var i = 0; i < buf.length; i++) { var v = (buf[i] - 128) / 128; sum += v * v; }
+      return Math.min(1, Math.round(Math.sqrt(sum / buf.length) * 3 * 1000) / 1000);     // gain 3 : la parole normale approche 1
+    }
+    function startLevels() {
+      if (levelTimer || destroyed) return;
+      levelTimer = setInterval(function () {
+        if (!(handlers.level && handlers.level.length)) return;
+        if (micAnalyser && listening) emit('level', { source: 'mic', value: readLevel(micAnalyser) });
+        if (voiceAnalyser) {
+          var v = playing ? readLevel(voiceAnalyser) : 0;
+          if (v > 0 || lastVoiceLevel > 0) emit('level', { source: 'voice', value: v });   // un dernier 0 à la fin de la parole
+          lastVoiceLevel = v;
+        }
+      }, 50);
+    }
+    function analyser(source) {
+      if (source === 'mic') return ensureMicAnalyser();
+      voiceWanted = true;
+      return ensureVoiceAnalyser();
+    }
+    function bindState(element, opts) {
+      opts = opts || {};
+      function onState(st) { element.setAttribute('data-aria-state', st); }
+      function onLevel(l) { element.style.setProperty('--aria-level', String(l.value)); }
+      onState(state);
+      on('state', onState);
+      if (opts.level !== false) on('level', onLevel);
+      return function unbind() {
+        off('state', onState);
+        off('level', onLevel);
+        element.removeAttribute('data-aria-state');
+        element.style.removeProperty('--aria-level');
+      };
+    }
+
     // ---------------------------------------------------------------- lecture des blocs audio
     function playNext() {
       if (destroyed) return;
@@ -125,8 +220,9 @@
       var audio = new AudioCtor('data:audio/' + (chunk.format || 'wav') + ';base64,' + chunk.data);
       audio.volume = ducked ? 0.08 : 1;
       current = audio;
+      if (voiceWanted) connectVoice(audio);
       setState('speaking');
-      emit('audio-start', { id: chunk.id, text: chunk.text || '' });
+      emit('audio-start', { id: chunk.id, text: chunk.text || '', element: audio });
       audio.onended = playNext;
       audio.onerror = playNext;
       var p = audio.play();
@@ -157,6 +253,7 @@
       else if (ev.event === 'audio') enqueue(d);
       else if (ev.event === 'done') emit('done', d);
       else if (ev.event === 'error') fail(d.code || 'error', d.message || 'erreur');
+      else if (ev.event === 'warning') emit('warning', { code: d.code || 'warning', message: d.message || '' });
       else if (ev.event === 'state' && d.state === 'thinking' && !playing) setState('thinking');
     }
 
@@ -171,7 +268,7 @@
       try {
         res = await fetchFn(base + '/v1/turn', {
           method: 'POST', headers: headers(), signal: ctl.signal,
-          body: JSON.stringify(Object.assign({ session: o.session, speak: o.speak && !muted }, body))
+          body: JSON.stringify(Object.assign({ session: o.session, speak: o.speak && !muted }, systemPrompt ? { system: systemPrompt } : {}, body))
         });
       } catch (e) {
         if (abortCtl === ctl) abortCtl = null;
@@ -275,6 +372,7 @@
       });
       await vadInst.start();
       listening = true;
+      if (voiceWanted) { ensureMicAnalyser(); startLevels(); }
       trace('VAD prêt : micro ouvert, en attente de parole');
       setState('listening');
     }
@@ -290,13 +388,18 @@
       interrupt();
       destroyed = true;
       handlers = {};
+      if (levelTimer) { clearInterval(levelTimer); levelTimer = null; }
+      if (audioCtx && audioCtx.close) { try { audioCtx.close(); } catch (e) { /* sans effet */ } }
       if (vadInst && vadInst.destroy) { try { vadInst.destroy(); } catch (e) { /* sans effet */ } }
       vadInst = null;
     }
 
     var api = {
       on: on, off: off, start: start, stop: stop, say: say, interrupt: interrupt, reset: reset, mute: mute, destroy: destroy,
-      get state() { return state; }
+      analyser: analyser, bindState: bindState,
+      get state() { return state; },
+      get listening() { return listening; },
+      get muted() { return muted; }
     };
     return api;
   }

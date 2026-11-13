@@ -9,7 +9,7 @@ import time
 
 import components.utils as utils
 
-from .profile import REMOTE_BACKENDS, ProfileError
+from .profile import REMOTE_BACKENDS, ProfileError, compose_system
 
 
 class SessionError(Exception):
@@ -20,8 +20,9 @@ class SessionError(Exception):
 
 
 class Session:
-    def __init__(self, sid, key_id, profile, engine, mcp):
+    def __init__(self, sid, key_id, profile, engine, mcp, app_prompt=""):
         self.sid, self.key_id, self.profile, self.engine, self.mcp = sid, key_id, profile, engine, mcp
+        self.app_prompt = app_prompt          # consignes de l'application, fixées à la création de la session
         self.user = sid                       # clé de l'historique dans le moteur
         self.lock = asyncio.Lock()            # un seul tour à la fois dans une session
         self.stop = asyncio.Event()           # « stop » demandé par le client
@@ -55,8 +56,9 @@ class SessionRegistry:
     def sid_of(key_id, client_session):
         return f"{key_id}:{client_session}"
 
-    async def get(self, key_rec, client_session):
-        """Session de (clé, session client), créée à la demande. Lève SessionError (code HTTP dans `.code`)."""
+    async def get(self, key_rec, client_session, app_prompt=""):
+        """Session de (clé, session client), créée à la demande. `app_prompt` (prompt système de l'application, déjà nettoyé) n'est pris en
+        compte QU'À LA CRÉATION : une session existante garde le sien. Lève SessionError (code HTTP dans `.code`)."""
         client_session = "".join(c for c in str(client_session or "default") if c.isalnum() or c in "-_")[:40] or "default"
         sid = self.sid_of(key_rec["id"], client_session)
         self._loop = asyncio.get_running_loop()          # pour request_close_key, appelée depuis un autre thread
@@ -74,12 +76,13 @@ class SessionRegistry:
                 profile = self.profiles.load(key_rec["profile"])
             except ProfileError as e:
                 raise SessionError(500, str(e))
+            profile = dict(profile, app_prompt=app_prompt)
             try:
                 engine, mcp = self.factory(profile)
             except Exception as e:
                 utils.log_info("ACCESS", f"❌ Session impossible pour la clé {key_rec['id']} : {type(e).__name__}: {str(e)[:200]}")
                 raise SessionError(500, "configuration du profil invalide")
-            s = Session(sid, key_rec["id"], profile, engine, mcp)
+            s = Session(sid, key_rec["id"], profile, engine, mcp, app_prompt)
             s.task = asyncio.create_task(self._own(s))
             self.sessions[sid] = s
         try:
@@ -177,8 +180,9 @@ def build_engine(profile, base_config, language=None):
     params = dict((llm_conf.get(name) or {}).get("params") or {})
     if params.get("backend_type", "local") not in REMOTE_BACKENDS:
         raise ProfileError("seuls les LLM distants sont autorisés pour un accès tiers")
-    if profile.get("system_message"):
-        params["system_message"] = profile["system_message"]
+    # Message système : celui du profil (sinon celui du module LLM), puis les consignes de l'application, qui le complètent
+    base = profile.get("system_message") or params.get("system_message", "")
+    params["system_message"] = compose_system(base, profile.get("app_prompt", ""))
     memory = base_config.get("memory")
     servers = profile["mcp"]["servers"]
     all_config = {"memory": memory, "mcp": {"params": {"servers": servers}}} if servers else {"memory": memory}
