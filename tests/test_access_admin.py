@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from components import access_tab  # noqa: E402
+from components import access_tab, audit_retention, echanges  # noqa: E402
 from components.access import admin_ui, keys, profile  # noqa: E402
 
 ORIGIN = "https://app.example.com"
@@ -42,9 +42,18 @@ class AdminCase(unittest.TestCase):
         self.profiles = profile.ConfigProfiles(lambda: self.config)
         self.sessions = FakeSessions()
         self.audit = []
+        self.effaces = []                                   # appels de l'effacement des traces (simulé : la mémoire n'est pas démarrée ici)
+        echanges.configure(self.tmp / "audit", enabled=True, log_text=True, retention_days=90)
         self.port = free_port()
         self.httpd, self.token = admin_ui.start(self.store, self.profiles, self.sessions, self.port,
-                                                audit=lambda ev, **kw: self.audit.append((ev, kw)))
+                                                audit=lambda ev, **kw: self.audit.append((ev, kw)),
+                                                effacer_traces=self._effacer)
+
+    def _effacer(self, qui, ids):
+        if getattr(self, "panne_memoire", False):
+            raise RuntimeError("mémoire indisponible")
+        self.effaces.append((qui, list(ids)))
+        return {"souvenirs": 2, "personnes": 1}
 
     def tearDown(self):
         self.httpd.shutdown()
@@ -232,6 +241,105 @@ class ProfilsTests(AdminCase):
 
     def test_sessions(self):
         self.assertEqual(self.call("GET", "/api/sessions")[1][0]["key"], "k_1")
+
+
+class JournalTests(AdminCase):
+    """Page « Journal » : volumes, purge manuelle et ciblée, journal des purges. Jamais le contenu des conversations."""
+
+    def ecrire(self, src="aria", who="Olivier", conv="c1", q="Question très secrète", jours=1):
+        import time
+        e = echanges.Echange(src, who, conv, query=q)
+        e.ts = time.time() - jours * 86400
+        echanges.write(e, "Réponse très secrète", "ok")
+        return e
+
+    def test_lecture_sans_aucun_contenu(self):
+        self.ecrire()
+        status, j = self.call("GET", "/api/journal")
+        brut = json.dumps(j, ensure_ascii=False)
+        self.assertEqual(status, 200)
+        self.assertNotIn("secrète", brut)
+        self.assertEqual(sum(v["lignes"] for v in j["volumes"]), 1)
+        self.assertEqual((j["defaut_jours"], j["actif"], j["texte"]), (90, True, True))
+
+    def test_la_lecture_exige_le_jeton_et_l_ecriture_l_origine(self):
+        self.assertEqual(self.call("GET", "/api/journal", token=None)[0], 401)
+        self.assertEqual(self.call("GET", "/api/journal", host="evil.example.com")[0], 403)
+        self.assertEqual(self.call("POST", "/api/journal/purge", {"conversation": "c1"}, origin=None)[0], 403)
+        self.assertEqual(self.call("POST", "/api/journal/purge", {"conversation": "c1"}, token=None)[0], 401)
+        self.assertEqual(self.call("POST", "/api/journal/purge-age", {}, origin="http://evil.example.com")[0], 403)
+
+    def test_purge_ciblee_par_conversation_et_journal_des_purges(self):
+        a, b = self.ecrire(conv="c1"), self.ecrire(conv="c2")
+        r = self.call("POST", "/api/journal/purge", {"conversation": "c1"})[1]
+        self.assertEqual((r["ok"], r["lignes"]), (True, 1))
+        restants = [l["id"] for _, p in echanges.files() for l in echanges.read_lines(p)]
+        self.assertEqual(restants, [b.id])
+        purges = self.call("GET", "/api/journal")[1]["purges"]
+        self.assertEqual((purges[0]["par"], purges[0]["lignes"]), ("admin", 1))
+        self.assertNotIn("secrète", json.dumps(purges))
+        self.assertIn(("audit_purge", {"lignes": 1, "fichiers": 0}), self.audit)
+
+    def test_aucun_critere_refuse_et_rien_n_est_supprime(self):
+        self.ecrire()
+        for corps in ({}, {"conversation": ""}, {"date_avant": "  "}):
+            r = self.call("POST", "/api/journal/purge", corps)[1]
+            self.assertFalse(r["ok"], corps)
+        self.assertEqual(len([1 for _, p in echanges.files() for _ in echanges.read_lines(p)]), 1)
+
+    def test_date_invalide_refusee(self):
+        self.assertFalse(self.call("POST", "/api/journal/purge", {"date_avant": "demain"})[1]["ok"])
+
+    def test_purge_d_une_personne_efface_aussi_les_traces_de_la_memoire(self):
+        e = self.ecrire(who="Léa")
+        self.ecrire(who="Paul")
+        r = self.call("POST", "/api/journal/purge", {"personne": "Léa"})[1]
+        self.assertEqual((r["lignes"], r["traces"]), (1, {"souvenirs": 2, "personnes": 1}))
+        self.assertEqual(self.effaces, [("Léa", [e.id])])
+        purges = self.call("GET", "/api/journal")[1]["purges"]
+        self.assertEqual(sum(p["traces"] for p in purges), 3)
+        self.assertNotIn("Léa", json.dumps(purges, ensure_ascii=False))
+
+    def test_les_autres_purges_ne_touchent_pas_aux_traces(self):
+        self.ecrire(conv="c1")
+        self.call("POST", "/api/journal/purge", {"conversation": "c1"})
+        self.call("POST", "/api/journal/purge", {"acces": "aria"})
+        self.assertEqual(self.effaces, [])
+
+    def test_une_memoire_indisponible_n_annule_pas_la_purge_du_journal(self):
+        self.ecrire(who="Léa")
+        self.panne_memoire = True
+        r = self.call("POST", "/api/journal/purge", {"personne": "Léa"})[1]
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["lignes"], 1)
+        self.assertIn("erreur", r["traces"])                                # signalé, pas silencieux
+        self.assertEqual([l for _, p in echanges.files() for l in echanges.read_lines(p)], [])
+
+    def test_purge_selon_la_duree_de_chaque_acces(self):
+        vue = self.create(label="Robot")["key"]
+        self.store.update(vue["id"], retention_days=7)
+        court = self.ecrire(src=f"{vue['id']}:Robot", who="Robot", jours=20)
+        garde = self.ecrire(jours=20)
+        r = self.call("POST", "/api/journal/purge-age", {})[1]
+        self.assertEqual(r["lignes"], 1)
+        restants = [l["id"] for _, p in echanges.files() for l in echanges.read_lines(p)]
+        self.assertEqual(restants, [garde.id])
+        self.assertNotIn(court.id, restants)
+
+    def test_duree_par_acces_modifiable_depuis_la_page_des_cles(self):
+        vue = self.create(label="Robot", retention_days=14)["key"]
+        self.assertEqual(vue["retention_days"], 14)
+        self.call("POST", "/api/keys/update", {"id": vue["id"], "retention_days": 30})
+        self.assertEqual(self.store.retention_of(vue["id"]), 30)
+        j = self.call("GET", "/api/journal")[1]
+        self.assertEqual([a["retention_days"] for a in j["acces"]], [30])
+
+    def test_la_page_a_son_onglet_sans_innerhtml(self):
+        self.assertIn('data-t="jrn"', admin_ui.PAGE)
+        self.assertIn("/api/journal/purge", admin_ui.PAGE)
+        self.assertNotIn("innerHTML", admin_ui.PAGE)
+        self.assertEqual(admin_ui.PAGE.count("</script>"), 1)
+        self.assertIn("Cette page n", admin_ui.PAGE)                       # rappel : jamais le contenu des conversations
 
 
 class OngletTests(unittest.TestCase):

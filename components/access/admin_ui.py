@@ -12,11 +12,13 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from components import audit_retention, echanges
+
 MAX_BODY = 16 * 1024
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
 
 
-def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=()):
+def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=(), effacer_traces=None):
     allowed = {h.strip().lower() for h in extra_hosts if h.strip()}
     log = audit or (lambda *a, **k: None)
 
@@ -102,6 +104,12 @@ def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=()):
                 return self._json(out)
             if url.path == "/api/sessions":
                 return self._json(sessions.stats() if sessions else [])
+            if url.path == "/api/journal":
+                # Volumes et journal des purges seulement : cette page ne lit JAMAIS le contenu des conversations
+                return self._json({"actif": echanges._settings["enabled"], "defaut_jours": echanges._settings["retention_days"],
+                                   "texte": echanges._settings["log_text"], "volumes": audit_retention.volumes(),
+                                   "purges": audit_retention.read_purges(50)[::-1],
+                                   "acces": [{"id": k["id"], "label": k["label"], "retention_days": k.get("retention_days", 0)} for k in store.list()]})
             self._json({"erreur": "introuvable"}, 404)
 
         # ---- écriture
@@ -151,6 +159,27 @@ def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=()):
                     self._close_sessions(kid)
                 log("key_deleted", id=kid)
                 return self._json({"ok": ok})
+            if path == "/api/journal/purge-age":
+                r = audit_retention.purge_auto(echanges._settings["retention_days"], store.retention_of, par="admin")
+                log("audit_purge_age", lignes=r["lignes"], fichiers=r["fichiers"])
+                return self._json({"ok": True, "lignes": r["lignes"], "fichiers": r["fichiers"]})
+            if path == "/api/journal/purge":
+                crit = {k: str(body.get(k) or "").strip()[:80] for k in ("date_avant", "conversation", "acces", "personne")}
+                try:
+                    r = audit_retention.purge_targeted(crit["date_avant"] or None, crit["conversation"] or None, crit["acces"] or None, crit["personne"] or None)
+                except ValueError as e:
+                    return self._json({"ok": False, "erreur": str(e)})
+                traces = None
+                if crit["personne"] and effacer_traces:
+                    # Droit à l'effacement : la trace (extrait de la question) des souvenirs et fiches de cette personne est retirée aussi
+                    try:
+                        traces = effacer_traces(crit["personne"], r["ids"])
+                    except Exception as e:
+                        traces = {"erreur": type(e).__name__}
+                    if isinstance(traces, dict) and "erreur" not in traces:
+                        audit_retention.log_purge("admin", "traces de la personne", 0, 0, traces=traces.get("souvenirs", 0) + traces.get("personnes", 0))
+                log("audit_purge", lignes=r["lignes"], fichiers=r["fichiers"])
+                return self._json({"ok": True, "lignes": r["lignes"], "fichiers": r["fichiers"], "traces": traces})
             self._json({"erreur": "introuvable"}, 404)
 
         def _close_sessions(self, kid):
@@ -161,10 +190,10 @@ def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=()):
     return Handler
 
 
-def start(store, profiles, sessions, port, token=None, audit=None, extra_hosts=()):
+def start(store, profiles, sessions, port, token=None, audit=None, extra_hosts=(), effacer_traces=None):
     """Lance la page dans un thread démon. Retourne (serveur, jeton)."""
     token = token or secrets.token_urlsafe(24)
-    httpd = ThreadingHTTPServer(("0.0.0.0", port), make_handler(store, profiles, sessions, token, audit, extra_hosts))
+    httpd = ThreadingHTTPServer(("0.0.0.0", port), make_handler(store, profiles, sessions, token, audit, extra_hosts, effacer_traces))
     threading.Thread(target=httpd.serve_forever, name="acces-admin", daemon=True).start()
     return httpd, token
 
@@ -203,7 +232,7 @@ code,.secret{font-family:ui-monospace,Consolas,monospace}
 #modal .chk{display:flex;align-items:center;gap:6px;margin-top:10px}#modal .chk input{width:auto}
 </style></head><body>
 <header><h1>🔑 Accès tiers</h1>
-<nav><button data-t="keys" class="on">Clés</button><button data-t="prof">Profils MCP</button><button data-t="ses">Sessions</button><button data-t="doc">Intégration</button></nav>
+<nav><button data-t="keys" class="on">Clés</button><button data-t="prof">Profils MCP</button><button data-t="ses">Sessions</button><button data-t="jrn">Journal</button><button data-t="doc">Intégration</button></nav>
 <span id="msg"></span></header>
 <main id="main"></main>
 <script>
@@ -301,6 +330,32 @@ async function renderSessions(main){
     ...rows.map(s=>el('tr',{},el('td',{},s.id),el('td',{},s.key),el('td',{},s.profile),el('td',{className:'mut'},s.idle_s+' s')))));
   if(!rows.length)main.append(el('p',{className:'mut'},'Aucune session ouverte.'));
 }
+async function renderJournal(main){
+  const j=await get('/api/journal');
+  const nb=j.volumes.reduce((a,v)=>a+v.lignes,0);
+  const date=el('input',{type:'date'}),conv=el('input',{placeholder:'identifiant exact (ex. k_2b7cfa:abc#1)'}),pers=el('input',{placeholder:'nom exact de l\u2019interlocuteur'});
+  const acc=el('select',{},el('option',{value:''},'(tous)'),el('option',{value:'aria'},'Aria (interface)'),...j.acces.map(a=>el('option',{value:a.id},a.label+' \u00b7 '+a.id)));
+  const lancer=async()=>{
+    const corps={date_avant:date.value,conversation:conv.value,acces:acc.value,personne:pers.value};
+    if(!corps.date_avant&&!corps.conversation&&!corps.acces&&!corps.personne){say('Choisissez au moins un critère');return}
+    if(!confirm('Supprimer définitivement les échanges qui correspondent à ces critères'+(corps.personne?' et effacer les traces de cette personne dans la mémoire':'')+' ?'))return;
+    const r=await post('/api/journal/purge',corps);
+    say(r.ok?(r.lignes+' échange(s) supprimé(s)'+(r.traces&&r.traces.erreur?' \u00b7 traces : erreur':'')):(r.erreur||'Impossible'));render();
+  };
+  main.append(
+    el('p',{className:'mut'},(j.actif?'Journal actif':'Journal désactivé')+' \u00b7 conservation par défaut '+j.defaut_jours+' jours (réglable par accès) \u00b7 '+(j.texte?'texte complet':'empreintes seulement')+' \u00b7 '+nb+' échange(s). Cette page n\u2019affiche jamais le contenu des conversations.'),
+    el('div',{className:'bar'},el('button',{onclick:async()=>{const r=await post('/api/journal/purge-age',{});say(r.lignes+' échange(s) purgé(s)');render()}},'Purger maintenant selon la durée de conservation')),
+    el('h3',{},'Purge ciblée'),
+    el('div',{className:'bar'},el('label',{},'Avant le ',date),el('label',{},'Conversation ',conv),el('label',{},'Accès ',acc),el('label',{},'Personne ',pers),el('button',{onclick:lancer},'Supprimer')),
+    el('h3',{},'Volumes par jour'),
+    el('table',{},el('tr',{},...['Jour','Échanges','Taille'].map(h=>el('th',{},h))),...j.volumes.slice().reverse().map(v=>el('tr',{},el('td',{},v.jour),el('td',{},String(v.lignes)),el('td',{className:'mut'},Math.round(v.octets/1024)+' Ko')))),
+    j.volumes.length?'':el('p',{className:'mut'},'Aucun échange consigné.'),
+    el('h3',{},'Journal des purges'),
+    el('table',{},el('tr',{},...['Date','Par','Critère','Échanges','Fichiers','Période','Traces'].map(h=>el('th',{},h))),
+      ...j.purges.map(p=>el('tr',{},el('td',{},p.ts.replace('T',' ').slice(0,16)),el('td',{},p.par),el('td',{},p.critere),el('td',{},String(p.lignes)),el('td',{},String(p.fichiers)),
+        el('td',{className:'mut'},p.du?p.du.slice(0,10)+' \u2192 '+p.au.slice(0,10):''),el('td',{},String(p.traces||0))))),
+    j.purges.length?'':el('p',{className:'mut'},'Aucune purge.'));
+}
 function renderDoc(main){
   const base=location.protocol+'//'+location.hostname+':7861';
   main.append(el('p',{},'Intégration dans une page web tierce :'),
@@ -313,6 +368,7 @@ async function render(){
   if(tab==='keys')return renderKeys(main);
   if(tab==='prof')return renderProfils(main);
   if(tab==='ses')return renderSessions(main);
+  if(tab==='jrn')return renderJournal(main);
   return renderDoc(main);
 }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));render()});

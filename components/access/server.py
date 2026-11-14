@@ -57,7 +57,7 @@ def build(config, stt, tts, language=None):
     return api.create_app(deps), deps, store, profiles
 
 
-def start(config, stt, tts, https_args, language=None):
+def start(config, stt, tts, https_args, language=None, effacer_traces=None):
     """Lance l'API dans un thread démon si `access.enabled`. Retourne l'objet serveur uvicorn (ou None)."""
     s = settings(config)
     if not s["enabled"]:
@@ -68,7 +68,7 @@ def start(config, stt, tts, https_args, language=None):
     if s["admin_port"]:
         from . import admin_ui
         try:
-            admin, _token = admin_ui.start(store, profiles, deps.sessions, s["admin_port"], audit=deps.on_audit)
+            admin, _token = admin_ui.start(store, profiles, deps.sessions, s["admin_port"], audit=deps.on_audit, effacer_traces=effacer_traces)
             utils.log_info("ACCESS", f"Page d'administration sur le port {s['admin_port']} (publié sur 127.0.0.1 seulement)")
         except OSError as e:
             utils.log_info("ACCESS", f"❌ Page d'administration non démarrée : {e}")

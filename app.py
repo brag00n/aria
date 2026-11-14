@@ -70,6 +70,7 @@ utils.log_info("app","Stt, Llm, Tts chargés")
 DEBUG_SAVE_WAV = False
 _TMP_DIR = utils.aria_path("tmp", "tts")
 _CONFIG_FILE = "configs/default.json"
+_boucle_mcp = {}          # boucle asyncio qui porte les sessions MCP (posée au démarrage de l'application)
 access_srv = None          # serveur de l'API tierce (components/access/server.py), None si la fonction est désactivée
 
 if os.path.exists(_TMP_DIR):
@@ -891,6 +892,7 @@ if __name__ == "__main__":
         """Connecte les serveurs MCP au démarrage d'Aria (et non à la première question) : leurs pages éventuelles
         (ex. gestion de la mémoire) sont disponibles tout de suite, et le premier échange ne paie plus ce démarrage."""
         manager = getattr(llm.engine, "mcp_manager", None)
+        _boucle_mcp["loop"] = asyncio.get_running_loop()
 
         async def connecter():
             try:
@@ -910,12 +912,20 @@ if __name__ == "__main__":
             if manager is not None:
                 await manager.close()
 
+    # Droit à l'effacement (page d'administration des accès, thread HTTP) : l'outil caché de la mémoire est appelé dans la boucle de l'application
+    def _effacer_traces_memoire(qui, ids):
+        manager, loop = mcp_manager(), _boucle_mcp.get("loop")
+        if manager is None or loop is None or not manager.has_tool("ui_effacer_traces"):
+            return {"erreur": "mémoire indisponible"}
+        texte = asyncio.run_coroutine_threadsafe(manager.call_tool("ui_effacer_traces", {"qui": qui, "echanges": ",".join(ids[:500])}), loop).result(20)
+        return json.loads(texte)
+
     # HTTPS optionnel (config "https") : nécessaire pour le micro depuis un autre poste ou un smartphone
     _https_args = https.launch_args(config.get("https"))
     # Accès des applications tierces par clé API (config "access", désactivé par défaut) : API sur un port dédié
     try:
         from components.access import server as access_server
-        access_srv = access_server.start(config, stt, tts, _https_args, language=language)
+        access_srv = access_server.start(config, stt, tts, _https_args, language=language, effacer_traces=_effacer_traces_memoire)
     except Exception as e:                          # jamais empêcher Aria de démarrer à cause de cette option
         utils.log_info("ACCESS", f"❌ API tierce non démarrée : {type(e).__name__}: {e}")
     # Purge automatique du journal d'audit (au démarrage puis toutes les 6 h) : durée par défaut et durée de chaque accès relues à chaque passage
