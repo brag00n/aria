@@ -510,6 +510,69 @@ class MoteurPromptTests(unittest.TestCase):
             llm_mod.Llm = original
 
 
+class ProfilsEnDirectTests(ApiCase):
+    """Fermeture des conversations d'un profil modifié depuis l'onglet Paramètres (components/access/server.py)."""
+
+    def setUp(self):
+        super().setUp()
+        from components.access import server as srv
+        self.srv_mod = srv
+        self.server = type("Srv", (), {})()
+        self.server.access_deps = self.deps                                          # ce que start() attache à l'objet serveur
+
+    def test_clés_utilisant_un_profil(self):
+        v2, k2 = self.keys.create("Autre appli", [ORIGIN], profile="autre")
+        used = self.srv_mod.keys_using_profiles(self.server, ["portail"])
+        self.assertEqual(len(used), 1)
+        self.assertIn("Portail", used[0])
+        self.assertIn("portail", used[0])
+        self.assertEqual(self.srv_mod.keys_using_profiles(self.server, ["inconnu"]), [])
+        self.assertEqual(self.srv_mod.keys_using_profiles(self.server, []), [])
+
+    def test_sans_serveur_d_acces_rien_ne_plante(self):
+        self.assertEqual(self.srv_mod.keys_using_profiles(None, ["portail"]), [])
+        self.assertEqual(self.srv_mod.close_sessions_for_profiles(None, ["portail"]), 0)
+        self.assertEqual(self.srv_mod.close_sessions_for_profiles(object(), ["portail"]), 0)
+
+    def test_fermeture_des_conversations_du_profil_modifie_seulement(self):
+        v2, k2 = self.keys.create("Autre appli", [ORIGIN], profile="autre")
+        self.turn({"text": "x", "session": "s1"})                                    # clé « Portail », profil portail
+        self.turn({"text": "x", "session": "s2"})
+        self.turn({"text": "x", "session": "s1"}, headers=self.hdr(k2))              # clé « Autre appli », profil autre
+        self.assertEqual(len(self.sessions.sessions), 3)
+        self.sessions._loop = self.sessions._loop                                     # boucle de l'API, mémorisée par la première session
+        n = self.srv_mod.close_sessions_for_profiles(self.server, ["portail"])
+        self.assertEqual(n, 2)
+        import time
+        for _ in range(50):                                                          # la fermeture est planifiée dans la boucle de l'API
+            if len(self.sessions.sessions) == 1:
+                break
+            time.sleep(0.05)
+        restant = list(self.sessions.sessions)
+        self.assertEqual(len(restant), 1)
+        self.assertTrue(restant[0].startswith(v2["id"]), restant)
+
+    def test_une_nouvelle_conversation_prend_le_profil_modifie(self):
+        self.config["access"]["profiles"]["portail"] = {"description": "Modifié", "system_message": "NOUVELLES REGLES"}
+        self.turn({"text": "x", "session": "neuve"})
+        self.assertEqual(self.engines[-1].name, "portail")
+        self.assertEqual(self.sessions.sessions[next(iter(self.sessions.sessions))].profile["system_message"], "NOUVELLES REGLES")
+
+    def test_une_conversation_ouverte_garde_l_ancien_profil_jusqu_a_fermeture(self):
+        self.turn({"text": "x", "session": "s1"})
+        self.config["access"]["profiles"]["portail"] = {"system_message": "APRES"}
+        self.turn({"text": "y", "session": "s1"})
+        self.assertEqual(len(self.engines), 1)                                       # même moteur : l'ancien profil reste en place
+        sess = next(iter(self.sessions.sessions.values()))
+        self.assertEqual(sess.profile["system_message"], "")
+
+    def test_profil_supprime_donne_une_erreur_a_la_creation(self):
+        del self.config["access"]["profiles"]["portail"]
+        r = self.turn({"text": "x", "session": "nouvelle"})
+        self.assertEqual(r.status_code, 500)
+        self.assertEqual(r.json()["error"]["code"], "session")
+
+
 class FichiersPublicsTests(ApiCase):
     def setUp(self):
         super().setUp()

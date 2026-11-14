@@ -60,7 +60,7 @@ from components import visualizer, mic_toggle
 from components.language import Language, normalize
 from components.conversation import Conversation
 from components import https
-from components import memory_tab, access_tab
+from components import memory_tab, access_tab, settings as settings_mod
 from components import interlocuteur
 from components import history as history_mod
 utils.log_info("app","Stt, Llm, Tts chargés")
@@ -70,6 +70,7 @@ utils.log_info("app","Stt, Llm, Tts chargés")
 DEBUG_SAVE_WAV = False
 _TMP_DIR = utils.aria_path("tmp", "tts")
 _CONFIG_FILE = "configs/default.json"
+access_srv = None          # serveur de l'API tierce (components/access/server.py), None si la fonction est désactivée
 
 if os.path.exists(_TMP_DIR):
     shutil.rmtree(_TMP_DIR)
@@ -126,59 +127,30 @@ def get_current_params(category, module_name):
     except Exception as e:
         return "{}"
 
-def update_config_ui(global_json, vad_choix, vad_json, conv_json, memory_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json):
-    """Sauvegarde globale de la configuration modulaire"""
+def update_config_ui(global_json, vad_choix, vad_json, conv_json, memory_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json,
+                     profiles_json="", close_open=False):
+    """Sauvegarde globale de la configuration modulaire. Tout est analysé et validé AVANT la moindre modification de `config` (components/settings.py) :
+    une erreur dans n'importe quel champ ne laisse ni la mémoire ni le fichier à moitié modifiés."""
     try:
-        # 0. Réglages généraux (langue...). Contrôlés AVANT toute écriture : une erreur ne laisse pas la config à moitié modifiée.
-        new_global = json.loads(global_json)
-        if not isinstance(new_global, dict):
-            return "❌ La section globale doit être un objet JSON"
-        lang = new_global.get("language")
-        if normalize(lang) is None:
-            return f"❌ Langue '{lang}' invalide : un code est attendu (ex. fr, en, es)"
-        if "default_language" in new_global and normalize(new_global["default_language"]) is None:
-            return f"❌ Langue de repli '{new_global['default_language']}' invalide : un code est attendu (ex. en)"
-        new_global["language"] = normalize(lang)
-        if "default_language" in new_global:
-            new_global["default_language"] = normalize(new_global["default_language"])
-        # Conversation (mots-clés d'ouverture, de clôture et d'arrêt) : contrôlée AVANT toute écriture
-        new_conv = json.loads(conv_json)
-        if not isinstance(new_conv, dict):
-            return "❌ La section conversation doit être un objet JSON"
-        for key in ("open_phrases", "close_phrases", "stop_phrases"):
-            if key in new_conv and not (isinstance(new_conv[key], list) and all(isinstance(x, str) for x in new_conv[key])):
-                return f"❌ conversation.{key} doit être une liste de textes"
-        new_memory = json.loads(memory_json)
-        if not isinstance(new_memory, dict):
-            return "❌ La section mémoire doit être un objet JSON"
-        for key in ("max_exchanges", "max_chars", "tool_result_max_chars"):
-            if key in new_memory and not (isinstance(new_memory[key], int) and not isinstance(new_memory[key], bool) and new_memory[key] >= 0):
-                return f"❌ memory.{key} doit être un entier positif ou nul"
-        config["global"] = new_global
-        config["conversation"] = new_conv
-        config["memory"] = new_memory
-        # 1. Mise à jour des pointeurs de modules actifs
-        config["active_modules"] = {
-            "vad": vad_choix,
-            "stt": stt_choix,
-            "llm": llm_choix,
-            "tts": tts_choix
-        }
-
-        # 2. Injection des paramètres modifiés par l'utilisateur
-        config["vad"][vad_choix]["params"] = json.loads(vad_json)
-        config["stt"][stt_choix]["params"] = json.loads(stt_json)
-        config["llm"][llm_choix]["params"] = json.loads(llm_json)
-        config["tts"][tts_choix]["params"] = json.loads(tts_json)
-        config["mcp"]["params"] = json.loads(mcp_json)
-
-        # 3. Écriture physique sur le disque
-        with open(_CONFIG_FILE, "w") as f:
-            json.dump(config, f, indent=2)
-            
-        return "✅ Configuration sauvegardée ! Cliquez sur « Redémarrer » pour appliquer les changements."
+        fields = {"global": global_json, "conversation": conv_json, "memory": memory_json, "mcp": mcp_json, "profiles": profiles_json,
+                  "vad": vad_json, "stt": stt_json, "llm": llm_json, "tts": tts_json,
+                  "vad_choice": vad_choix, "stt_choice": stt_choix, "llm_choice": llm_choix, "tts_choice": tts_choix}
+        parsed, changed = settings_mod.apply_settings(config, fields)
+        settings_mod.write_config(config, _CONFIG_FILE)
+        closed, warnings = 0, []
+        if changed and access_srv is not None:
+            from components.access import server as access_server
+            used = access_server.keys_using_profiles(access_srv, changed)
+            if used:
+                warnings.append("Des clés utilisent un profil modifié ou supprimé : " + ", ".join(used)
+                                + ". Un profil supprimé donne une erreur à ces clés ; cochez « Fermer les conversations ouvertes » pour appliquer le changement tout de suite.")
+            if close_open:
+                closed = access_server.close_sessions_for_profiles(access_srv, changed)
+        return settings_mod.save_message(changed, closed, warnings)
     except json.JSONDecodeError as e:
         return f"❌ Erreur de syntaxe JSON dans l'un des blocs : {str(e)}"
+    except ValueError as e:
+        return str(e) if str(e).startswith("❌") else f"❌ {e}"
     except Exception as e:
         return f"❌ Erreur sauvegarde : {str(e)}"
 
@@ -740,6 +712,19 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     lines=12
                 )
 
+            # --- BLOC 6 : ACCÈS TIERS (profils des clés API) ---
+            with gr.Group():
+                gr.Markdown("#### 🔑 Accès tiers : profils")
+                profiles_help_md = gr.Markdown(settings_mod.profiles_help(config))
+                profiles_code = gr.Code(
+                    value=json.dumps((config.get("access") or {}).get("profiles", {}), indent=2, ensure_ascii=False),
+                    language="json",
+                    label="Profils d'accès (chaque clé API d'une application tierce en choisit un)",
+                    lines=12
+                )
+                close_open_cb = gr.Checkbox(label="Fermer les conversations ouvertes des clés dont le profil change (sinon, elles gardent l'ancien jusqu'à leur expiration)",
+                                            value=False)
+
             # --- SAUVEGARDE GLOBALE (boutons en haut de l'onglet) ---
             # Au clic, on envoie toutes les valeurs actuelles (dropdowns + codes)
             save_btn.click(
@@ -752,7 +737,8 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     stt_dd, stt_code,
                     llm_dd, llm_code,
                     tts_dd, tts_code,
-                    mcp_code
+                    mcp_code,
+                    profiles_code, close_open_cb
                 ],
                 outputs=[status_msg]
             )
@@ -895,7 +881,7 @@ if __name__ == "__main__":
     # Accès des applications tierces par clé API (config "access", désactivé par défaut) : API sur un port dédié
     try:
         from components.access import server as access_server
-        access_server.start(config, stt, tts, _https_args, language=language)
+        access_srv = access_server.start(config, stt, tts, _https_args, language=language)
     except Exception as e:                          # jamais empêcher Aria de démarrer à cause de cette option
         utils.log_info("ACCESS", f"❌ API tierce non démarrée : {type(e).__name__}: {e}")
     ariaHmi.launch(server_name="0.0.0.0", server_port=7860, app_kwargs={"lifespan": _mcp_lifespan}, **_https_args)
