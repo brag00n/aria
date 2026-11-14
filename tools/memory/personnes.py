@@ -3,6 +3,10 @@
 Fichier personnes.jsonl (dans le dossier de l'espace de noms), une personne par ligne :
     {"id":"p1","nom":"Olivier","compl":"Martin","surnom":"Oli","sexe":"m","c":"2026-10-30T14:02:11+00:00"}
 
+Une personne peut être de type SYSTÈME (`type: "systeme"`, `cle` = identifiant interne d'un accès tiers) : une application ou un appareil (un robot)
+qui utilise la mémoire. Absence de `type` = humain, donc les fichiers existants se lisent sans migration. Un système n'est pas un interlocuteur
+d'Aria : il n'apparaît pas dans la liste déroulante (`listing`), mais il est une personne du foyer (graphe, page de gestion).
+
 `nom` est le prénom (ou ce que la personne dit être son nom), `compl` un complément qui la distingue d'un homonyme (nom de famille),
 `surnom` un nom d'usage, `sexe` "f", "m" ou vide (inconnu) : il sert au moteur de parenté (belle-fille, tante, grand-mère...). Module autonome : aucune importation depuis Aria, bibliothèque standard seulement.
 """
@@ -24,6 +28,11 @@ def _sexe(value):
     """'f', 'm' ou '' (inconnu) ; accepte aussi féminin/masculin/femme/homme."""
     v = key(str(value or ""))[:1]
     return v if v in ("f", "m") else ""
+
+
+def est_systeme(person):
+    """Vrai pour une personne de type système (accès tiers) ; absence de `type` = humain."""
+    return bool(person) and person.get("type") == "systeme"
 
 
 def key(value):
@@ -54,7 +63,8 @@ class Personnes:
                     if isinstance(obj, dict) and obj.get("id") and obj.get("nom"):
                         self.items.append({"id": str(obj["id"]), "nom": _clean(obj["nom"]), "compl": _clean(obj.get("compl")),
                                            "surnom": _clean(obj.get("surnom")), "sexe": _sexe(obj.get("sexe")), "c": obj.get("c", ""),
-                                           **({"ref": True} if obj.get("ref") else {})})
+                                           **({"ref": True} if obj.get("ref") else {}),
+                                           **({"type": "systeme", "cle": str(obj.get("cle", ""))[:40]} if obj.get("type") == "systeme" else {})})
         except OSError:
             pass
 
@@ -94,10 +104,38 @@ class Personnes:
 
     def listing(self, avec_citees=False):
         """Personnes pour la liste déroulante : les interlocuteurs (qui ont parlé). Les personnes seulement citées dans un lien
-        (`ref`) n'y figurent pas, sauf `avec_citees` (page de gestion)."""
+        (`ref`) n'y figurent pas, sauf `avec_citees` (page de gestion). Les systèmes (accès tiers) n'y figurent jamais : ce ne sont
+        pas des interlocuteurs d'Aria."""
         with self.lock:
-            return sorted(({"id": p["id"], "label": self.label(p)} for p in self.items if avec_citees or not p.get("ref")),
-                          key=lambda x: key(x["label"]))
+            return sorted(({"id": p["id"], "label": self.label(p)} for p in self.items
+                           if not est_systeme(p) and (avec_citees or not p.get("ref"))), key=lambda x: key(x["label"]))
+
+    def systeme(self, cle):
+        """Personne système liée à la clé interne `cle` (id d'un accès tiers), ou None."""
+        return next((p for p in self.items if est_systeme(p) and p.get("cle") == cle), None)
+
+    def ensure_system(self, cle, nom):
+        """Retrouve ou crée la personne système d'un accès tiers. L'identité suit la CLÉ INTERNE, pas le nom : renommer l'accès renomme la
+        fiche (même id, mêmes souvenirs). Retourne la personne, ou None si la clé ou le nom est vide."""
+        cle, nom = _clean(cle), _clean(nom)
+        if not cle or not key(nom):
+            return None
+        with self.lock:
+            person = self.systeme(cle)
+            if person:
+                if person["nom"] != nom:
+                    person["nom"] = nom
+                    self._rewrite()
+                    if self.activity:
+                        self.activity.log("system_renamed", id=person["id"])
+                return person
+            person = {"id": self._new_id(), "nom": nom, "compl": "", "surnom": "", "sexe": "", "c": self.iso(self.clock()),
+                      "type": "systeme", "cle": cle}
+            self.items.append(person)
+            self._append(person)
+            if self.activity:
+                self.activity.log("system_add", id=person["id"], cle=cle)
+            return person
 
     def find(self, name):
         """Personnes dont le nom, le nom complet ou le surnom correspond (comparaison sans casse ni accents)."""

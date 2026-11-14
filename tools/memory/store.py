@@ -24,7 +24,7 @@ from pathlib import Path
 import scoring
 import textproc
 from activity import NullActivity
-from personnes import Personnes
+from personnes import Personnes, est_systeme
 
 TYPES = ("fait", "preference", "tache", "ephemere", "foyer", "relation")
 _TYPE_ALIASES = {
@@ -89,7 +89,7 @@ class Store:
         self._lockfile = None
         self._seen = {}               # (taille, date) des fichiers tels que nous les avons écrits ou lus
         self._events = 0
-        self._recent_writes = []
+        self._recent_writes = {}       # principal -> instants des écritures récentes (le débit est borné PAR principal)
         self.records = {}
         self.hashes = {}
         self.inv = {}
@@ -386,16 +386,19 @@ class Store:
             return "mémoire verrouillée par un autre processus."
         return None
 
-    def _rate_limited(self, src):
-        """Limite les ajouts émis par le LLM (une page web piégée pourrait lui faire tout mémoriser)."""
+    def _rate_limited(self, src, who=""):
+        """Limite les ajouts émis par le LLM (une page web piégée pourrait lui faire tout mémoriser). La limite est PAR principal : un tiers
+        bavard ne prive pas Aria de ses écritures."""
         if src != "llm":
             return False
         now = self.clock()
-        self._recent_writes = [t for t in self._recent_writes if now - t < 60]
-        if len(self._recent_writes) >= WRITES_PER_MINUTE:
+        recent = [t for t in self._recent_writes.get(who, []) if now - t < 60]
+        if len(recent) >= WRITES_PER_MINUTE:
+            self._recent_writes[who] = recent
             self.activity.log("rate_limit", src=src, limit=WRITES_PER_MINUTE)
             return True
-        self._recent_writes.append(now)
+        recent.append(now)
+        self._recent_writes[who] = recent
         return False
 
     # ---------------------------------------------------------------- opérations
@@ -411,7 +414,9 @@ class Store:
             if not textproc.normalize(text):
                 return "empty", None
             mtype = normalize_type(mtype)
-            shared = mtype in scoring.SHARED_TYPES
+            system = self.is_system(owner)
+            # Un système n'écrit JAMAIS dans le partagé : tout ce qu'il retient (même de type foyer ou relation) lui appartient
+            shared = mtype in scoring.SHARED_TYPES and not system
             who = "" if shared else (self.active if owner is None else owner)
             if not shared and not who:
                 self.activity.log("add_refused", reason="unknown_speaker", src=src)
@@ -428,7 +433,7 @@ class Store:
                 self._append({"op": "touch", "ts": iso(now), "id": existing["id"], "boost": scoring.DUP_BOOST}, sync=False)
                 self.activity.log("add", id=existing["id"], dup=True, src=src, n=len(text))
                 return "duplicate", existing
-            if self._rate_limited(src):
+            if self._rate_limited(src, who or (self.active if owner is None else owner) or ""):
                 return "rate_limit", None
             tag_list = parse_tags(tags)
             if mtype == "relation" and "core" not in tag_list:
@@ -457,9 +462,10 @@ class Store:
             self.activity.log("update", id=rid, fields=sorted(clean), src=src)
             return True
 
-    def delete(self, rid, why="user", src="llm", force=False):
+    def delete(self, rid, why="user", src="llm", force=False, owner=None):
         """Oubli : le souvenir quitte l'index mais reste dans l'archive (jamais perdu en silence).
-        L'interlocuteur n'oublie que ses souvenirs et le partagé (si identifié) ; `force` : page de gestion, sans restriction."""
+        L'interlocuteur n'oublie que ses souvenirs et le partagé (si identifié) ; un SYSTÈME (`owner`) n'oublie que les siens ;
+        `force` : page de gestion, sans restriction."""
         with self.lock:
             self._check_external_changes()
             if self._writable():
@@ -467,7 +473,11 @@ class Store:
             rec = self.records.get(rid)
             if not rec:
                 return False
-            if not force and not (self.visible_to(rec) and (rec.get("o") or self.active)):
+            if not force and self.is_system(owner):
+                if rec.get("o") != owner:
+                    self.activity.log("delete_refused", id=rid, src=src)
+                    return False
+            elif not force and not (self.visible_to(rec, owner) and (rec.get("o") or (self.active if owner is None else owner))):
                 self.activity.log("delete_refused", id=rid, src=src)
                 return False
             self._archive(rec, why)
@@ -534,9 +544,17 @@ class Store:
             os.fsync(f.fileno())
 
     # ---------------------------------------------------------------- lecture / recherche
+    def is_system(self, pid):
+        """Vrai si `pid` est une personne de type système (accès tiers)."""
+        return bool(pid) and est_systeme(self.personnes.get(pid))
+
     def visible_to(self, rec, owner=None):
-        """Un souvenir est visible de son propriétaire et de tous s'il est partagé. Interlocuteur inconnu : le partagé seulement."""
+        """Un souvenir est visible de son propriétaire et de tous s'il est partagé. Interlocuteur inconnu : le partagé seulement.
+        Un SYSTÈME (accès tiers) ne voit que ses souvenirs, plus les souvenirs partagés de type `foyer` : jamais les relations
+        partagées en tant que souvenirs (il lit le graphe par l'outil de parenté), ni les anciens souvenirs sans propriétaire."""
         owner = self.active if owner is None else owner
+        if self.is_system(owner):
+            return rec.get("o") == owner or (not rec.get("o") and rec.get("t") == "foyer")
         return not rec.get("o") or rec["o"] == owner
 
     def eff(self, rec, now=None):
