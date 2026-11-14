@@ -1,6 +1,7 @@
 import asyncio
 import os
 import json
+from urllib.parse import urlparse
 import components.utils as utils
 from components import echanges
 from contextlib import AsyncExitStack
@@ -10,6 +11,26 @@ from mcp.client.streamable_http import streamablehttp_client
 
 # Les outils dont le nom commence ainsi sont réservés à l'interface d'Aria : appelables par elle, absents des schémas du LLM
 HIDDEN_PREFIX = "ui_"
+
+
+PROBE_TIMEOUT_S = 5
+
+
+async def server_reachable(url, timeout=PROBE_TIMEOUT_S):
+    """Le port d'un serveur MCP distant répond-il ? Un serveur éteint ou injoignable ne doit pas retarder la connexion des autres
+    (la bibliothèque MCP n'a pas de délai propre et attend très longtemps). Retourne (ok, raison)."""
+    try:
+        u = urlparse(url)
+        host, port = u.hostname, u.port or (443 if u.scheme == "https" else 80)
+        if not host:
+            return False, "URL sans hôte"
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+        writer.close()
+        return True, ""
+    except asyncio.TimeoutError:
+        return False, f"pas de réponse en {timeout} s"
+    except OSError as e:
+        return False, f"{type(e).__name__}: {e}"
 
 
 class Mcp:
@@ -44,6 +65,10 @@ class Mcp:
                     from components.access import memory_link
                     conf = memory_link.with_secret(conf, self.secret_for_servers)   # serveur mémoire d'Aria : secret de son canal HTTP, en mémoire seulement
                 if conf.get("url"):
+                    ok, why = await server_reachable(conf["url"])
+                    if not ok:
+                        utils.log_info("MCP", f"❌ Serveur [{name}] injoignable ({why}) : ignoré. Redémarrer Aria une fois le serveur disponible.")
+                        continue
                     # Serveur distant (HTTP) : "url" et, au besoin, "headers" (ex. Authorization)
                     read, write, _ = await self.stack.enter_async_context(
                         streamablehttp_client(conf["url"], headers=conf.get("headers") or None))

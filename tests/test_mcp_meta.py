@@ -92,5 +92,73 @@ class MetaTests(unittest.TestCase):
         self.assertEqual(asyncio.run(tour()).outils, [])
 
 
+@unittest.skipUnless(HAVE, "dépendances d'Aria absentes de l'hôte (lancer dans le conteneur)")
+class SondageTests(unittest.TestCase):
+    """Un serveur MCP distant éteint ou muet ne doit pas retarder la connexion des autres."""
+
+    def setUp(self):
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    def tearDown(self):
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    def test_port_ouvert(self):
+        import socket
+        from components.mcp import server_reachable
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        try:
+            ok, why = asyncio.run(server_reachable(f"http://127.0.0.1:{srv.getsockname()[1]}/mcp"))
+        finally:
+            srv.close()
+        self.assertEqual((ok, why), (True, ""))
+
+    def test_port_ferme_refus_immediat(self):
+        import socket
+        import time
+        from components.mcp import server_reachable
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        t0 = time.time()
+        ok, why = asyncio.run(server_reachable(f"http://127.0.0.1:{port}/mcp"))
+        self.assertFalse(ok)
+        self.assertIn("Error", why)
+        self.assertLess(time.time() - t0, 3)
+
+    def test_hote_muet_borne_par_le_delai(self):
+        import time
+        from components import mcp as mcp_mod
+        original = asyncio.open_connection
+
+        async def muet(*a, **k):
+            await asyncio.sleep(30)
+        asyncio.open_connection = muet
+        try:
+            t0 = time.time()
+            ok, why = asyncio.run(mcp_mod.server_reachable("http://10.255.255.1:8790/mcp", timeout=0.3))
+        finally:
+            asyncio.open_connection = original
+        self.assertFalse(ok)
+        self.assertIn("pas de réponse", why)
+        self.assertLess(time.time() - t0, 3)
+
+    def test_url_invalide(self):
+        from components.mcp import server_reachable
+        for url in ("", "pas une url", "http://"):
+            self.assertFalse(asyncio.run(server_reachable(url))[0], url)
+
+    def test_un_serveur_injoignable_est_ignore_et_les_autres_se_connectent(self):
+        """_connect_all passe au serveur suivant au lieu de rester bloqué sur le robot éteint."""
+        import socket
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        m = Mcp({"servers": {"robot": {"url": f"http://127.0.0.1:{port}/mcp"}}})
+        asyncio.run(m._connect_all())
+        self.assertEqual(m.tool_registry, {})
+
+
 if __name__ == "__main__":
     unittest.main()
