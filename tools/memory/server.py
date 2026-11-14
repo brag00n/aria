@@ -13,6 +13,8 @@ Variables d'environnement :
   MEMORY_NAMESPACE   espace de noms (défaut : default)
   MEMORY_UI_PORT     port de la page de gestion (absent = pas de page)
   MEMORY_UI_TOKEN    jeton optionnel exigé par la page
+  MEMORY_HTTP_PORT   port du canal HTTP des accès tiers (127.0.0.1 seulement ; absent = pas de canal)
+  MEMORY_HTTP_SECRET secret exigé par ce canal (≥ 16 caractères) ; sans lui le canal n'est pas ouvert
   MEMORY_LOG_TEXT    0 = ne pas consigner le texte des requêtes dans le journal d'activité (empreinte à la place)
   MEMORY_LOG_LEVEL   info (défaut) | debug
 """
@@ -29,6 +31,7 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 import store as store_mod  # noqa: E402
 from activity import Activity  # noqa: E402
 from interlocuteur import Interlocuteurs  # noqa: E402
+from service import Service  # noqa: E402
 
 DATA_DIR = Path(os.environ.get("MEMORY_DIR") or (HERE.parent.parent / "models" / "memory"))
 NAMESPACE = os.environ.get("MEMORY_NAMESPACE", "default")
@@ -38,6 +41,7 @@ activity = Activity(DATA_DIR / "logs",
                     level=os.environ.get("MEMORY_LOG_LEVEL", "info"))
 store = store_mod.Store(DATA_DIR, NAMESPACE, activity=activity)
 interlocuteurs = Interlocuteurs(store)
+service = Service(store, interlocuteurs)          # cœur des outils : partagé par la façade stdio (Aria) et la façade HTTP (accès tiers)
 if not store.read_only:
     try:
         interlocuteurs.rattraper()          # fiches et sexes des personnes citées dans d'anciens liens (idempotent)
@@ -56,13 +60,13 @@ def _line(rec):
 @mcp.tool(name="identifier_interlocuteur")
 def identifier_interlocuteur(nom: str, complement: str = "", surnom: str = "") -> str:
     """Désigne la personne qui parle: nom = son prénom, complement = nom de famille (distingue les homonymes), surnom = comment elle veut être appelée. La crée si inconnue."""
-    return interlocuteurs.identifier(nom, complement, surnom)
+    return service.identifier(nom, complement, surnom)
 
 
 @mcp.tool(name="relier")
 def relier(personne_a: str, lien: str, personne_b: str, precision: str = "") -> str:
     """personne_a est le <lien> de personne_b. lien: conjoint, parent, enfant, fratrie, demi, beauparent, beauenfant, ami, collegue, voisin, ou autre + precision. « moi » = l'interlocuteur."""
-    return interlocuteurs.relier(personne_a, lien, personne_b, precision)
+    return service.relier(personne_a, lien, personne_b, precision)
 
 
 @mcp.tool(name="ui_etat")
@@ -74,41 +78,19 @@ def ui_etat(activer: str = "?") -> str:
 @mcp.tool(name="memoriser")
 def memoriser(fait: str, type: str = "fait", tags: str = "") -> str:
     """Retient une information durable de l'interlocuteur actuel. type: fait, preference, tache, ephemere, ou foyer (concerne toute la maison). tags: mots séparés par des virgules."""
-    status, rec = store.add(fait, type, tags, src="llm")
-    if status == "added":
-        return f"OK {rec['id']}"
-    if status == "duplicate":
-        return f"Déjà connu ({rec['id']}), renforcé."
-    return interlocuteurs.refus(status)
+    return service.memoriser(fait, type, tags)
 
 
 @mcp.tool(name="rechercher_souvenir")
 def rechercher_souvenir(question: str = "", limite: int = 5) -> str:
     """Cherche ce que l'on sait de l'interlocuteur actuel et du foyer. À appeler avant de répondre sur ses goûts, sa maison, sa famille ou ses affaires."""
-    results, fallback = store.search(question, limite, src="llm")
-    # Liens de la famille : permettent de répondre sur un lien indirect (« qui suis-je pour Tiphaine ? ») sans deuxième recherche
-    proches = interlocuteurs.entourage(question, deja={r["id"] for r in results})
-    calcules = interlocuteurs.liens_calcules(question)
-    if not results and not proches and not calcules:
-        return "Aucun souvenir."
-    lines = []
-    if calcules:
-        # Liens déjà déduits par le moteur de parenté : à reprendre tels quels, sans les réinterpréter
-        lines.append("Parenté établie (à utiliser telle quelle) :")
-        lines.extend(f"- {phrase}" for phrase in calcules)
-    if fallback and results:
-        lines.append("Aucune correspondance exacte, souvenirs principaux :")
-    lines.extend(_line(r) for r in results)
-    if proches:
-        lines.append("Liens connus dans la famille :")
-        lines.extend(f"- {r['txt']}" for r in proches)
-    return "\n".join(lines)
+    return service.rechercher(question, limite)
 
 
 @mcp.tool(name="oublier")
 def oublier(id: str) -> str:
     """Oublie un souvenir à partir de son identifiant (donné par rechercher_souvenir)."""
-    return "Oublié." if store.delete((id or "").strip(), why="user", src="llm") else "Souvenir introuvable."
+    return service.oublier(id)
 
 
 if __name__ == "__main__":
@@ -120,4 +102,17 @@ if __name__ == "__main__":
         except Exception as e:     # la page est optionnelle : une erreur ne doit jamais empêcher le serveur de démarrer
             activity.log("error", where="ui_start", msg=f"{type(e).__name__}: {e}")
             activity.warn(f"page de gestion non démarrée : {e}")
+    http_port = os.environ.get("MEMORY_HTTP_PORT")
+    http_secret = os.environ.get("MEMORY_HTTP_SECRET")
+    if http_port:
+        # Canal HTTP pour les accès tiers : même processus, même Store. Sans secret, il n'est PAS ouvert (jamais de canal sans authentification).
+        try:
+            if not http_secret or len(http_secret) < 16:
+                raise ValueError("MEMORY_HTTP_SECRET absent ou trop court")
+            import http_facade
+            http_facade.start(store, service, int(http_port), http_secret)
+            activity.warn(f"canal HTTP des accès tiers sur 127.0.0.1:{http_port}")
+        except Exception as e:     # optionnel : une erreur ne doit jamais empêcher le serveur (donc Aria) de démarrer
+            activity.log("error", where="http_start", msg=f"{type(e).__name__}: {e}")
+            activity.warn(f"canal HTTP non démarré : {e}")
     mcp.run(transport="stdio")
