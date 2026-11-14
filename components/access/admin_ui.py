@@ -118,13 +118,13 @@ def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=()):
                 if profil and profil not in profiles.names():
                     return self._json({"ok": False, "erreur": "profil inconnu"})
                 vue, cle = store.create(body.get("label", ""), body.get("origins") or [], profil, body.get("limits"),
-                                        body.get("expires_days", 0), body.get("voice", True))
+                                        body.get("expires_days", 0), body.get("voice", True), body.get("retention_days", 0))
                 if not vue:
                     return self._json({"ok": False, "erreur": "un nom est obligatoire"})
                 log("key_created", id=vue["id"], profile=profil)
                 return self._json({"ok": True, "key": vue, "secret": cle})       # la seule fois où la clé en clair est renvoyée
             if path == "/api/keys/update":
-                fields = {k: body[k] for k in ("label", "origins", "profile", "limits", "voice", "expires_days") if k in body}
+                fields = {k: body[k] for k in ("label", "origins", "profile", "limits", "voice", "retention_days", "expires_days") if k in body}
                 if fields.get("profile") and fields["profile"] not in profiles.names():
                     return self._json({"ok": False, "erreur": "profil inconnu"})
                 vue = store.update(kid, **fields)

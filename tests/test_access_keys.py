@@ -265,6 +265,45 @@ class RegenerationTests(StoreCase):
         self.assertEqual([self.store.authenticate(c)[0] for c in (c0, c1, c2)], ["unknown", "unknown", "ok"])
 
 
+class RetentionTests(StoreCase):
+    """Durée de conservation des échanges d'un accès dans le journal d'audit (0 = durée par défaut du journal)."""
+
+    def test_defaut_zero_et_lecture_par_identifiant(self):
+        vue, _ = self.store.create("Robot")
+        self.assertEqual(vue["retention_days"], 0)
+        self.assertEqual(self.store.retention_of(vue["id"]), 0)
+        self.assertEqual(self.store.retention_of("k_inconnu"), 0)
+
+    def test_creation_et_modification(self):
+        vue, _ = self.store.create("Robot", retention_days=7)
+        self.assertEqual(self.store.retention_of(vue["id"]), 7)
+        self.store.update(vue["id"], retention_days=30)
+        self.assertEqual(self.store.retention_of(vue["id"]), 30)
+        self.store.update(vue["id"], retention_days=0)
+        self.assertEqual(self.store.retention_of(vue["id"]), 0)
+
+    def test_valeurs_invalides_bornees(self):
+        vue, _ = self.store.create("Robot")
+        for entree, attendu in (("abc", 0), (-5, 0), (None, 0), (99999, 3650), ("12", 12), (3.9, 3)):
+            self.store.update(vue["id"], retention_days=entree)
+            self.assertEqual(self.store.retention_of(vue["id"]), attendu, entree)
+
+    def test_persistante_apres_rechargement_et_anciennes_cles_lisibles(self):
+        vue, _ = self.store.create("Robot", retention_days=14)
+        rouvert = keys.KeyStore(self.store.dir)
+        self.assertEqual(rouvert.retention_of(vue["id"]), 14)
+        brut = json.loads(rouvert.path.read_text("utf-8"))
+        for k in brut["keys"]:
+            k.pop("retention_days", None)                                 # fichier d'avant cette option
+        rouvert.path.write_text(json.dumps(brut), "utf-8")
+        self.assertEqual(keys.KeyStore(self.store.dir).retention_of(vue["id"]), 0)
+
+    def test_la_regeneration_garde_la_duree(self):
+        vue, _ = self.store.create("Robot", retention_days=9)
+        self.store.regenerate(vue["id"])
+        self.assertEqual(self.store.retention_of(vue["id"]), 9)
+
+
 class DebitTests(unittest.TestCase):
     def test_fenetre_glissante(self):
         c = Clock(100.0)

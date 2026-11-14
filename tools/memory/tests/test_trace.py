@@ -189,6 +189,52 @@ class PersonneTests(StoreCase):
         self.assertEqual(self.s.personnes.ensure_system("k_robot", "Robot2", trace=meta("e_autreechange1"))["tr"]["e"], "e_18a2b3c4d5e6f7")
 
 
+class EffacementTests(StoreCase):
+    """Droit à l'effacement : la trace d'une personne disparaît des souvenirs et des fiches, le souvenir lui-même reste."""
+
+    def setUp(self):
+        super().setUp()
+        self.i.identifier("Olivier", trace=meta(who="Olivier"))
+        self.svc.memoriser("Olivier aime le thé", "preference", trace=meta("e_olivier0001", who="Olivier"))
+        self.i.identifier("Paul", trace=meta("e_paul0000001", who="Paul", x="Je suis Paul"))
+        self.svc.memoriser("Paul aime le vélo", "preference", trace=meta("e_paul0000002", who="Paul"))
+
+    def rec(self, mot):
+        return next(r for r in self.s.records.values() if mot in r["txt"])
+
+    def test_efface_les_traces_de_la_personne_seulement(self):
+        souvenirs, personnes = self.s.effacer_traces("paul")                 # insensible à la casse
+        self.assertEqual((souvenirs, personnes), (1, 1))
+        self.assertIsNone(self.rec("vélo")["tr"])
+        self.assertIsNotNone(self.rec("thé")["tr"])
+        self.assertNotIn("tr", next(p for p in self.s.personnes.items if p["nom"] == "Paul"))
+        self.assertIn("tr", next(p for p in self.s.personnes.items if p["nom"] == "Olivier"))
+
+    def test_le_souvenir_lui_meme_est_conserve(self):
+        self.s.effacer_traces("Paul")
+        self.assertIn("Paul aime le vélo", [r["txt"] for r in self.s.records.values()])
+
+    def test_effacement_persistant_apres_rechargement_et_compaction(self):
+        self.s.effacer_traces("Paul")
+        self.assertIsNone(self.rouvrir().records[self.rec("vélo")["id"]]["tr"])
+        self.s.compact()
+        r = self.rouvrir()
+        self.assertIsNone(r.records[self.rec("vélo")["id"]]["tr"])
+        self.assertNotIn("tr", next(p for p in r.personnes.items if p["nom"] == "Paul"))
+
+    def test_par_identifiants_d_echange(self):
+        self.assertEqual(self.s.effacer_traces("", ["e_olivier0001"])[0], 1)
+        self.assertIsNone(self.rec("thé")["tr"])
+        self.assertIsNotNone(self.rec("vélo")["tr"])
+
+    def test_sans_critere_rien_n_est_efface(self):
+        self.assertEqual(self.s.effacer_traces("", []), (0, 0))
+        self.assertIsNotNone(self.rec("thé")["tr"])
+
+    def test_aucune_correspondance_exacte_pas_de_sous_chaine(self):
+        self.assertEqual(self.s.effacer_traces("Pau"), (0, 0))
+
+
 async def appels_stdio(data_dir, calls):
     env = {**os.environ, "MEMORY_DIR": str(data_dir), "PYTHONIOENCODING": "utf-8"}
     params = StdioServerParameters(command=sys.executable, args=[str(SERVER)], env=env)

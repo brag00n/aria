@@ -60,7 +60,7 @@ from components import visualizer, mic_toggle
 from components.language import Language, normalize
 from components.conversation import Conversation
 from components import https
-from components import memory_tab, access_tab, echanges, settings as settings_mod
+from components import memory_tab, access_tab, audit_retention, echanges, settings as settings_mod
 from components import interlocuteur
 from components import history as history_mod
 utils.log_info("app","Stt, Llm, Tts chargés")
@@ -135,15 +135,19 @@ def get_current_params(category, module_name):
         return "{}"
 
 def update_config_ui(global_json, vad_choix, vad_json, conv_json, memory_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json,
-                     profiles_json="", close_open=False):
+                     profiles_json="", close_open=False, audit_json=""):
     """Sauvegarde globale de la configuration modulaire. Tout est analysé et validé AVANT la moindre modification de `config` (components/settings.py) :
     une erreur dans n'importe quel champ ne laisse ni la mémoire ni le fichier à moitié modifiés."""
     try:
-        fields = {"global": global_json, "conversation": conv_json, "memory": memory_json, "mcp": mcp_json, "profiles": profiles_json,
+        fields = {"global": global_json, "conversation": conv_json, "memory": memory_json, "mcp": mcp_json, "profiles": profiles_json, "audit": audit_json,
                   "vad": vad_json, "stt": stt_json, "llm": llm_json, "tts": tts_json,
                   "vad_choice": vad_choix, "stt_choice": stt_choix, "llm_choice": llm_choix, "tts_choice": tts_choix}
         parsed, changed = settings_mod.apply_settings(config, fields)
         settings_mod.write_config(config, _CONFIG_FILE)
+        if parsed["audit"] is not None:                 # activer, durée et texte/empreinte valent tout de suite ; le dossier au prochain démarrage
+            a = config["audit"]
+            echanges.configure(echanges.directory(), enabled=a.get("enabled", True), log_text=a.get("log_text", True),
+                               retention_days=a.get("retention_days", echanges.DEFAULT_RETENTION_DAYS))
         closed, warnings = 0, []
         if changed and access_srv is not None:
             from components.access import server as access_server
@@ -740,6 +744,21 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                 close_open_cb = gr.Checkbox(label="Fermer les conversations ouvertes des clés dont le profil change (sinon, elles gardent l'ancien jusqu'à leur expiration)",
                                             value=False)
 
+            # --- BLOC 7 : AUDIT (journal des échanges) ---
+            with gr.Group():
+                gr.Markdown("#### 🧾 Audit des échanges")
+                gr.Markdown("<small>Journal de chaque échange (question, réponse, source, interlocuteur) dans <code>models/audit/</code>, hors git. "
+                            "<code>retention_days</code> : conservation par défaut, purge automatique (une clé d'accès peut exiger moins). "
+                            "<code>log_text</code> : false = empreinte à la place du texte. Le dossier (<code>dir</code>) n'est pris en compte qu'au redémarrage. "
+                            "Purge manuelle et journal des purges : page d'administration des accès.</small>")
+                audit_code = gr.Code(
+                    value=json.dumps({"enabled": True, "retention_days": echanges.DEFAULT_RETENTION_DAYS, "log_text": True, "dir": "models/audit",
+                                      **(config.get("audit") or {})}, indent=2, ensure_ascii=False),
+                    language="json",
+                    label="Journal d'audit",
+                    lines=6
+                )
+
             # --- SAUVEGARDE GLOBALE (boutons en haut de l'onglet) ---
             # Au clic, on envoie toutes les valeurs actuelles (dropdowns + codes)
             save_btn.click(
@@ -753,7 +772,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     llm_dd, llm_code,
                     tts_dd, tts_code,
                     mcp_code,
-                    profiles_code, close_open_cb
+                    profiles_code, close_open_cb, audit_code
                 ],
                 outputs=[status_msg]
             )
@@ -899,4 +918,13 @@ if __name__ == "__main__":
         access_srv = access_server.start(config, stt, tts, _https_args, language=language)
     except Exception as e:                          # jamais empêcher Aria de démarrer à cause de cette option
         utils.log_info("ACCESS", f"❌ API tierce non démarrée : {type(e).__name__}: {e}")
+    # Purge automatique du journal d'audit (au démarrage puis toutes les 6 h) : durée par défaut et durée de chaque accès relues à chaque passage
+    def _reglages_audit():
+        cles = getattr(getattr(access_srv, "access_deps", None), "keys", None)
+        jours = (config.get("audit") or {}).get("retention_days", echanges.DEFAULT_RETENTION_DAYS)
+        return jours, (cles.retention_of if cles else None)
+    try:
+        audit_retention.Planificateur(_reglages_audit).start()
+    except Exception as e:
+        utils.log_info("AUDIT", f"❌ Purge automatique non démarrée : {type(e).__name__}: {e}")
     ariaHmi.launch(server_name="0.0.0.0", server_port=7860, app_kwargs={"lifespan": _mcp_lifespan}, **_https_args)

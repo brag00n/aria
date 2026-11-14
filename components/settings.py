@@ -59,7 +59,29 @@ def parse_settings(config, fields):
     if errors:
         raise ValueError("❌ Profils d'accès refusés : " + " ; ".join(errors))
     out["profiles"] = profiles
+    out["audit"] = parse_audit(fields.get("audit"))
     return out
+
+
+def parse_audit(text):
+    """Section « audit » (journal des échanges) : activer, durée de conservation par défaut (jours), texte complet ou empreinte seulement, dossier.
+    Texte vide = section non modifiée (None). Valide le type de chaque clé : une valeur absurde ne doit jamais désactiver la purge par erreur."""
+    if text is None or not str(text).strip():
+        return None
+    audit = _object(text, "audit")
+    inconnues = sorted(set(audit) - {"enabled", "retention_days", "log_text", "dir"})
+    if inconnues:
+        raise ValueError("❌ audit : clé(s) inconnue(s) : " + ", ".join(inconnues))
+    for key in ("enabled", "log_text"):
+        if key in audit and not isinstance(audit[key], bool):
+            raise ValueError(f"❌ audit.{key} doit être true ou false")
+    v = audit.get("retention_days")
+    if "retention_days" in audit and not (isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 3650):
+        raise ValueError("❌ audit.retention_days doit être un nombre de jours entier entre 1 et 3650")
+    d = audit.get("dir")
+    if "dir" in audit and not (isinstance(d, str) and d.strip() and not os.path.isabs(d) and ".." not in d.replace("\\", "/").split("/")):
+        raise ValueError("❌ audit.dir doit être un chemin relatif au dossier d'Aria, sans « .. »")
+    return audit
 
 
 def apply_settings(config, fields):
@@ -75,6 +97,8 @@ def apply_settings(config, fields):
     for cat in ("vad", "stt", "llm", "tts"):
         config[cat][fields[f"{cat}_choice"]]["params"] = parsed[cat]
     config["mcp"]["params"] = parsed["mcp"]
+    if parsed["audit"] is not None:
+        config["audit"] = parsed["audit"]
     config["access"] = {**access, "profiles": parsed["profiles"]}        # UNE affectation : le thread de l'API ne voit jamais un état intermédiaire
     return parsed, changed
 

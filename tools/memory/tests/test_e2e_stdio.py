@@ -45,9 +45,9 @@ class E2ETests(unittest.TestCase):
 
     def test_outils_exposes_courts_et_plats(self):
         tools, _ = asyncio.run(session_run(self.tmp, []))
-        # 5 outils pour le LLM + ui_etat, que mcp.py cache au LLM (préfixe ui_)
+        # 5 outils pour le LLM + ui_etat et ui_effacer_traces, que mcp.py cache au LLM (préfixe ui_)
         self.assertEqual(sorted(t.name for t in tools), ["identifier_interlocuteur", "memoriser", "oublier", "rechercher_souvenir",
-                                                         "relier", "ui_etat"])
+                                                         "relier", "ui_effacer_traces", "ui_etat"])
         for tool in tools:
             self.assertLess(len(tool.description or ""), 200, tool.name)
             for prop in tool.inputSchema.get("properties", {}).values():

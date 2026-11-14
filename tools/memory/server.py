@@ -76,6 +76,13 @@ def ui_etat(activer: str = "?") -> str:
     return json.dumps(interlocuteurs.etat(activer), ensure_ascii=False)
 
 
+@mcp.tool(name="ui_effacer_traces")
+def ui_effacer_traces(qui: str = "", echanges: str = "") -> str:
+    """Réservé à l'administration d'Aria (non proposé au LLM). Retire la trace d'audit des souvenirs et personnes de `qui` ou des échanges listés (identifiants séparés par des virgules)."""
+    souvenirs, personnes = store.effacer_traces(qui, [e.strip() for e in (echanges or "").split(",") if e.strip()], src="admin")
+    return json.dumps({"souvenirs": souvenirs, "personnes": personnes})
+
+
 @mcp.tool(name="memoriser")
 def memoriser(fait: str, type: str = "fait", tags: str = "", ctx: Context = None) -> str:
     """Retient une information durable de l'interlocuteur actuel. type: fait, preference, tache, ephemere, ou foyer (concerne toute la maison). tags: mots séparés par des virgules."""

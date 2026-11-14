@@ -44,6 +44,46 @@ def fields_of(cfg, **override):
     return f
 
 
+class AuditTests(unittest.TestCase):
+    """Section « audit » : validée avant toute modification ; vide = inchangée."""
+
+    def setUp(self):
+        self.cfg = base_config()
+
+    def apply(self, audit):
+        return settings.apply_settings(self.cfg, fields_of(self.cfg, audit=audit))
+
+    def test_section_vide_ou_absente_ne_change_rien(self):
+        self.apply("")
+        self.assertNotIn("audit", self.cfg)
+        settings.apply_settings(self.cfg, fields_of(self.cfg))
+        self.assertNotIn("audit", self.cfg)
+
+    def test_section_valide_appliquee(self):
+        self.apply(json.dumps({"enabled": True, "retention_days": 30, "log_text": False, "dir": "models/audit"}))
+        self.assertEqual(self.cfg["audit"], {"enabled": True, "retention_days": 30, "log_text": False, "dir": "models/audit"})
+
+    def test_valeurs_refusees_sans_rien_modifier(self):
+        avant = copy.deepcopy(self.cfg)
+        for faux in ({"retention_days": 0}, {"retention_days": -1}, {"retention_days": "90"}, {"retention_days": True}, {"retention_days": 99999},
+                     {"retention_days": 1.5}, {"enabled": "oui"}, {"log_text": 1}, {"dir": "/etc"}, {"dir": "../dehors"}, {"dir": "a/../../b"},
+                     {"dir": ""}, {"dir": 3}, {"inconnue": 1}):
+            with self.assertRaises(ValueError, msg=str(faux)):
+                self.apply(json.dumps(faux))
+            self.assertEqual(self.cfg, avant, str(faux))
+        for pas_objet in ("[1]", "3", "\"x\""):
+            with self.assertRaises(ValueError):
+                self.apply(pas_objet)
+        with self.assertRaises(json.JSONDecodeError):
+            self.apply("{x")
+
+    def test_une_erreur_d_audit_n_applique_aucune_autre_section(self):
+        avant = copy.deepcopy(self.cfg)
+        with self.assertRaises(ValueError):
+            settings.apply_settings(self.cfg, fields_of(self.cfg, memory=json.dumps({"max_exchanges": 3}), audit=json.dumps({"retention_days": 0})))
+        self.assertEqual(self.cfg, avant)
+
+
 class ValidationTests(unittest.TestCase):
     def setUp(self):
         self.cfg = base_config()

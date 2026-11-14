@@ -296,6 +296,18 @@ class Personnes:
             self._append(person)
             return person
 
+    def effacer_traces(self, vise):
+        """Retire le champ `tr` des personnes pour lesquelles `vise(tr)` est vrai. Retourne leur nombre."""
+        with self.lock:
+            n = 0
+            for p in self.items:
+                if p.get("tr") and vise(p["tr"]):
+                    del p["tr"]
+                    n += 1
+            if n:
+                self._rewrite()
+            return n
+
     def update(self, pid, **changes):
         with self.lock:
             person = self.get(pid)

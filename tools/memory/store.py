@@ -283,6 +283,11 @@ class Store:
             rec = self.records.get(ev.get("id"))
             if rec:
                 self._index_remove(rec)
+        elif op == "untrace":                                   # droit à l'effacement : la trace de ces souvenirs est retirée
+            for rid in ev.get("ids") or []:
+                rec = self.records.get(rid)
+                if rec:
+                    rec["tr"] = None
         # opération inconnue : ignorée
 
     # ---------------------------------------------------------------- index
@@ -491,6 +496,27 @@ class Store:
             tr = trace_mod.clean(trace)
             self.activity.log("delete", id=rid, why=why, src=src, **({"ex": tr["e"]} if tr else {}))
             return True
+
+    def effacer_traces(self, qui="", echanges=(), src="audit"):
+        """Droit à l'effacement : retire la trace (`tr`) des souvenirs ET des personnes dont l'interlocuteur (`tr.who`) est `qui`
+        (insensible à la casse) ou dont l'échange d'origine est dans `echanges`. Le souvenir lui-même n'est pas touché. Retourne (souvenirs, personnes)."""
+        qui = " ".join(str(qui or "").split()).casefold()
+        ids = set(echanges or ())
+
+        def vise(tr):
+            return bool(tr) and ((qui and " ".join(str(tr.get("who", "")).split()).casefold() == qui) or tr.get("e") in ids)
+        with self.lock:
+            self._check_external_changes()
+            if self._writable() or not (qui or ids):
+                return 0, 0
+            cibles = [r["id"] for r in self.records.values() if vise(r.get("tr"))]
+            if cibles:
+                for rid in cibles:
+                    self.records[rid]["tr"] = None
+                self._append({"op": "untrace", "ts": iso(self.clock()), "ids": cibles}, sync=True)
+            personnes = self.personnes.effacer_traces(vise)
+            self.activity.log("untrace", souvenirs=len(cibles), personnes=personnes, src=src)
+            return len(cibles), personnes
 
     def restore(self, rid, src="ui"):
         """Ré-ajoute un souvenir archivé (la dernière version archivée de cet identifiant)."""

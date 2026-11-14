@@ -22,6 +22,7 @@ DEFAULT_LIMITS = {"rate_per_min": 30, "daily_turns": 500}
 MAX_LABEL = 60
 MAX_ORIGINS = 20
 MAX_PROFILE = 60
+MAX_RETENTION_DAYS = 3650
 
 
 def _iso(ts):
@@ -58,6 +59,15 @@ def _clean_limits(limits):
         except (TypeError, ValueError):
             pass
     return out
+
+
+def _clean_retention(value):
+    """Jours de conservation des échanges de cet accès dans le journal d'audit : 0 = durée par défaut du journal ; sinon 1 à 3650."""
+    try:
+        v = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(v, MAX_RETENTION_DAYS))
 
 
 def _clean_text(value, n):
@@ -114,6 +124,7 @@ class KeyStore:
                     "revoked": bool(k.get("revoked")), "origins": _clean_origins(k.get("origins")),
                     "profile": _clean_text(k.get("profile"), MAX_PROFILE), "limits": _clean_limits(k.get("limits")),
                     "voice": bool(k.get("voice", True)), "last_used": float(k.get("last_used") or 0),
+                    "retention_days": _clean_retention(k.get("retention_days")),
                 })
 
     def _save(self):
@@ -141,10 +152,10 @@ class KeyStore:
         etat = "révoquée" if k["revoked"] else "expirée" if (k["expires"] and k["expires"] <= now) else "active"
         return {"id": k["id"], "label": k["label"], "prefix": k["prefix"], "created": _iso(k["created"]), "expires": _iso(k["expires"]),
                 "revoked": k["revoked"], "etat": etat, "origins": list(k["origins"]), "profile": k["profile"], "limits": dict(k["limits"]),
-                "voice": k["voice"], "last_used": _iso(k["last_used"])}
+                "voice": k["voice"], "last_used": _iso(k["last_used"]), "retention_days": k.get("retention_days", 0)}
 
     # ------------------------------------------------------------------ gestion
-    def create(self, label, origins=(), profile="", limits=None, expires_days=0, voice=True):
+    def create(self, label, origins=(), profile="", limits=None, expires_days=0, voice=True, retention_days=0):
         """Crée une clé. Retourne (vue publique, clé EN CLAIR) : la clé en clair n'est plus jamais récupérable ensuite."""
         label = _clean_text(label, MAX_LABEL)
         if not label:
@@ -161,7 +172,8 @@ class KeyStore:
                 days = 0
             rec = {"id": kid, "label": label, "prefix": key[:7], "hash": self._digest(key), "created": now,
                    "expires": now + days * 86400 if days > 0 else 0, "revoked": False, "origins": _clean_origins(origins),
-                   "profile": _clean_text(profile, MAX_PROFILE), "limits": _clean_limits(limits), "voice": bool(voice), "last_used": 0}
+                   "profile": _clean_text(profile, MAX_PROFILE), "limits": _clean_limits(limits), "voice": bool(voice), "last_used": 0,
+                   "retention_days": _clean_retention(retention_days)}
             self.items.append(rec)
             self._save()
             return self.view(rec, now), key
@@ -177,7 +189,7 @@ class KeyStore:
             return self.view(k, self.clock()) if k else None
 
     def update(self, kid, **changes):
-        """label, origins, profile, limits, voice, expires_days (0 = sans expiration, calculée depuis maintenant). Retourne la vue ou None."""
+        """label, origins, profile, limits, voice, retention_days, expires_days (0 = sans expiration, calculée depuis maintenant). Retourne la vue ou None."""
         with self.lock:
             k = self._find(kid)
             if not k:
@@ -195,6 +207,8 @@ class KeyStore:
                 k["limits"] = _clean_limits(changes["limits"])
             if "voice" in changes:
                 k["voice"] = bool(changes["voice"])
+            if "retention_days" in changes:
+                k["retention_days"] = _clean_retention(changes["retention_days"])
             if "expires_days" in changes:
                 try:
                     days = float(changes["expires_days"] or 0)
@@ -265,6 +279,12 @@ class KeyStore:
             if now - self._last_flush > 60:             # last_used n'est écrit qu'une fois par minute au plus
                 self._save()
             return "ok", dict(found)
+
+    def retention_of(self, kid):
+        """Jours de conservation exigés pour l'accès `kid` dans le journal d'audit (0 = défaut). Un accès supprimé : 0."""
+        with self.lock:
+            k = self._find(kid)
+            return k.get("retention_days", 0) if k else 0
 
     def flush(self):
         with self.lock:
