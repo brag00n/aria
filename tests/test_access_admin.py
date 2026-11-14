@@ -159,6 +159,39 @@ class ClesTests(AdminCase):
         self.call("POST", "/api/keys/revoke", {"id": kid, "revoked": False})
         self.assertEqual(self.store.authenticate(cle)[0], "ok")
 
+    def test_regenerer_la_cle_garde_l_identifiant_et_invalide_l_ancienne(self):
+        r = self.create()
+        kid, ancienne = r["key"]["id"], r["secret"]
+        x = self.call("POST", "/api/keys/regenerate", {"id": kid})[1]
+        self.assertTrue(x["ok"])
+        self.assertEqual(x["key"]["id"], kid)                                             # même identité interne : la mémoire suit
+        self.assertNotEqual(x["secret"], ancienne)
+        self.assertEqual(self.store.authenticate(ancienne)[0], "unknown")
+        self.assertEqual(self.store.authenticate(x["secret"], ORIGIN)[0], "ok")
+        self.assertIn(kid, self.sessions.closed)                                          # les conversations ouvertes repartent
+        self.assertNotIn(x["secret"], json.dumps(self.audit))                             # jamais dans le journal
+        self.assertEqual([ev for ev, _ in self.audit][-1], "key_regenerated")
+
+    def test_regenerer_un_acces_inconnu(self):
+        x = self.call("POST", "/api/keys/regenerate", {"id": "k_zzz"})[1]
+        self.assertFalse(x["ok"])
+        self.assertNotIn("secret", x)
+
+    def test_regenerer_exige_le_jeton_et_l_origine(self):
+        r = self.create()
+        self.assertEqual(self.call("POST", "/api/keys/regenerate", {"id": r["key"]["id"]}, token=None)[0], 401)
+        self.assertEqual(self.call("POST", "/api/keys/regenerate", {"id": r["key"]["id"]}, origin=None)[0], 403)
+        self.assertEqual(self.store.authenticate(r["secret"], ORIGIN)[0], "ok")           # rien n'a changé
+
+    def test_la_liste_ne_renvoie_jamais_la_cle_regeneree(self):
+        r = self.create()
+        x = self.call("POST", "/api/keys/regenerate", {"id": r["key"]["id"]})[1]
+        self.assertNotIn(x["secret"], json.dumps(self.call("GET", "/api/keys")[1]))
+
+    def test_la_page_propose_la_regeneration(self):
+        self.assertIn("/api/keys/regenerate", admin_ui.PAGE)
+        self.assertIn("🔄", admin_ui.PAGE)
+
     def test_supprimer(self):
         r = self.create()
         self.assertTrue(self.call("POST", "/api/keys/delete", {"id": r["key"]["id"]})[1]["ok"])

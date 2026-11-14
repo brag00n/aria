@@ -204,6 +204,20 @@ class KeyStore:
             self._save()
             return self.view(k, self.clock())
 
+    def regenerate(self, kid):
+        """Nouvelle clé API pour le MÊME accès : même identifiant interne (donc même mémoire, mêmes réglages, mêmes domaines), ancienne clé
+        invalidée aussitôt. Une clé révoquée ou expirée le reste (la régénération ne la réactive pas). Retourne (vue, nouvelle clé EN CLAIR),
+        ou (None, "") si l'accès n'existe pas. La clé en clair n'est montrée qu'ici."""
+        with self.lock:
+            k = self._find(kid)
+            if not k:
+                return None, ""
+            key = KEY_PREFIX + secrets.token_urlsafe(32)
+            k["hash"] = self._digest(key)
+            k["prefix"] = key[:7]
+            self._save()
+            return self.view(k, self.clock()), key
+
     def revoke(self, kid, revoked=True):
         with self.lock:
             k = self._find(kid)

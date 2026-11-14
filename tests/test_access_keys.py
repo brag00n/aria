@@ -209,6 +209,62 @@ class GestionTests(StoreCase):
         self.assertEqual([p.name for p in self.tmp.iterdir() if p.suffix == ".tmp" or p.name.endswith(".tmp")], [])
 
 
+class RegenerationTests(StoreCase):
+    def test_nouvelle_cle_meme_identifiant_ancienne_cle_invalidee(self):
+        vue, ancienne = self.new(profile="portail", limits={"rate_per_min": 7, "daily_turns": 9}, voice=False)
+        vue2, nouvelle = self.store.regenerate(vue["id"])
+        self.assertEqual(vue2["id"], vue["id"])                                          # même identifiant interne : la mémoire de l'accès suit
+        self.assertNotEqual(nouvelle, ancienne)
+        self.assertTrue(nouvelle.startswith("ak_") and len(nouvelle) > 40)
+        self.assertEqual(self.store.authenticate(ancienne)[0], "unknown")                 # l'ancienne ne marche plus, tout de suite
+        statut, rec = self.store.authenticate(nouvelle, "https://app.example.com")
+        self.assertEqual((statut, rec["id"]), ("ok", vue["id"]))
+
+    def test_les_reglages_sont_conserves(self):
+        vue, _ = self.new(profile="portail", limits={"rate_per_min": 7, "daily_turns": 9}, voice=False, expires_days=30)
+        apres, _ = self.store.regenerate(vue["id"])
+        for champ in ("label", "origins", "profile", "limits", "voice", "created", "expires"):
+            self.assertEqual(apres[champ], vue[champ], champ)
+
+    def test_le_prefixe_affiche_suit_la_nouvelle_cle(self):
+        vue, ancienne = self.new()
+        apres, nouvelle = self.store.regenerate(vue["id"])
+        self.assertEqual(apres["prefix"], nouvelle[:7])
+        self.assertNotEqual(apres["prefix"], vue["prefix"])
+
+    def test_la_nouvelle_cle_n_est_jamais_stockee_en_clair(self):
+        vue, _ = self.new()
+        _, nouvelle = self.store.regenerate(vue["id"])
+        self.assertNotIn(nouvelle, (self.tmp / "keys.json").read_text("utf-8"))
+        self.assertNotIn(nouvelle, json.dumps(self.store.list()))
+
+    def test_survit_au_rechargement(self):
+        vue, ancienne = self.new()
+        _, nouvelle = self.store.regenerate(vue["id"])
+        autre = keys.KeyStore(self.tmp, clock=self.clock)
+        self.assertEqual(autre.authenticate(nouvelle)[0], "ok")
+        self.assertEqual(autre.authenticate(ancienne)[0], "unknown")
+
+    def test_ne_reactive_pas_une_cle_revoquee_ou_expiree(self):
+        vue, _ = self.new()
+        self.store.revoke(vue["id"])
+        _, nouvelle = self.store.regenerate(vue["id"])
+        self.assertEqual(self.store.authenticate(nouvelle)[0], "revoked")
+        v2, _ = self.new(label="Autre", expires_days=1)
+        _, n2 = self.store.regenerate(v2["id"])
+        self.clock.advance(86400 * 2)
+        self.assertEqual(self.store.authenticate(n2)[0], "expired")
+
+    def test_accès_inconnu(self):
+        self.assertEqual(self.store.regenerate("k_zzz"), (None, ""))
+
+    def test_deux_regenerations_de_suite(self):
+        vue, c0 = self.new()
+        _, c1 = self.store.regenerate(vue["id"])
+        _, c2 = self.store.regenerate(vue["id"])
+        self.assertEqual([self.store.authenticate(c)[0] for c in (c0, c1, c2)], ["unknown", "unknown", "ok"])
+
+
 class DebitTests(unittest.TestCase):
     def test_fenetre_glissante(self):
         c = Clock(100.0)

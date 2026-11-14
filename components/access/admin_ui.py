@@ -138,6 +138,13 @@ def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=()):
                     self._close_sessions(kid)
                 log("key_revoked" if body.get("revoked", True) else "key_restored", id=kid)
                 return self._json({"ok": ok})
+            if path == "/api/keys/regenerate":
+                vue, cle = store.regenerate(kid)
+                if not vue:
+                    return self._json({"ok": False, "erreur": "accès inconnu"})
+                self._close_sessions(kid)          # les conversations ouvertes repartent proprement (la mémoire, elle, est conservée)
+                log("key_regenerated", id=kid)
+                return self._json({"ok": True, "key": vue, "secret": cle})        # la seule fois où la nouvelle clé en clair est renvoyée
             if path == "/api/keys/delete":
                 ok = store.delete(kid)
                 if ok:
@@ -277,6 +284,7 @@ async function renderKeys(main){
         el('td',{className:'mut'},k.limits.rate_per_min+'/min · '+k.limits.daily_turns+'/jour'+(k.voice?' · voix':' · texte')),
         el('td',{className:'mut'},k.last_used?k.last_used.replace('T',' ').slice(0,16):'jamais'),
         el('td',{},el('button',{title:'Modifier',onclick:()=>editKey(k)},'✎'),' ',
+          el('button',{title:'Régénérer la clé API (la mémoire et les réglages de l\\u2019accès sont conservés ; l\\u2019ancienne clé cesse de fonctionner)',onclick:async()=>{if(confirm('Régénérer la clé de « '+k.label+' » ? L\\u2019ancienne clé cessera de fonctionner immédiatement. La mémoire de l\\u2019accès est conservée.')){const r=await post('/api/keys/regenerate',{id:k.id});if(r.ok)secretModal('Nouvelle clé de « '+k.label+' »',r.secret);else say(r.erreur||'Impossible')}}},'🔄'),' ',
           el('button',{title:k.revoked?'Réactiver':'Révoquer',onclick:async()=>{await post('/api/keys/revoke',{id:k.id,revoked:!k.revoked});render()}},k.revoked?'↺':'⛔'),' ',
           el('button',{title:'Supprimer',onclick:async()=>{if(confirm('Supprimer définitivement la clé « '+k.label+' » ?')){await post('/api/keys/delete',{id:k.id});render()}}},'🗑'))))));
 }
