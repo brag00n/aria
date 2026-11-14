@@ -13,20 +13,54 @@ un **profil** : ses propres serveurs MCP (outils), son message système et son L
    "access": { "enabled": true, "port": 7861, "admin_port": 7871, "max_sessions": 8, "session_ttl_s": 900 }
    ```
 2. Publier les ports dans `docker-compose.yml` : `"7861:7861"` (API, réseau local) et `"127.0.0.1:7871:7871"` (administration, ce PC seulement).
-3. Créer un profil `configs/mcp/<nom>.json` (voir ci-dessous), puis redémarrer Aria.
+3. Redémarrer Aria, puis créer un profil dans l'onglet **⚙️ Paramètres**, section « 🔑 Accès tiers : profils » (voir ci-dessous).
 4. Onglet **🔑 Accès tiers** : créer une clé, choisir son profil et ses **domaines autorisés** (une origine exacte par ligne, par exemple
    `https://app.example.com`). La clé n'est affichée **qu'une seule fois**.
 
-## Profil (`configs/mcp/<nom>.json`)
+## Profils (onglet ⚙️ Paramètres)
+
+Un profil décide de ce qu'une clé peut utiliser. Les profils sont dans `configs/default.json`, section `access.profiles`, et se modifient dans l'onglet
+**⚙️ Paramètres**, section « 🔑 Accès tiers : profils » (puis « 💾 SAUVEGARDER »). Un profil **référence** des serveurs MCP déjà déclarés dans la section
+« Outils MCP » : il n'en redéclare aucun et ne copie aucun secret.
 
 ```json
-{ "description": "Portail RH", "system_message": "Tu aides les salariés…", "llm": "Llm_Anthropic", "voice": true,
-  "mcp": { "servers": { "meteo": { "run": "uv", "args": ["run", "tools/weather_server.py"] },
-                        "domotique": { "url": "http://hote:1010/mcp", "headers": { "Authorization": "Bearer <TokenDomotique>" } } } } }
+"access": {
+  "enabled": true,
+  "private_servers": ["memoire"],
+  "profiles": {
+    "portail": {
+      "description": "Portail RH",
+      "system_message": "Tu aides les salariés…",
+      "llm": "Llm_Anthropic",
+      "voice": true,
+      "servers": ["meteo_local", "recherche_web"]
+    }
+  }
+}
 ```
-`mcp` a le format de `config["mcp"]["params"]`. Les secrets s'écrivent `<NOM>` et viennent du `.env`, comme pour la config d'Aria. Sans profil ou avec
-`"servers": {}`, la clé n'a aucun outil. `llm` désigne un module LLM **distant** de la config (Anthropic, LM Studio, OpenAI) : le LLM local est refusé.
-Le serveur de mémoire personnelle n'est jamais ajouté : s'il est utile à une application, déclarer un serveur dédié (autre `MEMORY_DIR`, sans `MEMORY_UI_PORT`).
+
+| Clé du profil | Rôle |
+|---|---|
+| `servers` | liste de **noms de serveurs MCP** déclarés dans `mcp.params.servers` : tous leurs outils sont disponibles pour la clé. Vide ou absent : aucun outil |
+| `system_message` | règles de base de l'assistant pour cette clé (les consignes `systemPrompt` de l'application s'y ajoutent, sans les remplacer) |
+| `llm` | module LLM **distant** de la config (Anthropic, LM Studio, OpenAI) ; vide = le module actif d'Aria. Le LLM local est refusé |
+| `voice` | `false` : les clés de ce profil n'ont pas la voix |
+| `description` | texte affiché dans l'administration |
+
+- **Serveurs privés.** Les serveurs de `access.private_servers` (par défaut `["memoire"]`, la mémoire personnelle) ne peuvent jamais figurer dans un profil : la
+  sauvegarde est refusée. Si un serveur de mémoire est utile à une application, déclarer un serveur dédié (autre `MEMORY_DIR`, sans `MEMORY_UI_PORT`).
+- **Validation à la sauvegarde.** Noms de profil (lettres, chiffres, `-`, `_`), types, **clés inconnues** (une faute de frappe est signalée), serveurs inconnus
+  ou privés, LLM local. Les profils sont contrôlés contre les serveurs et LLM de la configuration **enregistrée avec la même sauvegarde** : retirer un serveur
+  encore utilisé par un profil est refusé. En cas d'erreur, rien n'est modifié, ni en mémoire ni dans le fichier.
+- **Appliqué sans redémarrage.** Les profils sont relus à chaque création de conversation : un profil modifié vaut pour les **nouvelles** conversations. Les
+  conversations déjà ouvertes gardent l'ancien profil jusqu'à leur expiration ; la case « Fermer les conversations ouvertes des clés dont le profil change »
+  les ferme tout de suite (elles repartent avec le profil à jour au prochain échange). Les autres sections de l'onglet exigent toujours « 🔄 Redémarrer ».
+- **Profil supprimé ou renommé.** Une clé qui l'utilise reçoit une erreur à la création de sa prochaine conversation. La sauvegarde affiche un avertissement
+  qui liste ces clés : changer leur profil dans l'onglet « 🔑 Accès tiers ».
+- **Secrets.** Ils restent dans la déclaration du serveur (`env`, `headers`, tags `<NOM>` résolus depuis le `.env`). L'administration n'affiche des profils que
+  le nom et le type (HTTP ou local) des serveurs.
+- **Granularité.** On choisit des **serveurs**, pas des outils : un serveur qui expose seize outils les donne tous. Pour n'exposer qu'une partie, déclarer un
+  serveur MCP dédié.
 
 ## Intégration dans une page
 
