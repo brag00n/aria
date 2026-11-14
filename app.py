@@ -60,7 +60,7 @@ from components import visualizer, mic_toggle
 from components.language import Language, normalize
 from components.conversation import Conversation
 from components import https
-from components import memory_tab, access_tab, settings as settings_mod
+from components import memory_tab, access_tab, echanges, settings as settings_mod
 from components import interlocuteur
 from components import history as history_mod
 utils.log_info("app","Stt, Llm, Tts chargés")
@@ -103,6 +103,10 @@ from components.access import memory_link
 llm = Llm(config["llm"][active_llm]["params"], all_config={**config, "_memory_secret": memory_link.new_secret()}, language=language)
 tts = Tts(config["tts"][active_tts]["params"], language=language)
 conv = Conversation(config.get("conversation"))   # sessions de conversation + mots d'arrêt
+conv_audit = echanges.ConversationAria()          # identifiant de la conversation courante de l'interface, pour le journal d'audit
+_audit = config.get("audit") or {}                # journal d'audit des échanges (components/echanges.py) : actif par défaut, 90 jours, hors git
+echanges.configure(utils.aria_path(*str(_audit.get("dir", "models/audit")).split("/")), enabled=_audit.get("enabled", True),
+                   log_text=_audit.get("log_text", True), retention_days=_audit.get("retention_days", echanges.DEFAULT_RETENTION_DAYS))
 utils.log_info("app", f"--- FIN Chargement (VAD:{active_vad}, STT:{active_stt}, LLM:{active_llm}, TTS:{active_tts})")
 
 def read_logs_memory():
@@ -221,12 +225,14 @@ async def process_streaming_binaire(b64_audio, history, interlocutor=""):
             return
         if action == "open":
             conv.begin()
+            conv_audit.renew()
             yield history, ctl_payload("conv_open")      # l'icône du cadre apparaît (chargement) pendant que la réponse se prépare
 
-        async for update in repondre(text_user, history, timer, start_total, interlocutor):
+        async for update in repondre(text_user, history, timer, start_total, interlocutor, voix=True):
             yield update
         if action == "close":
             conv.end()
+            conv_audit.renew()
             forget_context()                             # clôture : Aria oublie la conversation (réglage memory.reset_on_close)
             await reset_interlocutor()                   # ... et ne sait plus à qui elle parlait
             yield history, ctl_payload("conv_close")     # l'icône du cadre disparaît après la fin de la réponse
@@ -242,15 +248,15 @@ def ctl_payload(kind):
 STOP_NOTICE = "\n\n> ⏹️ Réponse interrompue\n\n"
 
 
-async def repondre(text_user, history, timer, start_total, interlocutor=""):
+async def repondre(text_user, history, timer, start_total, interlocutor="", voix=False):
     """Une seule réponse à la fois (verrou) ; l'arrêt, lui, ne passe jamais par le verrou."""
     async with conv.lock:
         conv.stop_requested = False
-        async for update in _generer(text_user, history, timer, start_total, interlocutor):
+        async for update in _generer(text_user, history, timer, start_total, interlocutor, voix):
             yield update
 
 
-async def _generer(text_user, history, timer, start_total, interlocutor=""):
+async def _generer(text_user, history, timer, start_total, interlocutor="", voix=False):
     """Réponse d'Aria à un message de l'utilisateur (voix transcrite ou texte saisi) : texte en continu + blocs son."""
     history.append({"role": "user", "content": text_user})
     history.append({"role": "assistant", "content": "..."})
@@ -259,6 +265,9 @@ async def _generer(text_user, history, timer, start_total, interlocutor=""):
     # Qui parle ? La liste déroulante fait référence : on la communique au serveur de mémoire (qui garde l'état, même
     # après un redémarrage de ce dernier), et on récupère la consigne du tour. Sans serveur de mémoire : Inconnue, sans effet.
     etat = await interlocuteur.etat(mcp_manager(), interlocutor or "")
+    # Journal d'audit : interlocuteur actif d'Aria (libellé de la liste, « Inconnue » sinon), conversation de l'interface, voix ou clavier
+    qui = next((label for label, pid in etat.get("choices", []) if pid == etat.get("actif")), "") or "Inconnue"
+    echanges.start("aria", qui, conv_audit.id, voix=bool(voix), query=text_user)
 
     # 2. Appel LLM + TTS Streaming
     utils.log_info("app", f"   LLM: Début génération")
@@ -335,6 +344,7 @@ async def process_texte(text, history, interlocutor=""):
             yield hist, payload, ""
         if action == "close":
             conv.end()
+            conv_audit.renew()
             forget_context()
             await reset_interlocutor()
             yield history, ctl_payload("conv_close"), ""
@@ -381,6 +391,7 @@ async def change_interlocutor(choice):
     await interlocuteur.etat(mcp_manager(), choice)
     if previous and choice and previous != choice:
         forget_context(force=True)
+        conv_audit.renew()
         utils.log_info("INTERLOCUTEUR", f"Changement {previous} -> {choice} : historique du LLM effacé")
 
 
@@ -388,6 +399,7 @@ async def new_conversation():
     """Bouton « Nouvelle conversation » : Aria oublie tout, le chat est vidé, la conversation vocale se referme."""
     conv.request_stop()
     forget_context(force=True)
+    conv_audit.renew()
     if conv.active:
         conv.end()
     await reset_interlocutor()

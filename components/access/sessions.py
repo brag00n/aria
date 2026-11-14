@@ -24,6 +24,7 @@ class Session:
         self.sid, self.key_id, self.profile, self.engine, self.mcp = sid, key_id, profile, engine, mcp
         self.app_prompt = app_prompt          # consignes de l'application, fixées à la création de la session
         self.user = sid                       # clé de l'historique dans le moteur
+        self.epoch = 1                        # change à chaque reset : deux conversations successives d'une même session ont deux identifiants
         self.lock = asyncio.Lock()            # un seul tour à la fois dans une session
         self.stop = asyncio.Event()           # « stop » demandé par le client
         self.closed = asyncio.Event()
@@ -31,6 +32,11 @@ class Session:
         self.task = None
         self.ready = asyncio.Event()
         self.error = None
+
+    @property
+    def conv_id(self):
+        """Identifiant de la conversation courante pour le journal d'audit : session + époque."""
+        return f"{self.sid}#{self.epoch}"
 
     def touch(self):
         self.last_used = time.monotonic()
@@ -162,7 +168,8 @@ class SessionRegistry:
             await self.close(sid)
 
     def reset(self, s):
-        """Efface l'historique de la session."""
+        """Efface l'historique de la session (nouvelle conversation : nouvelle époque pour le journal d'audit)."""
+        s.epoch += 1
         moteur = getattr(s.engine, "engine", s.engine)            # `Llm` enveloppe le moteur réel (Anthropic, OpenAI...)
         store = getattr(moteur, "user_aware_messages", None)
         if isinstance(store, dict):

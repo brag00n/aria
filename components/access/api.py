@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field
 
 import components.utils as utils
+from components import echanges
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
@@ -274,6 +275,8 @@ async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=Fa
             tts = deps.tts if speak else None
             vu = ""                                   # texte déjà émis, pour n'envoyer que les changements
             outils = set()
+            # Journal d'audit : source = identifiant interne de l'accès + son nom du moment ; l'échange est propre à CETTE tâche (tours concurrents sans mélange)
+            echanges.start(echanges.source_label(rec["id"], rec.get("label")), rec.get("label") or rec["id"], session.conv_id, voix=audio is not None, query=text)
             gen = session.engine.get_answer_web(tts, text, session.user)
             try:
                 async for full, wav, spoken in gen:

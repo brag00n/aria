@@ -1,5 +1,6 @@
 # components/llm.py
 import components.utils as utils
+from components import echanges
 from .llm_connect_local import LlmConnectLocal
 from .llm_connect_openai import LlmConnectOpenai
 
@@ -27,10 +28,28 @@ class Llm:
     async def get_answer_web(self, tts, query, user, contexte=""):
         # `contexte` (consigne propre à la requête) n'est géré que par les moteurs à historique (Anthropic, OpenAI/LM Studio)
         args = (tts, query, user, contexte) if contexte and self.backend_type != "local" else (tts, query, user)
-        async for values in self.engine.get_answer_web(*args):
-            # Gestion flexible du nombre de valeurs (2 ou 3)
-            response = values[0]
-            audio_path = values[1]
-            text_for_tts = values[2] if len(values) > 2 else ""
-            
-            yield response, audio_path, text_for_tts
+        # Journal d'audit : UNE ligne par échange, écrite ici pour tous les moteurs (voir components/echanges.py). Le `finally` couvre aussi
+        # l'arrêt (le générateur est fermé) et l'erreur. L'échange courant est posé par la source (interface ou accès tiers) avant l'appel.
+        echange = echanges.current()
+        if echange is not None and not echange.query:
+            echange.query = query or ""
+        response, statut = "", "ok"
+        try:
+            async for values in self.engine.get_answer_web(*args):
+                # Gestion flexible du nombre de valeurs (2 ou 3)
+                response = values[0]
+                audio_path = values[1]
+                text_for_tts = values[2] if len(values) > 2 else ""
+
+                yield response, audio_path, text_for_tts
+        except GeneratorExit:
+            statut = "interrompu"
+            raise
+        except BaseException:
+            statut = "erreur"
+            raise
+        finally:
+            if echange is not None:
+                if statut == "ok" and str(response or "").startswith("Erreur LLM:"):
+                    statut = "erreur"
+                echanges.write(echange, response, statut)
