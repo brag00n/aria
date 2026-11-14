@@ -2,7 +2,7 @@
 
 Section de configuration (absente ou `enabled: false` = fonction désactivée, rien n'est ouvert) :
     "access": {"enabled": true, "port": 7861, "max_sessions": 8, "session_ttl_s": 900, "data_dir": "models/api_access",
-               "private_servers": ["memoire"], "profiles": {...}}
+               "private_servers": [], "profiles": {...}}
 Les profils (outils MCP, message système, LLM par clé) sont dans `access.profiles` : voir components/access/profile.py. Ils sont relus à chaque
 création de session, sans redémarrage.
 """
@@ -46,7 +46,7 @@ def build(config, stt, tts, language=None):
     s = settings(config)
     store = keys.KeyStore(utils.aria_path(*s["data_dir"].split("/")))
     profiles = profile.ConfigProfiles(lambda: config)          # config VIVANTE : les profils modifiés dans l'onglet Paramètres valent tout de suite
-    registry = sessions.SessionRegistry(profiles, lambda prof: sessions.build_engine(prof, config, language),
+    registry = sessions.SessionRegistry(profiles, lambda prof, identity=None: sessions.build_engine(prof, config, language, identity),
                                         max_sessions=s["max_sessions"], ttl_s=s["session_ttl_s"])
 
     def audit(event, **fields):

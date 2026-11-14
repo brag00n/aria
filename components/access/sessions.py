@@ -37,7 +37,8 @@ class Session:
 
 
 class SessionRegistry:
-    """`factory(profile) -> (engine, mcp)` construit le moteur d'une session (injectable : les tests passent un moteur factice)."""
+    """`factory(profile, identity) -> (engine, mcp)` construit le moteur d'une session (injectable : les tests passent un moteur factice).
+    `identity` : (clé interne de l'accès, nom de l'accès), que le serveur mémoire utilise pour retrouver la personne système."""
 
     def __init__(self, profiles, factory, max_sessions=8, ttl_s=900, clock=time.monotonic):
         self.profiles, self.factory = profiles, factory
@@ -82,7 +83,7 @@ class SessionRegistry:
                 raise SessionError(500, str(e))
             profile = dict(profile, app_prompt=app_prompt)
             try:
-                engine, mcp = self.factory(profile)
+                engine, mcp = self.factory(profile, (key_rec["id"], key_rec.get("label", "")))
             except Exception as e:
                 utils.log_info("ACCESS", f"❌ Session impossible pour la clé {key_rec['id']} : {type(e).__name__}: {str(e)[:200]}")
                 raise SessionError(500, "configuration du profil invalide")
@@ -181,7 +182,7 @@ class SessionRegistry:
                 for s in self.sessions.values()]
 
 
-def build_engine(profile, base_config, language=None):
+def build_engine(profile, base_config, language=None, identity=None):
     """Moteur LLM et gestionnaire MCP d'une session, à partir du profil et de la config d'Aria (LLM distant uniquement).
     Le module LLM du profil (sinon le module actif d'Aria s'il est distant) fournit modèle, url et clé ; `system_message` du profil
     remplace celui du module ; le MCP vient du profil, jamais de la config d'Aria. Retourne (Llm, Mcp|None)."""
@@ -197,6 +198,12 @@ def build_engine(profile, base_config, language=None):
     params["system_message"] = compose_system(base, profile.get("app_prompt", ""))
     memory = base_config.get("memory")
     servers = profile["mcp"]["servers"]
+    # Serveur mémoire (canal HTTP) : pas de processus propre, connexion au serveur d'Aria avec l'identité de l'accès (clé interne + nom)
+    from . import memory_link
+    key_id, key_name = identity or ("", "")
+    servers, indisponibles = memory_link.resolve_servers(servers, key_id, key_name)
+    if indisponibles:
+        raise ProfileError("la mémoire n'est pas disponible pour cet accès (" + ", ".join(indisponibles) + ")")
     all_config = {"memory": memory, "mcp": {"params": {"servers": servers}}} if servers else {"memory": memory}
     llm = Llm(params, all_config=all_config, language=language)
     mcp = getattr(llm.engine, "mcp_manager", None)

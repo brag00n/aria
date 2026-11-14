@@ -33,7 +33,7 @@ class LlmConnectOpenai:
         # Préparation des outils
         self.mcp_manager = None
         if all_config and "mcp" in all_config:
-            self.mcp_manager = Mcp(all_config["mcp"]["params"])
+            self.mcp_manager = Mcp(all_config["mcp"]["params"], secret_for_servers=all_config.get("_memory_secret", ""))
 
 
     async def get_answer_web(self, tts, query, user, contexte=""):

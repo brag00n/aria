@@ -4,7 +4,7 @@
 > applications tierces, sans détail d'installation, est `docs/integration.md` : c'est celui à leur remettre avec leur clé.
 
 Une page web tierce peut utiliser Aria (écoute du micro, saisie texte, réponse en texte et en voix) avec une **clé API**. Chaque clé est associée à
-un **profil** : ses propres serveurs MCP (outils), son message système et son LLM. Les outils et la mémoire d'Aria ne sont jamais exposés.
+un **profil** : ses propres serveurs MCP (outils), son message système et son LLM. Les outils d'Aria ne sont jamais exposés ; sa mémoire ne l'est que par un profil qui la référence (voir « Mémoire des accès tiers »).
 
 ## Activer
 
@@ -26,7 +26,7 @@ Un profil décide de ce qu'une clé peut utiliser. Les profils sont dans `config
 ```json
 "access": {
   "enabled": true,
-  "private_servers": ["memoire"],
+  "private_servers": [],
   "profiles": {
     "portail": {
       "description": "Portail RH",
@@ -47,8 +47,10 @@ Un profil décide de ce qu'une clé peut utiliser. Les profils sont dans `config
 | `voice` | `false` : les clés de ce profil n'ont pas la voix |
 | `description` | texte affiché dans l'administration |
 
-- **Serveurs privés.** Les serveurs de `access.private_servers` (par défaut `["memoire"]`, la mémoire personnelle) ne peuvent jamais figurer dans un profil : la
-  sauvegarde est refusée. Si un serveur de mémoire est utile à une application, déclarer un serveur dédié (autre `MEMORY_DIR`, sans `MEMORY_UI_PORT`).
+- **Serveurs privés.** Les serveurs de `access.private_servers` (aucun par défaut) ne peuvent jamais figurer dans un profil : la sauvegarde est refusée.
+  À utiliser pour fermer un serveur sensible (par exemple la domotique) à tous les tiers.
+- **Mémoire.** Le serveur `memoire` peut figurer dans un profil, à condition de déclarer son canal HTTP (`MEMORY_HTTP_PORT` dans son `env`, voir plus bas).
+  Un serveur de mémoire sans canal HTTP est refusé : un tiers ne lance jamais son propre processus de mémoire.
 - **Validation à la sauvegarde.** Noms de profil (lettres, chiffres, `-`, `_`), types, **clés inconnues** (une faute de frappe est signalée), serveurs inconnus
   ou privés, LLM local. Les profils sont contrôlés contre les serveurs et LLM de la configuration **enregistrée avec la même sauvegarde** : retirer un serveur
   encore utilisé par un profil est refusé. En cas d'erreur, rien n'est modifié, ni en mémoire ni dans le fichier.
@@ -61,6 +63,26 @@ Un profil décide de ce qu'une clé peut utiliser. Les profils sont dans `config
   le nom et le type (HTTP ou local) des serveurs.
 - **Granularité.** On choisit des **serveurs**, pas des outils : un serveur qui expose seize outils les donne tous. Pour n'exposer qu'une partie, déclarer un
   serveur MCP dédié.
+
+## Mémoire des accès tiers
+
+Il n'y a qu'**un seul serveur de mémoire** (`memoire`) : c'est lui qui garantit l'intégrité et la confidentialité des données. Chaque accès tiers y est une
+**personne de type système**, liée à la **clé interne de l'accès** (`k_xxxx`) : renommer l'accès ou **régénérer sa clé API** ne fait pas perdre sa mémoire.
+
+| | Un accès tiers (système) | Une personne (Aria, page de gestion) |
+|---|---|---|
+| Personnes et relations du foyer | **toutes**, en lecture | toutes |
+| Souvenirs | **les siens** + les souvenirs partagés de type `foyer` | les siens + le partagé |
+| Ce qu'il écrit | toujours **privé** (même de type `foyer`) | comme avant |
+| Liens qu'il crée | seulement entre **lui** et une personne déjà connue | tous |
+| Changer d'identité | **impossible** (imposé par le serveur) | oui |
+
+Un tiers du foyer connaît donc les noms de toutes les personnes et leurs liens, mais jamais leurs souvenirs privés. Pour un tiers **hors foyer**, ne pas lui
+donner la mémoire d'Aria : lui fournir un serveur de mémoire dédié (même programme, autre `MEMORY_DIR`, son propre `MEMORY_HTTP_PORT`).
+
+Mise en place : ajouter `MEMORY_HTTP_PORT` (par exemple `7872`) à l'`env` du serveur `memoire`, puis référencer `memoire` dans le profil. Le canal est ouvert
+par le **même processus** que celui d'Aria, sur `127.0.0.1` seulement, et protégé par un secret **généré à chaque démarrage d'Aria** (jamais écrit dans un
+fichier ni dans `default.json`) ; sans lui, le canal ne s'ouvre pas. Le conteneur n'a pas à publier ce port.
 
 ## Intégration dans une page
 

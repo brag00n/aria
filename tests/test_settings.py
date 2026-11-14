@@ -27,7 +27,8 @@ def base_config():
         "mcp": {"params": {"servers": {
             "meteo": {"run": "uv", "args": ["run", "m.py"], "env": {"API_KEY": "<CleMeteo>"}},
             "web": {"url": "http://x/mcp", "headers": {"Authorization": "Bearer <Jeton>"}},
-            "memoire": {"run": "uv", "args": ["run", "mem.py"]}}}},
+            "memoire": {"run": "uv", "args": ["run", "tools/memory/server.py"], "env": {"MEMORY_DIR": "/m", "MEMORY_HTTP_PORT": "7872"}},
+            "memoire_seule": {"run": "uv", "args": ["run", "tools/memory/server.py"], "env": {"MEMORY_DIR": "/m2"}}}}},
         "access": {"enabled": True, "port": 7861, "profiles": {"demo": {"description": "Démo", "servers": ["meteo"]}}},
     }
 
@@ -63,7 +64,7 @@ class ValidationTests(unittest.TestCase):
             {"conversation": json.dumps({"open_phrases": "bonjour"})}, {"memory": json.dumps({"max_exchanges": -1})},
             {"memory": json.dumps({"max_chars": True})},
             {"vad": "{x"}, {"stt": "[]"}, {"llm": "pas du json"}, {"tts": "3"}, {"mcp": "{x"}, {"mcp": "[]"},
-            {"profiles": "{x"}, {"profiles": "[1]"}, {"profiles": json.dumps({"a": {"servers": ["memoire"]}})},
+            {"profiles": "{x"}, {"profiles": "[1]"}, {"profiles": json.dumps({"a": {"servers": ["memoire_seule"]}})},
             {"profiles": json.dumps({"a": {"servers": ["inconnu"]}})}, {"stt_choice": "Stt_Inconnu"},
         ]
         for champ in invalides:
@@ -126,10 +127,10 @@ class ProfilsTests(unittest.TestCase):
 
     def test_message_d_erreur_lisible_et_complet(self):
         with self.assertRaises(ValueError) as cm:
-            self.apply({"a": {"servers": ["memoire", "fantome"], "voix": True}})
+            self.apply({"a": {"servers": ["memoire_seule", "fantome"], "voix": True}})
         msg = str(cm.exception)
         self.assertTrue(msg.startswith("❌"))
-        for mot in ("privé", "fantome", "voix"):
+        for mot in ("canal HTTP", "fantome", "voix"):
             self.assertIn(mot, msg)
 
     def test_texte_vide_supprime_les_profils(self):
@@ -176,8 +177,9 @@ class EcritureTests(unittest.TestCase):
 class AideEtMessagesTests(unittest.TestCase):
     def test_aide_liste_serveurs_utilisables_et_prives(self):
         aide = settings.profiles_help(base_config())
-        self.assertIn("meteo, web", aide)
-        self.assertIn("jamais exposés : memoire", aide)
+        self.assertIn("memoire, meteo, web", aide)                                          # memoire_seule : pas de canal HTTP, pas proposé
+        self.assertNotIn("memoire_seule", aide)
+        self.assertNotIn("jamais exposés", aide)                                           # aucun serveur privé par défaut
 
     def test_aide_sans_serveur(self):
         self.assertIn("aucun", settings.profiles_help({}))

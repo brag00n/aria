@@ -1,13 +1,15 @@
 """Profils d'accès : ce qu'une clé API a le droit d'utiliser. Bibliothèque standard seulement.
 
 Les profils sont dans `configs/default.json`, section `access.profiles` (éditée dans l'onglet Paramètres) :
-    "access": {"private_servers": ["memoire"],
+    "access": {"private_servers": [],
                "profiles": {"portail": {"description": "Portail RH", "system_message": "Tu aides les salariés…", "llm": "Llm_Anthropic",
                                         "voice": true, "servers": ["meteo_local", "recherche_web"]}}}
 
 `servers` est une liste de NOMS de serveurs MCP déjà déclarés dans `mcp.params.servers` : un profil ne redéclare rien et ne copie aucun
 secret (`env`, `headers` et leurs tags `<NOM>` restent dans la déclaration du serveur). Les serveurs de `access.private_servers`
-(défaut : la mémoire personnelle) ne peuvent jamais être donnés à un tiers. Sans profil, une clé n'a AUCUN outil (jamais ceux d'Aria).
+(défaut : aucun) ne peuvent jamais être donnés à un tiers. Le serveur de MÉMOIRE d'Aria peut l'être, mais seulement par son canal HTTP
+(`MEMORY_HTTP_PORT`) : la session tierce s'y connecte avec l'identité de son accès (une personne système, voir tools/memory) et ne lance jamais
+son propre processus. Sans profil, une clé n'a AUCUN outil (jamais ceux d'Aria).
 """
 import json
 import re
@@ -60,11 +62,11 @@ def compose_system(base, app_prompt):
 
 
 PROFILE_KEYS = frozenset(("description", "system_message", "llm", "voice", "servers"))
-DEFAULT_PRIVATE = ("memoire",)
+DEFAULT_PRIVATE = ()
 
 
 def private_servers(config):
-    """Serveurs MCP qu'aucun profil ne peut exposer : `access.private_servers`, sinon la mémoire personnelle."""
+    """Serveurs MCP qu'aucun profil ne peut exposer : `access.private_servers` (aucun par défaut)."""
     access = (config or {}).get("access") or {}
     value = access.get("private_servers", DEFAULT_PRIVATE)
     return set(value) if isinstance(value, (list, tuple)) else set(DEFAULT_PRIVATE)
@@ -77,9 +79,23 @@ def declared_servers(config):
 
 
 def exposable_servers(config):
-    """Noms des serveurs qu'un profil peut référencer : déclarés et non privés."""
-    private = private_servers(config)
-    return sorted(n for n in declared_servers(config) if n not in private)
+    """Noms des serveurs qu'un profil peut référencer : déclarés, non privés, et — pour la mémoire — dotés d'un canal HTTP (voir validate_profiles)."""
+    private, declared = private_servers(config), declared_servers(config)
+    return sorted(n for n, conf in declared.items() if n not in private and not (_is_memory(conf) and not _has_http(conf)))
+
+
+def _is_memory(conf):
+    """Serveur de mémoire d'Aria : il lance tools/memory/server.py (ou déclare un dossier de données)."""
+    if not isinstance(conf, dict):
+        return False
+    texte = " ".join(str(x) for x in (conf.get("args") or [])) + " " + str(conf.get("run", ""))
+    env = conf.get("env") or {}
+    return "tools/memory/server.py" in texte.replace("\\", "/") or "MEMORY_DIR" in env or "MEMORY_HTTP_PORT" in env
+
+
+def _has_http(conf):
+    from .memory_link import http_port
+    return http_port(conf) is not None
 
 
 def validate_profiles(profiles, config):
@@ -123,6 +139,9 @@ def validate_profiles(profiles, config):
                 errors.append(f"profil « {name} » : le serveur « {srv} » est privé et ne peut pas être donné à un tiers")
             elif srv not in declared:
                 errors.append(f"profil « {name} » : serveur « {srv} » inconnu (déclarés : {', '.join(sorted(declared)) or 'aucun'})")
+            elif _is_memory(declared[srv]) and not _has_http(declared[srv]):
+                errors.append(f"profil « {name} » : le serveur de mémoire « {srv} » n'a pas de canal HTTP (MEMORY_HTTP_PORT) : un tiers ne peut "
+                              "pas lancer son propre processus de mémoire")
     return errors
 
 

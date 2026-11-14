@@ -12,8 +12,9 @@ HIDDEN_PREFIX = "ui_"
 
 
 class Mcp:
-    def __init__(self, mcp_params):
+    def __init__(self, mcp_params, secret_for_servers=""):
         self.params = mcp_params or {}
+        self.secret_for_servers = secret_for_servers          # secret du canal HTTP de la mémoire (processus d'Aria seulement ; vide pour les tiers)
         self.servers_conf = self.params.get("servers", {})
         self.tool_registry = {}  
         self.openai_tools = []   
@@ -36,6 +37,10 @@ class Mcp:
         for name, conf in self.servers_conf.items():
             try:
                 conf = utils.expand_secrets(conf, f"MCP {name}")   # tags <SECRET> -> valeurs du .env
+                hidden_tools = set(conf.get("hide_tools") or ())   # outils de ce serveur jamais proposés au LLM (ex. identifier_interlocuteur pour un tiers)
+                if self.secret_for_servers:
+                    from components.access import memory_link
+                    conf = memory_link.with_secret(conf, self.secret_for_servers)   # serveur mémoire d'Aria : secret de son canal HTTP, en mémoire seulement
                 if conf.get("url"):
                     # Serveur distant (HTTP) : "url" et, au besoin, "headers" (ex. Authorization)
                     read, write, _ = await self.stack.enter_async_context(
@@ -53,7 +58,7 @@ class Mcp:
                 tools_resp = await session.list_tools()
                 for tool in tools_resp.tools:
                     self.tool_registry[tool.name] = session
-                    if tool.name.startswith(HIDDEN_PREFIX):
+                    if tool.name.startswith(HIDDEN_PREFIX) or tool.name in hidden_tools:
                         continue            # appelable par Aria (call_tool), jamais proposé au LLM
                     self.openai_tools.append({
                         "type": "function",

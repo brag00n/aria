@@ -87,7 +87,7 @@ class ApiCase(unittest.TestCase):
         self.keys = keys.KeyStore(self.tmp / "data")
         self.engines = []
 
-        def factory(prof):
+        def factory(prof, identity=None):
             e = FakeEngine(prof["name"], slow=getattr(self, "slow", False), app_prompt=prof.get("app_prompt", ""))
             self.engines.append(e)
             return FakeLlm(e), None
@@ -242,7 +242,7 @@ class TourTexteTests(ApiCase):
     def test_erreur_du_llm_devient_une_erreur_structuree(self):
         async def boom(tts, query, user, contexte=""):
             yield "Erreur LLM: clé secrète sk-abc rejetée", None, None
-        self.deps.sessions.factory = lambda prof: (type("L", (), {"get_answer_web": staticmethod(boom)}), None)
+        self.deps.sessions.factory = lambda prof, identity=None: (type("L", (), {"get_answer_web": staticmethod(boom)}), None)
         ev = self.events(self.turn())
         err = [d for n, d in ev if n == "error"]
         self.assertEqual(err[0]["code"], "llm")
@@ -611,7 +611,8 @@ CONFIG = {
     "mcp": {"params": {"servers": {
         "web": {"url": "http://x/mcp", "headers": {"Authorization": "Bearer <Jeton>"}},
         "loc": {"run": "uv", "args": ["run", "a.py"], "env": {"K": "<Secret>"}},
-        "memoire": {"run": "uv", "args": ["run", "memory.py"], "env": {"MEMORY_DIR": "/aria/models/memory"}}}}},
+        "memoire": {"run": "uv", "args": ["run", "tools/memory/server.py"], "env": {"MEMORY_DIR": "/aria/models/memory", "MEMORY_HTTP_PORT": "7872"}},
+        "memoire_stdio": {"run": "uv", "args": ["run", "tools/memory/server.py"], "env": {"MEMORY_DIR": "/aria/models/memoire_stdio"}}}}},
     "llm": {"Llm_Anthropic": {"params": {"backend_type": "anthropic"}}, "Llm_local": {"params": {"backend_type": "local"}},
             "Llm_Vide": {"params": {}}},
     "access": {},
@@ -708,9 +709,9 @@ class ProfilTests(unittest.TestCase):
         self.config["access"]["profiles"]["ok"]["servers"] = ["loc", "disparu"]
         with self.assertRaises(profile.ProfileError):
             self.p.load("ok")
-        self.config["access"]["profiles"]["ok"]["servers"] = ["memoire"]
+        self.config["access"]["profiles"]["ok"]["servers"] = ["memoire_stdio"]
         with self.assertRaises(profile.ProfileError):
-            self.p.load("ok")                                                              # même édité à la main dans le fichier
+            self.p.load("ok")                                                              # mémoire sans canal HTTP, même éditée à la main
 
 
 class ValidationProfilsTests(unittest.TestCase):
@@ -727,18 +728,23 @@ class ValidationProfilsTests(unittest.TestCase):
         self.assertIn("fantome", e[0])
         self.assertIn("inconnu", e[0])
 
-    def test_serveur_memoire_refuse_par_defaut(self):
-        e = self.check({"a": {"servers": ["memoire"]}})
+    def test_la_memoire_d_aria_est_accessible_par_son_canal_http(self):
+        self.assertEqual(self.check({"a": {"servers": ["memoire"]}}), [])
+
+    def test_une_memoire_sans_canal_http_est_refusee(self):
+        e = self.check({"a": {"servers": ["memoire_stdio"]}})
         self.assertEqual(len(e), 1)
-        self.assertIn("privé", e[0])
+        self.assertIn("canal HTTP", e[0])                                                  # jamais de processus mémoire propre à un tiers
 
     def test_serveurs_prives_configurables(self):
         self.assertEqual(len(self.check({"a": {"servers": ["loc"]}}, private_servers=["loc"])), 1)
-        self.assertEqual(self.check({"a": {"servers": ["memoire"]}}, private_servers=[]), [])        # l'administrateur en décide
+        e = self.check({"a": {"servers": ["memoire"]}}, private_servers=["memoire"])                  # l'administrateur peut aussi le fermer
+        self.assertEqual(len(e), 1)
+        self.assertIn("privé", e[0])
 
-    def test_private_servers_mal_forme_retombe_sur_la_memoire(self):
-        self.assertEqual(len(self.check({"a": {"servers": ["memoire"]}}, private_servers="memoire")), 1)
-        self.assertEqual(len(self.check({"a": {"servers": ["memoire"]}}, private_servers=None)), 1)
+    def test_private_servers_mal_forme_retombe_sur_aucun(self):
+        self.assertEqual(self.check({"a": {"servers": ["loc"]}}, private_servers="loc"), [])
+        self.assertEqual(self.check({"a": {"servers": ["loc"]}}, private_servers=None), [])
 
     def test_cle_inconnue_signalee(self):
         e = self.check({"a": {"serveurs": ["web"]}})
@@ -768,7 +774,7 @@ class ValidationProfilsTests(unittest.TestCase):
         self.assertIn("inconnu", self.check({"a": {"llm": "Nexistepas"}})[0])
 
     def test_plusieurs_erreurs_toutes_signalees(self):
-        self.assertEqual(len(self.check({"a": {"servers": ["x", "memoire"]}, "b": {"voice": 1}})), 3)
+        self.assertEqual(len(self.check({"a": {"servers": ["x", "memoire_stdio"]}, "b": {"voice": 1}})), 3)
 
 
 class ApplicationProfilsTests(unittest.TestCase):
@@ -789,7 +795,7 @@ class ApplicationProfilsTests(unittest.TestCase):
     def test_aucune_modification_en_cas_d_erreur(self):
         import copy
         avant = copy.deepcopy(self.config)
-        for data in ("{pas du json", "[1]", '"texte"', {"a": {"servers": ["memoire"]}}, {"a": {"servers": ["fantome"]}}, {"../x": {}}):
+        for data in ("{pas du json", "[1]", '"texte"', {"a": {"servers": ["memoire_stdio"]}}, {"a": {"servers": ["fantome"]}}, {"../x": {}}):
             ok, msg, changes, new = self.apply(data)
             self.assertFalse(ok, data)
             self.assertTrue(msg)
@@ -819,7 +825,13 @@ class ApplicationProfilsTests(unittest.TestCase):
         self.assertEqual(cfg["access"], {"profiles": {"a": {"servers": ["web"]}}})
 
     def test_serveurs_exposables(self):
-        self.assertEqual(profile.exposable_servers(self.config), ["loc", "web"])             # la mémoire n'y figure pas
+        # self.config ferme « memoire » (private_servers) : il n'est ni proposé ni accepté ; memoire_stdio n'a pas de canal HTTP
+        self.assertEqual(profile.exposable_servers(self.config), ["loc", "web"])
+        ouvert = conf({}, enabled=True)
+        self.assertEqual(profile.exposable_servers(ouvert), ["loc", "memoire", "web"])
+        for cfg in (self.config, ouvert):
+            for nom in profile.exposable_servers(cfg):
+                self.assertEqual(profile.validate_profiles({"a": {"servers": [nom]}}, cfg), [], nom)     # tout ce qui est proposé est accepté
 
 
 class MoteurTests(unittest.TestCase):

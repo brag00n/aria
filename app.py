@@ -97,7 +97,10 @@ active_tts = config["active_modules"]["tts"]
 # Instanciation dynamique basée sur le fichier de config
 vad = Vad(config["vad"][active_vad]["params"])
 stt = Stt(config["stt"][active_stt]["params"], language=language)
-llm = Llm(config["llm"][active_llm]["params"], all_config=config, language=language)
+# Secret du canal HTTP de la mémoire : généré à CHAQUE démarrage, en mémoire vive seulement. Il passe par une copie de la config réservée au LLM
+# d'Aria (jamais dans `config`, qui est réécrite dans default.json) ; le gestionnaire MCP le transmet au processus mémoire par son environnement.
+from components.access import memory_link
+llm = Llm(config["llm"][active_llm]["params"], all_config={**config, "_memory_secret": memory_link.new_secret()}, language=language)
 tts = Tts(config["tts"][active_tts]["params"], language=language)
 conv = Conversation(config.get("conversation"))   # sessions de conversation + mots d'arrêt
 utils.log_info("app", f"--- FIN Chargement (VAD:{active_vad}, STT:{active_stt}, LLM:{active_llm}, TTS:{active_tts})")
