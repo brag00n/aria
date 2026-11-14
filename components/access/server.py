@@ -2,7 +2,9 @@
 
 Section de configuration (absente ou `enabled: false` = fonction désactivée, rien n'est ouvert) :
     "access": {"enabled": true, "port": 7861, "max_sessions": 8, "session_ttl_s": 900, "data_dir": "models/api_access",
-               "profiles_dir": "configs/mcp"}
+               "private_servers": ["memoire"], "profiles": {...}}
+Les profils (outils MCP, message système, LLM par clé) sont dans `access.profiles` : voir components/access/profile.py. Ils sont relus à chaque
+création de session, sans redémarrage.
 """
 import asyncio
 import io
@@ -11,7 +13,7 @@ import threading
 import components.utils as utils
 
 DEFAULTS = {"enabled": False, "port": 7861, "admin_port": 7871, "max_sessions": 8, "session_ttl_s": 900,
-            "data_dir": "models/api_access", "profiles_dir": "configs/mcp"}
+            "data_dir": "models/api_access"}
 
 
 def settings(config):
@@ -43,7 +45,7 @@ def build(config, stt, tts, language=None):
     from . import api, keys, profile, sessions
     s = settings(config)
     store = keys.KeyStore(utils.aria_path(*s["data_dir"].split("/")))
-    profiles = profile.Profiles(utils.aria_path(*s["profiles_dir"].split("/")))
+    profiles = profile.ConfigProfiles(lambda: config)          # config VIVANTE : les profils modifiés dans l'onglet Paramètres valent tout de suite
     registry = sessions.SessionRegistry(profiles, lambda prof: sessions.build_engine(prof, config, language),
                                         max_sessions=s["max_sessions"], ttl_s=s["session_ttl_s"])
 
@@ -87,4 +89,28 @@ def start(config, stt, tts, https_args, language=None):
     scheme = "https" if conf.get("ssl_certfile") else "http"
     utils.log_info("ACCESS", f"API des applications tierces sur {scheme}://0.0.0.0:{s['port']}/v1/")
     server.admin = admin
+    server.access_deps = deps          # registre des sessions et clés, pour l'onglet Paramètres (fermeture des sessions d'un profil modifié)
     return server
+
+
+def close_sessions_for_profiles(server, names):
+    """Ferme les conversations ouvertes des clés dont le profil figure dans `names` (profil modifié ou supprimé) : elles repartent avec le
+    profil à jour à leur prochain tour. Retourne le nombre de conversations fermées. Sans serveur d'accès, ne fait rien."""
+    deps = getattr(server, "access_deps", None)
+    if deps is None or not names:
+        return 0
+    names = set(names)
+    keys = [k["id"] for k in deps.keys.list() if k.get("profile") in names]
+    closed = sum(1 for sid, sess in list(deps.sessions.sessions.items()) if sess.key_id in keys)
+    for kid in keys:
+        deps.sessions.request_close_key(kid)          # sûr depuis un autre thread : planifié dans la boucle de l'API
+    return closed
+
+
+def keys_using_profiles(server, names):
+    """Libellés des clés qui utilisent l'un des profils `names` (pour avertir avant de supprimer un profil utilisé)."""
+    deps = getattr(server, "access_deps", None)
+    if deps is None:
+        return []
+    names = set(names)
+    return [f"{k['label']} ({k['profile']})" for k in deps.keys.list() if k.get("profile") in names]

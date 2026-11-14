@@ -281,11 +281,11 @@ async function renderKeys(main){
           el('button',{title:'Supprimer',onclick:async()=>{if(confirm('Supprimer définitivement la clé « '+k.label+' » ?')){await post('/api/keys/delete',{id:k.id});render()}}},'🗑'))))));
 }
 async function renderProfils(main){
-  main.append(el('p',{className:'mut'},'Un profil est un fichier JSON de configs/mcp/ : serveurs MCP, message système et LLM d\\u2019une application. Il n\\u2019expose jamais les outils d\\u2019Aria.'),
+  main.append(el('p',{className:'mut'},'Un profil choisit les serveurs MCP, le message système et le LLM d\\u2019une application. Il se gère dans l\\u2019onglet Paramètres d\\u2019Aria (section « Accès tiers : profils ») et ne peut jamais exposer le serveur de mémoire.'),
     el('table',{},el('tr',{},...['Profil','Description','LLM','Serveurs MCP','Voix'].map(h=>el('th',{},h))),
       ...PROFILS.map(p=>el('tr',{},el('td',{},p.name),el('td',{},p.erreur?el('span',{className:'ko'},p.erreur):p.description||''),el('td',{className:'mut'},p.llm||'(module actif)'),
         el('td',{},...p.servers.map(s=>el('span',{className:'tag'},s.name+' · '+s.type))),el('td',{},p.voice===false?'non':'oui')))));
-  if(!PROFILS.length)main.append(el('p',{className:'ko'},'Aucun profil. Créez un fichier configs/mcp/<nom>.json.'));
+  if(!PROFILS.length)main.append(el('p',{className:'ko'},'Aucun profil. Créez-en un dans l\\u2019onglet Paramètres, section « Accès tiers : profils ».'));
 }
 async function renderSessions(main){
   const rows=await get('/api/sessions');

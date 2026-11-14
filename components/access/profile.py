@@ -1,17 +1,17 @@
 """Profils d'accès : ce qu'une clé API a le droit d'utiliser. Bibliothèque standard seulement.
 
-Un profil est un fichier JSON de `configs/mcp/<nom>.json` :
-    {"description": "Portail RH", "system_message": "Tu aides les salariés…", "llm": "Llm_Anthropic", "voice": true,
-     "mcp": {"servers": {"meteo": {"run": "uv", "args": ["run", "tools/weather_server.py"]}}}}
+Les profils sont dans `configs/default.json`, section `access.profiles` (éditée dans l'onglet Paramètres) :
+    "access": {"private_servers": ["memoire"],
+               "profiles": {"portail": {"description": "Portail RH", "system_message": "Tu aides les salariés…", "llm": "Llm_Anthropic",
+                                        "voice": true, "servers": ["meteo_local", "recherche_web"]}}}
 
-`mcp` a le même format que `config["mcp"]["params"]` (déclaration des serveurs, tags de secrets `<NOM>` résolus au chargement des
-sessions). Le nom du profil est le nom du fichier : il ne peut contenir ni séparateur de chemin ni `..`. Sans profil, la clé n'a
-AUCUN outil (jamais ceux d'Aria).
+`servers` est une liste de NOMS de serveurs MCP déjà déclarés dans `mcp.params.servers` : un profil ne redéclare rien et ne copie aucun
+secret (`env`, `headers` et leurs tags `<NOM>` restent dans la déclaration du serveur). Les serveurs de `access.private_servers`
+(défaut : la mémoire personnelle) ne peuvent jamais être donnés à un tiers. Sans profil, une clé n'a AUCUN outil (jamais ceux d'Aria).
 """
 import json
 import re
 import unicodedata
-from pathlib import Path
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,59}$")
 # Modules LLM autorisés pour des tiers : jamais le moteur local (llama-cpp), qui est lourd, synchrone et sans historique
@@ -59,47 +59,143 @@ def compose_system(base, app_prompt):
     return f"{base}\n\n{APP_HEADER}\n{app_prompt}".strip()
 
 
-class Profiles:
-    def __init__(self, directory):
-        self.dir = Path(directory)
+PROFILE_KEYS = frozenset(("description", "system_message", "llm", "voice", "servers"))
+DEFAULT_PRIVATE = ("memoire",)
 
-    def path(self, name):
+
+def private_servers(config):
+    """Serveurs MCP qu'aucun profil ne peut exposer : `access.private_servers`, sinon la mémoire personnelle."""
+    access = (config or {}).get("access") or {}
+    value = access.get("private_servers", DEFAULT_PRIVATE)
+    return set(value) if isinstance(value, (list, tuple)) else set(DEFAULT_PRIVATE)
+
+
+def declared_servers(config):
+    """Serveurs MCP déclarés dans la config d'Aria : {nom: configuration}."""
+    servers = (((config or {}).get("mcp") or {}).get("params") or {}).get("servers")
+    return servers if isinstance(servers, dict) else {}
+
+
+def exposable_servers(config):
+    """Noms des serveurs qu'un profil peut référencer : déclarés et non privés."""
+    private = private_servers(config)
+    return sorted(n for n in declared_servers(config) if n not in private)
+
+
+def validate_profiles(profiles, config):
+    """Contrôle un dictionnaire de profils {nom: profil} contre la config. Retourne la liste des erreurs (vide = valide), en texte lisible.
+    Contrôle : noms de profil, types, clés inconnues (faute de frappe), serveurs inconnus ou privés, LLM distant."""
+    errors = []
+    if not isinstance(profiles, dict):
+        return ["les profils doivent former un objet JSON {nom: profil}"]
+    declared, private = declared_servers(config), private_servers(config)
+    llm_conf = (config or {}).get("llm") or {}
+    for name, prof in profiles.items():
         if not valid_name(name):
-            raise ProfileError("nom de profil invalide")
-        p = (self.dir / f"{name}.json").resolve()
-        if self.dir.resolve() not in p.parents:             # défense en profondeur contre un lien symbolique ou un nom détourné
-            raise ProfileError("profil hors du dossier autorisé")
-        return p
+            errors.append(f"profil « {name} » : nom invalide (lettres, chiffres, - et _, 60 caractères au plus)")
+            continue
+        if not isinstance(prof, dict):
+            errors.append(f"profil « {name} » : un objet est attendu")
+            continue
+        for k in prof:
+            if k not in PROFILE_KEYS:
+                errors.append(f"profil « {name} » : clé inconnue « {k} » (attendu : {', '.join(sorted(PROFILE_KEYS))})")
+        for k in ("description", "system_message", "llm"):
+            if k in prof and not isinstance(prof[k], str):
+                errors.append(f"profil « {name} » : {k} doit être un texte")
+        if "voice" in prof and not isinstance(prof["voice"], bool):
+            errors.append(f"profil « {name} » : voice doit être true ou false")
+        llm = prof.get("llm")
+        if isinstance(llm, str) and llm:
+            module = llm_conf.get(llm)
+            if not isinstance(module, dict):
+                errors.append(f"profil « {name} » : LLM « {llm} » inconnu")
+            elif (module.get("params") or {}).get("backend_type", "local") not in REMOTE_BACKENDS:
+                errors.append(f"profil « {name} » : LLM « {llm} » local, seuls les LLM distants sont autorisés pour un tiers")
+        servers = prof.get("servers", [])
+        if not isinstance(servers, list) or not all(isinstance(x, str) for x in servers):
+            errors.append(f"profil « {name} » : servers doit être une liste de noms de serveurs MCP")
+            continue
+        if len(set(servers)) != len(servers):
+            errors.append(f"profil « {name} » : serveur en double dans servers")
+        for srv in servers:
+            if srv in private:
+                errors.append(f"profil « {name} » : le serveur « {srv} » est privé et ne peut pas être donné à un tiers")
+            elif srv not in declared:
+                errors.append(f"profil « {name} » : serveur « {srv} » inconnu (déclarés : {', '.join(sorted(declared)) or 'aucun'})")
+    return errors
+
+
+def parse_profiles(text):
+    """JSON de l'éditeur -> (dict, None) ou (None, message d'erreur). Un texte vide équivaut à aucun profil."""
+    text = (text or "").strip()
+    if not text:
+        return {}, None
+    try:
+        value = json.loads(text)
+    except ValueError as e:
+        return None, f"JSON invalide dans les profils d'accès : {e}"
+    if not isinstance(value, dict):
+        return None, "les profils doivent former un objet JSON {nom: profil}"
+    return value, None
+
+
+def changed_profiles(old, new):
+    """Noms des profils ajoutés, retirés ou modifiés entre deux dictionnaires de profils."""
+    old, new = old if isinstance(old, dict) else {}, new if isinstance(new, dict) else {}
+    return sorted(n for n in set(old) | set(new) if old.get(n) != new.get(n))
+
+
+def apply_profiles(config, text):
+    """Valide le JSON des profils puis l'applique par UNE SEULE affectation de `config["access"]["profiles"]` (les autres clés de `access`
+    sont conservées ; le thread de l'API, qui relit la config vivante, voit l'ancien ou le nouvel ensemble, jamais un état intermédiaire).
+    Rien n'est modifié en cas d'erreur. Retourne (ok, message d'erreur, noms des profils modifiés, nouveaux profils)."""
+    new, err = parse_profiles(text)
+    if err:
+        return False, err, [], None
+    errors = validate_profiles(new, config)
+    if errors:
+        return False, "profils d'accès refusés : " + " ; ".join(errors), [], None
+    access = config.get("access")
+    access = access if isinstance(access, dict) else {}
+    changed = changed_profiles(access.get("profiles"), new)
+    config["access"] = {**access, "profiles": new}
+    return True, "", changed, new
+
+
+class ConfigProfiles:
+    """Profils lus dans la config VIVANTE (`get_config()` à chaque appel) : une modification faite dans l'onglet Paramètres vaut pour les
+    sessions créées ensuite, sans redémarrage. Même interface que l'ancienne lecture de fichiers : names, load, describe."""
+
+    def __init__(self, get_config):
+        self.get_config = get_config
+
+    def _profiles(self):
+        access = (self.get_config() or {}).get("access") or {}
+        profiles = access.get("profiles")
+        return profiles if isinstance(profiles, dict) else {}
 
     def names(self):
-        try:
-            return sorted(p.stem for p in self.dir.glob("*.json") if valid_name(p.stem))
-        except OSError:
-            return []
+        return sorted(n for n in self._profiles() if valid_name(n))
 
     def load(self, name):
-        """Profil validé : dict {name, description, system_message, llm, voice, mcp}. Lève ProfileError s'il est absent ou invalide."""
-        path = self.path(name)
-        try:
-            raw = json.loads(path.read_text("utf-8"))
-        except FileNotFoundError:
+        """Profil résolu : {name, description, system_message, llm, voice, mcp: {servers: {nom: configuration}}}. Lève ProfileError."""
+        if not valid_name(name):
+            raise ProfileError("nom de profil invalide")
+        config = self.get_config() or {}
+        raw = self._profiles().get(name)
+        if raw is None:
             raise ProfileError(f"profil « {name} » introuvable")
-        except (OSError, ValueError) as e:
-            raise ProfileError(f"profil « {name} » illisible : {type(e).__name__}")
-        if not isinstance(raw, dict):
-            raise ProfileError(f"profil « {name} » : un objet JSON est attendu")
-        mcp = raw.get("mcp") or {}
-        servers = mcp.get("servers", {}) if isinstance(mcp, dict) else None
-        if not isinstance(servers, dict):
-            raise ProfileError(f"profil « {name} » : mcp.servers doit être un objet")
-        for sname, conf in servers.items():
-            if not isinstance(conf, dict) or not (conf.get("url") or conf.get("args") or conf.get("run")):
-                raise ProfileError(f"profil « {name} » : serveur « {sname} » sans url ni commande")
+        errors = validate_profiles({name: raw}, config)
+        if errors:
+            raise ProfileError(errors[0])
+        declared = declared_servers(config)
+        servers = {n: declared[n] for n in raw.get("servers", [])}
         return {"name": name, "description": str(raw.get("description", ""))[:200], "system_message": str(raw.get("system_message", "")),
                 "llm": str(raw.get("llm", "")), "voice": bool(raw.get("voice", True)), "mcp": {"servers": servers}}
 
     def describe(self, name):
-        """Aperçu pour la page d'administration (jamais les valeurs de secrets : url, headers et env ne sont pas renvoyés)."""
+        """Aperçu pour la page d'administration : jamais de secrets (url, headers et env ne sont pas renvoyés), seulement nom et type."""
         p = self.load(name)
         return {"name": name, "description": p["description"], "llm": p["llm"], "voice": p["voice"],
                 "servers": [{"name": n, "type": "http" if c.get("url") else "stdio"} for n, c in p["mcp"]["servers"].items()]}

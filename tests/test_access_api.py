@@ -82,9 +82,8 @@ def _decode(raw):
 class ApiCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="accapi_"))
-        (self.tmp / "profils").mkdir()
-        (self.tmp / "profils" / "portail.json").write_text(json.dumps({"description": "Portail", "mcp": {"servers": {}}}), "utf-8")
-        (self.tmp / "profils" / "autre.json").write_text(json.dumps({"description": "Autre", "mcp": {"servers": {}}}), "utf-8")
+        # Config d'Aria factice : les profils y sont lus en direct, comme dans l'application
+        self.config = {"access": {"profiles": {"portail": {"description": "Portail"}, "autre": {"description": "Autre"}}}}
         self.keys = keys.KeyStore(self.tmp / "data")
         self.engines = []
 
@@ -92,7 +91,7 @@ class ApiCase(unittest.TestCase):
             e = FakeEngine(prof["name"], slow=getattr(self, "slow", False), app_prompt=prof.get("app_prompt", ""))
             self.engines.append(e)
             return FakeLlm(e), None
-        self.sessions = sessions.SessionRegistry(profile.Profiles(self.tmp / "profils"), factory, max_sessions=3, ttl_s=900)
+        self.sessions = sessions.SessionRegistry(profile.ConfigProfiles(lambda: self.config), factory, max_sessions=3, ttl_s=900)
         self.tts = FakeTts(self.tmp)
         self.stt = FakeStt()
         self.audit = []
@@ -545,13 +544,28 @@ class FichiersPublicsTests(ApiCase):
         self.assertEqual(self.client.get("/v1/health").status_code, 401)
 
 
+CONFIG = {
+    "mcp": {"params": {"servers": {
+        "web": {"url": "http://x/mcp", "headers": {"Authorization": "Bearer <Jeton>"}},
+        "loc": {"run": "uv", "args": ["run", "a.py"], "env": {"K": "<Secret>"}},
+        "memoire": {"run": "uv", "args": ["run", "memory.py"], "env": {"MEMORY_DIR": "/aria/models/memory"}}}}},
+    "llm": {"Llm_Anthropic": {"params": {"backend_type": "anthropic"}}, "Llm_local": {"params": {"backend_type": "local"}},
+            "Llm_Vide": {"params": {}}},
+    "access": {},
+}
+
+
+def conf(profiles=None, **access):
+    import copy
+    c = copy.deepcopy(CONFIG)
+    c["access"] = {**access, "profiles": profiles or {}}
+    return c
+
+
 class ProfilTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="accprof_"))
-        self.p = profile.Profiles(self.tmp)
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.config = conf({"ok": {"description": "d", "servers": ["web", "loc"]}, "vide": {}})
+        self.p = profile.ConfigProfiles(lambda: self.config)
 
     def test_noms_invalides_refuses(self):
         for nom in ("../secret", "a/b", "a\\b", "", ".env", "x" * 61, None, "a.json", "..", "a b"):
@@ -559,33 +573,190 @@ class ProfilTests(unittest.TestCase):
             with self.assertRaises(profile.ProfileError):
                 self.p.load(nom)
 
-    def test_profil_valide_et_apercu_sans_secrets(self):
-        (self.tmp / "ok.json").write_text(json.dumps({"description": "d", "mcp": {"servers": {
-            "web": {"url": "http://x/mcp", "headers": {"Authorization": "Bearer <Jeton>"}},
-            "loc": {"run": "uv", "args": ["run", "a.py"], "env": {"K": "<Secret>"}}}}}), "utf-8")
+    def test_profil_resolu_en_configuration_complete(self):
+        p = self.p.load("ok")
+        self.assertEqual(sorted(p["mcp"]["servers"]), ["loc", "web"])
+        self.assertEqual(p["mcp"]["servers"]["web"]["url"], "http://x/mcp")              # la configuration vient de la déclaration du serveur
+        self.assertEqual(p["mcp"]["servers"]["loc"]["env"], {"K": "<Secret>"})            # tags de secrets conservés pour la connexion
+
+    def test_apercu_sans_secrets(self):
         d = self.p.describe("ok")
         self.assertEqual({s["name"]: s["type"] for s in d["servers"]}, {"web": "http", "loc": "stdio"})
-        self.assertNotIn("Bearer", json.dumps(d))
-        self.assertNotIn("Secret", json.dumps(d))
+        for secret in ("Bearer", "Secret", "Jeton", "http://x", "a.py"):
+            self.assertNotIn(secret, json.dumps(d))
 
-    def test_profils_invalides(self):
-        for contenu in ("pas json", "[1]", json.dumps({"mcp": {"servers": []}}), json.dumps({"mcp": {"servers": {"a": 3}}}),
-                        json.dumps({"mcp": {"servers": {"a": {}}}})):
-            (self.tmp / "bad.json").write_text(contenu, "utf-8")
-            with self.assertRaises(profile.ProfileError):
-                self.p.load("bad")
+    def test_profil_sans_serveur_n_a_aucun_outil(self):
+        self.assertEqual(self.p.load("vide")["mcp"], {"servers": {}})
+
+    def test_profil_inconnu(self):
         with self.assertRaises(profile.ProfileError):
             self.p.load("absent")
 
-    def test_profil_sans_mcp_n_a_aucun_outil(self):
-        (self.tmp / "vide.json").write_text("{}", "utf-8")
-        self.assertEqual(self.p.load("vide")["mcp"], {"servers": {}})
-
-    def test_liste(self):
-        (self.tmp / "b.json").write_text("{}", "utf-8")
-        (self.tmp / "a.json").write_text("{}", "utf-8")
-        (self.tmp / "..x.json").write_text("{}", "utf-8")
+    def test_liste_triee_et_noms_invalides_ignores(self):
+        self.config["access"]["profiles"] = {"b": {}, "a": {}, "../x": {}, "c d": {}}
         self.assertEqual(self.p.names(), ["a", "b"])
+
+    def test_sans_section_access_ni_profils(self):
+        for cfg in ({}, {"access": {}}, {"access": {"profiles": None}}, {"access": {"profiles": []}}):
+            self.assertEqual(profile.ConfigProfiles(lambda c=cfg: c).names(), [])
+
+    def test_rechargement_a_chaud_la_config_vivante_est_relue_a_chaque_appel(self):
+        self.assertEqual(self.p.names(), ["ok", "vide"])
+        self.config["access"]["profiles"]["nouveau"] = {"servers": ["web"]}
+        self.assertEqual(self.p.names(), ["nouveau", "ok", "vide"])
+        self.assertEqual(list(self.p.load("nouveau")["mcp"]["servers"]), ["web"])
+        self.config["access"]["profiles"]["ok"]["servers"] = ["web"]
+        self.assertEqual(list(self.p.load("ok")["mcp"]["servers"]), ["web"])
+
+    def test_rechargement_a_chaud_apres_apply_profiles_qui_remplace_la_section_access(self):
+        # apply_profiles remplace config["access"] par un NOUVEAU dict : un lecteur qui aurait gardé l'ancien objet ne verrait rien
+        sections = self.config["access"]
+        self.assertEqual(self.p.names(), ["ok", "vide"])
+        ok, msg, changes, new = profile.apply_profiles(self.config, json.dumps({"seul": {"servers": ["loc"]}}))
+        self.assertTrue(ok, msg)
+        self.assertIsNot(self.config["access"], sections)
+        self.assertEqual(self.p.names(), ["seul"])
+        self.assertEqual(list(self.p.load("seul")["mcp"]["servers"]), ["loc"])
+        with self.assertRaises(profile.ProfileError):
+            self.p.load("ok")                                                              # un profil supprimé n'est plus servi
+
+    def test_la_config_est_demandee_a_chaque_appel_et_non_gardee(self):
+        # `get_config` renvoie un AUTRE objet à chaque changement (comme après un rechargement de la config) : une copie gardée serait périmée
+        etats = [conf({"a": {"servers": ["web"]}}), conf({"b": {"servers": ["loc"]}})]
+        p = profile.ConfigProfiles(lambda: etats[0])
+        self.assertEqual(p.names(), ["a"])
+        self.assertEqual(list(p.load("a")["mcp"]["servers"]), ["web"])
+        etats[0] = etats[1]
+        self.assertEqual(p.names(), ["b"])
+        self.assertEqual(list(p.load("b")["mcp"]["servers"]), ["loc"])
+        with self.assertRaises(profile.ProfileError):
+            p.load("a")
+
+    def test_la_declaration_d_un_serveur_modifiee_apres_coup_est_prise_en_compte(self):
+        # un profil ne copie pas la déclaration : si le serveur est redéclaré (nouvelle adresse), le profil suit
+        etats = [conf({"a": {"servers": ["web"]}}), conf({"a": {"servers": ["web"]}})]
+        etats[1]["mcp"]["params"]["servers"]["web"] = {"url": "http://nouvelle/mcp"}
+        p = profile.ConfigProfiles(lambda: etats[0])
+        self.assertEqual(p.load("a")["mcp"]["servers"]["web"]["url"], "http://x/mcp")
+        etats[0] = etats[1]
+        self.assertEqual(p.load("a")["mcp"]["servers"]["web"]["url"], "http://nouvelle/mcp")
+
+    def test_un_serveur_devenu_inconnu_ou_prive_est_refuse_au_chargement(self):
+        self.config["access"]["profiles"]["ok"]["servers"] = ["loc", "disparu"]
+        with self.assertRaises(profile.ProfileError):
+            self.p.load("ok")
+        self.config["access"]["profiles"]["ok"]["servers"] = ["memoire"]
+        with self.assertRaises(profile.ProfileError):
+            self.p.load("ok")                                                              # même édité à la main dans le fichier
+
+
+class ValidationProfilsTests(unittest.TestCase):
+    def check(self, profiles, **access):
+        return profile.validate_profiles(profiles, conf(**access))
+
+    def test_profils_valides(self):
+        self.assertEqual(self.check({"a": {"description": "x", "system_message": "y", "llm": "Llm_Anthropic", "voice": False,
+                                           "servers": ["web", "loc"]}, "b": {}}), [])
+
+    def test_serveur_inconnu(self):
+        e = self.check({"a": {"servers": ["web", "fantome"]}})
+        self.assertEqual(len(e), 1)
+        self.assertIn("fantome", e[0])
+        self.assertIn("inconnu", e[0])
+
+    def test_serveur_memoire_refuse_par_defaut(self):
+        e = self.check({"a": {"servers": ["memoire"]}})
+        self.assertEqual(len(e), 1)
+        self.assertIn("privé", e[0])
+
+    def test_serveurs_prives_configurables(self):
+        self.assertEqual(len(self.check({"a": {"servers": ["loc"]}}, private_servers=["loc"])), 1)
+        self.assertEqual(self.check({"a": {"servers": ["memoire"]}}, private_servers=[]), [])        # l'administrateur en décide
+
+    def test_private_servers_mal_forme_retombe_sur_la_memoire(self):
+        self.assertEqual(len(self.check({"a": {"servers": ["memoire"]}}, private_servers="memoire")), 1)
+        self.assertEqual(len(self.check({"a": {"servers": ["memoire"]}}, private_servers=None)), 1)
+
+    def test_cle_inconnue_signalee(self):
+        e = self.check({"a": {"serveurs": ["web"]}})
+        self.assertEqual(len(e), 1)
+        self.assertIn("serveurs", e[0])
+
+    def test_types_invalides(self):
+        for prof in ({"servers": "web"}, {"servers": [1]}, {"servers": {"web": 1}}, {"description": 3}, {"system_message": []},
+                     {"voice": "oui"}, {"llm": 4}):
+            self.assertTrue(self.check({"a": prof}), prof)
+        self.assertTrue(self.check({"a": "texte"}))
+        self.assertTrue(self.check(["a"]))
+        self.assertTrue(self.check("a"))
+
+    def test_serveur_en_double(self):
+        self.assertTrue(self.check({"a": {"servers": ["web", "web"]}}))
+
+    def test_noms_de_profil_invalides(self):
+        for nom in ("../x", "a b", "x" * 61, "", ".env", "a/b"):
+            self.assertTrue(self.check({nom: {}}), nom)
+
+    def test_llm_distant_seulement(self):
+        self.assertEqual(self.check({"a": {"llm": "Llm_Anthropic"}}), [])
+        self.assertEqual(self.check({"a": {"llm": ""}}), [])
+        self.assertIn("local", self.check({"a": {"llm": "Llm_local"}})[0])
+        self.assertIn("local", self.check({"a": {"llm": "Llm_Vide"}})[0])                    # backend absent = local par défaut
+        self.assertIn("inconnu", self.check({"a": {"llm": "Nexistepas"}})[0])
+
+    def test_plusieurs_erreurs_toutes_signalees(self):
+        self.assertEqual(len(self.check({"a": {"servers": ["x", "memoire"]}, "b": {"voice": 1}})), 3)
+
+
+class ApplicationProfilsTests(unittest.TestCase):
+    def setUp(self):
+        self.config = conf({"ancien": {"description": "avant", "servers": ["web"]}}, enabled=True, port=7861, private_servers=["memoire"])
+
+    def apply(self, data):
+        return profile.apply_profiles(self.config, data if isinstance(data, str) else json.dumps(data))
+
+    def test_application_valide_remplace_les_profils_et_garde_les_autres_cles(self):
+        ok, msg, changes, new = self.apply({"ancien": {"description": "avant", "servers": ["web"]}, "neuf": {"servers": ["loc"]}})
+        self.assertTrue(ok, msg)
+        self.assertEqual(changes, ["neuf"])
+        self.assertEqual(sorted(self.config["access"]["profiles"]), ["ancien", "neuf"])
+        self.assertEqual((self.config["access"]["enabled"], self.config["access"]["port"], self.config["access"]["private_servers"]),
+                         (True, 7861, ["memoire"]))
+
+    def test_aucune_modification_en_cas_d_erreur(self):
+        import copy
+        avant = copy.deepcopy(self.config)
+        for data in ("{pas du json", "[1]", '"texte"', {"a": {"servers": ["memoire"]}}, {"a": {"servers": ["fantome"]}}, {"../x": {}}):
+            ok, msg, changes, new = self.apply(data)
+            self.assertFalse(ok, data)
+            self.assertTrue(msg)
+            self.assertEqual((changes, new), ([], None))
+            self.assertEqual(self.config, avant, data)
+
+    def test_une_seule_affectation_l_ancien_ensemble_n_est_jamais_modifie_en_place(self):
+        ancien = self.config["access"]["profiles"]
+        self.apply({"neuf": {}})
+        self.assertEqual(list(ancien), ["ancien"])                  # un lecteur qui tenait l'ancien dict ne voit pas un état intermédiaire
+        self.assertEqual(list(self.config["access"]["profiles"]), ["neuf"])
+
+    def test_texte_vide_supprime_tous_les_profils(self):
+        ok, msg, changes, new = self.apply("  ")
+        self.assertTrue(ok)
+        self.assertEqual((self.config["access"]["profiles"], changes), ({}, ["ancien"]))
+
+    def test_profils_modifies_retires_et_ajoutes(self):
+        self.assertEqual(profile.changed_profiles({"a": {"x": 1}, "b": 1, "c": 1}, {"a": {"x": 2}, "c": 1, "d": 1}), ["a", "b", "d"])
+        self.assertEqual(profile.changed_profiles(None, {"a": 1}), ["a"])
+        self.assertEqual(profile.changed_profiles({"a": 1}, {"a": 1}), [])
+
+    def test_sans_section_access(self):
+        cfg = copy_without_access = {"mcp": CONFIG["mcp"], "llm": CONFIG["llm"]}
+        ok, msg, changes, new = profile.apply_profiles(cfg, json.dumps({"a": {"servers": ["web"]}}))
+        self.assertTrue(ok, msg)
+        self.assertEqual(cfg["access"], {"profiles": {"a": {"servers": ["web"]}}})
+
+    def test_serveurs_exposables(self):
+        self.assertEqual(profile.exposable_servers(self.config), ["loc", "web"])             # la mémoire n'y figure pas
 
 
 class MoteurTests(unittest.TestCase):

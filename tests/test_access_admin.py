@@ -36,11 +36,10 @@ class FakeSessions:
 class AdminCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="accadm_"))
-        (self.tmp / "profils").mkdir()
-        (self.tmp / "profils" / "portail.json").write_text(json.dumps({"description": "Portail", "mcp": {"servers": {
-            "web": {"url": "http://x/mcp", "headers": {"Authorization": "Bearer <Jeton>"}}}}}), "utf-8")
+        self.config = {"mcp": {"params": {"servers": {"web": {"url": "http://x/mcp", "headers": {"Authorization": "Bearer <Jeton>"}}}}},
+                       "access": {"profiles": {"portail": {"description": "Portail", "servers": ["web"]}}}}
         self.store = keys.KeyStore(self.tmp / "data")
-        self.profiles = profile.Profiles(self.tmp / "profils")
+        self.profiles = profile.ConfigProfiles(lambda: self.config)
         self.sessions = FakeSessions()
         self.audit = []
         self.port = free_port()
@@ -181,9 +180,22 @@ class ProfilsTests(AdminCase):
         self.assertNotIn("Bearer", json.dumps(p))
 
     def test_profil_invalide_signale_sans_planter(self):
-        (self.tmp / "profils" / "casse.json").write_text("pas json", "utf-8")
+        self.config["access"]["profiles"]["casse"] = {"servers": ["fantome"]}
         p = {x["name"]: x for x in self.call("GET", "/api/profils")[1]}
         self.assertIn("erreur", p["casse"])
+        self.assertNotIn("erreur", p["portail"])
+
+    def test_les_profils_modifies_dans_les_parametres_apparaissent_sans_redemarrage(self):
+        self.config["access"]["profiles"]["nouveau"] = {"description": "Ajouté", "servers": []}
+        self.assertEqual([x["name"] for x in self.call("GET", "/api/profils")[1]], ["nouveau", "portail"])
+        kid = self.create(profile="nouveau")["key"]["id"]                       # et une clé peut le choisir tout de suite
+        self.assertEqual(self.store.get(kid)["profile"], "nouveau")
+        del self.config["access"]["profiles"]["nouveau"]
+        self.assertEqual(self.create(profile="nouveau")["erreur"], "profil inconnu")
+
+    def test_la_page_ne_parle_plus_de_fichiers_de_profil(self):
+        self.assertNotIn("configs/mcp", admin_ui.PAGE)
+        self.assertIn("Paramètres", admin_ui.PAGE)
 
     def test_sessions(self):
         self.assertEqual(self.call("GET", "/api/sessions")[1][0]["key"], "k_1")
