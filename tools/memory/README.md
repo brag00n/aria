@@ -23,6 +23,36 @@ déjà présent dans l'image. Les données sont **100 % locales**, en JSONL lisi
 - Les **relations** (`t="relation"`, champ `rel` : `a`, `l`, `b`, `ia`, `ib`) sont partagées et ne décroissent jamais (tag `core`).
 - Rattacher un ancien souvenir, fusionner deux personnes, créer ou renommer : **page de gestion**, onglets Souvenirs, Personnes et Relations.
 
+## Accès tiers : des personnes de type système
+
+Il n'y a **qu'un seul serveur de mémoire** : c'est lui qui garantit l'intégrité et la confidentialité. Une application ou un appareil tiers (un robot) y est une
+**personne de type système** (`type: "systeme"`, `cle` = identifiant interne de son accès, voir `docs/access.md`). Absence de `type` = humain : les fichiers existants
+se lisent sans migration. L'identité suit la **clé interne** : renommer l'accès ou régénérer sa clé API ne fait pas perdre sa mémoire.
+
+| | Système (accès tiers) | Humain (Aria, page de gestion) |
+|---|---|---|
+| Personnes et relations (graphe, parenté) | **toutes**, en lecture | toutes |
+| Souvenirs | **les siens** + le partagé de type `foyer` ; jamais les souvenirs privés d'un humain ni les anciens souvenirs partagés | les siens + le partagé |
+| Ce qu'il écrit | toujours **privé** (propriétaire = lui), même de type `foyer` ou `relation` | comme avant |
+| Liens (`relier`) | seulement entre **lui** (« moi ») et une personne déjà connue : il ne crée ni lien entre deux humains ni nouvelle personne | tous |
+| Oublier | ses souvenirs seulement | les siens et le partagé |
+| Changer d'identité (`identifier_interlocuteur`, `ui_*`) | **impossible**, refusé par le serveur | oui |
+| Débit d'écriture | borné **par principal** (un tiers bavard ne bloque pas Aria) | idem |
+
+- Les systèmes n'apparaissent pas dans la liste déroulante d'Aria (ce ne sont pas des interlocuteurs) ; la page de gestion les montre avec le badge « ⚙ système » et
+  les souvenirs de chacun, et refuse de fusionner un système avec une personne.
+- **Le serveur impose l'identité**, jamais le client : retirer un outil du schéma du LLM n'est qu'un confort.
+
+### Deux façades, un seul processus
+
+`server.py` sert **Aria en stdio** (comportement inchangé : l'interlocuteur actif, choisi dans la liste déroulante) et, si `MEMORY_HTTP_PORT` est défini, un **canal
+HTTP** (`http_facade.py`) pour les accès tiers. Les deux appellent le même cœur (`service.py`), donc le même `Store`, le même verrou et le même écrivain.
+
+Le canal HTTP : écoute sur **127.0.0.1 seulement** ; chaque requête doit porter `Authorization: Bearer <secret>` (comparé à temps constant) — `MEMORY_HTTP_SECRET`, d'au moins
+16 caractères, généré par Aria à chaque démarrage et transmis par l'environnement du processus (jamais écrit sur disque) ; **sans secret valide, le canal ne s'ouvre pas**.
+L'identité vient de `X-Memory-Principal` (clé interne de l'accès) et `X-Memory-Name` (nom, encodé en pourcentage). Seuls `memoriser`, `rechercher_souvenir`, `oublier` et
+`relier` sont servis.
+
 ## Importance (calculée par le serveur, pas par le LLM)
 
 - Note de départ selon le type : préférence 6, fait 5, tâche 4, éphémère 2.
@@ -79,6 +109,8 @@ Autres variables : `MEMORY_UI_TOKEN` (jeton, à passer en `?token=`), `MEMORY_UI
 | `MEMORY_DIR` | `<repo>/models/memory` | dossier des données |
 | `MEMORY_NAMESPACE` | `default` | sous-dossier (un espace de noms par utilisateur, plus tard) |
 | `MEMORY_UI_PORT` | absent | port de la page de gestion |
+| `MEMORY_HTTP_PORT` | absent | port du canal HTTP des accès tiers (127.0.0.1 seulement ; absent = pas de canal) |
+| `MEMORY_HTTP_SECRET` | absent | secret exigé par ce canal (≥ 16 caractères) ; sans lui, le canal n'est pas ouvert. Fourni par Aria, à ne pas écrire dans la config |
 | `MEMORY_LOG_TEXT` | `1` | `0` : le journal d'activité garde une empreinte à la place du texte des requêtes |
 | `MEMORY_LOG_LEVEL` | `info` | `debug` ajoute les scores de recherche |
 
@@ -93,6 +125,8 @@ souvenirs, seulement leurs identifiants, mais il contient les **requêtes de rec
 python -m unittest discover -s tools/memory/tests         # tests unitaires, page, analyse
 MEMORY_BENCH=1 python -m unittest discover -s tools/memory/tests   # + benchmark 10 000 souvenirs
 python -m unittest tools.memory.tests.test_e2e_stdio      # bout en bout par le protocole MCP (nécessite le paquet mcp : dans le conteneur)
+python -m unittest tools.memory.tests.test_http_facade    # canal HTTP des accès tiers : secret, identité imposée, outils servis (conteneur)
+python -m unittest tools.memory.tests.test_principaux     # personnes système : isolation des souvenirs, graphe commun, usurpation
 ```
 
 ## Supprimer la fonctionnalité

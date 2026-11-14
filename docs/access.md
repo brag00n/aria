@@ -47,6 +47,8 @@ Un profil décide de ce qu'une clé peut utiliser. Les profils sont dans `config
 | `voice` | `false` : les clés de ce profil n'ont pas la voix |
 | `description` | texte affiché dans l'administration |
 
+- **Accès à la clé.** « 🔄 Régénérer » (page d'administration) donne une nouvelle clé API au **même accès** : l'identifiant interne, les réglages, les domaines et la
+  mémoire sont conservés, l'ancienne clé cesse de fonctionner immédiatement et ses conversations ouvertes sont fermées. À utiliser en cas de fuite de la clé.
 - **Serveurs privés.** Les serveurs de `access.private_servers` (aucun par défaut) ne peuvent jamais figurer dans un profil : la sauvegarde est refusée.
   À utiliser pour fermer un serveur sensible (par exemple la domotique) à tous les tiers.
 - **Mémoire.** Le serveur `memoire` peut figurer dans un profil, à condition de déclarer son canal HTTP (`MEMORY_HTTP_PORT` dans son `env`, voir plus bas).
@@ -80,7 +82,19 @@ Il n'y a qu'**un seul serveur de mémoire** (`memoire`) : c'est lui qui garantit
 Un tiers du foyer connaît donc les noms de toutes les personnes et leurs liens, mais jamais leurs souvenirs privés. Pour un tiers **hors foyer**, ne pas lui
 donner la mémoire d'Aria : lui fournir un serveur de mémoire dédié (même programme, autre `MEMORY_DIR`, son propre `MEMORY_HTTP_PORT`).
 
-Mise en place : ajouter `MEMORY_HTTP_PORT` (par exemple `7872`) à l'`env` du serveur `memoire`, puis référencer `memoire` dans le profil. Le canal est ouvert
+**Tiers hors foyer.** Déclarer un second serveur de mémoire (même programme, dossier distinct, port HTTP distinct, sans `MEMORY_UI_PORT`) et le lister dans
+`access.hosted_only` : Aria le démarre pour les accès tiers, mais **n'en expose jamais les outils à l'interface** (ils porteraient les mêmes noms que ceux de `memoire`
+et les écraseraient). Les profils de ces tiers le référencent comme n'importe quel serveur. Toutes les conversations d'un même profil partagent **un seul processus**
+et la mémoire de leur accès. Deux serveurs de mémoire sur le même dossier ou le même port sont refusés à la sauvegarde (ils se verrouilleraient).
+
+```json
+"mcp": { "params": { "servers": {
+  "memoire":      { "run": "uv", "args": ["run", "/aria/tools/memory/server.py"], "env": { "MEMORY_DIR": "/aria/models/memory",      "MEMORY_UI_PORT": "7870", "MEMORY_HTTP_PORT": "7872" } },
+  "memoire_acme": { "run": "uv", "args": ["run", "/aria/tools/memory/server.py"], "env": { "MEMORY_DIR": "/aria/models/memoire_acme", "MEMORY_HTTP_PORT": "7873" } } } } },
+"access": { "hosted_only": ["memoire_acme"], "profiles": { "acme": { "servers": ["memoire_acme"] } } }
+```
+
+Mise en place pour le foyer : ajouter `MEMORY_HTTP_PORT` (par exemple `7872`) à l'`env` du serveur `memoire`, puis référencer `memoire` dans le profil. Le canal est ouvert
 par le **même processus** que celui d'Aria, sur `127.0.0.1` seulement, et protégé par un secret **généré à chaque démarrage d'Aria** (jamais écrit dans un
 fichier ni dans `default.json`) ; sans lui, le canal ne s'ouvre pas. Le conteneur n'a pas à publier ce port.
 
