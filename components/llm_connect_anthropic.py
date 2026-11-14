@@ -33,7 +33,8 @@ class LlmConnectAnthropic:
 
         self.mcp_manager = None
         if all_config and "mcp" in all_config:
-            self.mcp_manager = Mcp(all_config["mcp"]["params"], secret_for_servers=all_config.get("_memory_secret", ""))
+            self.mcp_manager = Mcp(all_config["mcp"]["params"], secret_for_servers=all_config.get("_memory_secret", ""),
+                                  hosted_only=((all_config.get("access") or {}).get("hosted_only") or ()))
 
     async def _get_tools(self):
         """Convertit les outils MCP (format OpenAI) au format Anthropic."""

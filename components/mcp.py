@@ -12,8 +12,9 @@ HIDDEN_PREFIX = "ui_"
 
 
 class Mcp:
-    def __init__(self, mcp_params, secret_for_servers=""):
+    def __init__(self, mcp_params, secret_for_servers="", hosted_only=()):
         self.params = mcp_params or {}
+        self.hosted_only = frozenset(hosted_only or ())          # serveurs démarrés pour les accès tiers : leurs outils ne sont PAS ceux de l'interface
         self.secret_for_servers = secret_for_servers          # secret du canal HTTP de la mémoire (processus d'Aria seulement ; vide pour les tiers)
         self.servers_conf = self.params.get("servers", {})
         self.tool_registry = {}  
@@ -56,6 +57,11 @@ class Mcp:
                 await session.initialize()
                 
                 tools_resp = await session.list_tools()
+                if name in self.hosted_only:
+                    # Serveur réservé aux accès tiers (mémoire d'un tiers hors foyer) : il tourne, mais ses outils ne sont jamais enregistrés pour
+                    # l'interface d'Aria, sinon ils écraseraient ceux du serveur « memoire » (mêmes noms d'outils).
+                    utils.log_info("MCP", f"✅ Serveur [{name}] démarré pour les accès tiers (outils non exposés à l'interface).")
+                    continue
                 for tool in tools_resp.tools:
                     self.tool_registry[tool.name] = session
                     if tool.name.startswith(HIDDEN_PREFIX) or tool.name in hidden_tools:

@@ -55,7 +55,7 @@ def parse_settings(config, fields):
     profiles, err = access_profile.parse_profiles(fields.get("profiles", ""))
     if err:
         raise ValueError("❌ " + err[0].upper() + err[1:])
-    errors = access_profile.validate_profiles(profiles, futur)
+    errors = access_profile.validate_profiles(profiles, futur) + access_profile.validate_hosted(futur)
     if errors:
         raise ValueError("❌ Profils d'accès refusés : " + " ; ".join(errors))
     out["profiles"] = profiles

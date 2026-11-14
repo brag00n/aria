@@ -78,6 +78,45 @@ def declared_servers(config):
     return servers if isinstance(servers, dict) else {}
 
 
+def hosted_only(config):
+    """Serveurs démarrés par Aria pour les accès tiers seulement (`access.hosted_only`) : mémoire d'un tiers hors foyer, avec son dossier disjoint."""
+    access = (config or {}).get("access") or {}
+    value = access.get("hosted_only", [])
+    return [x for x in value if isinstance(x, str)] if isinstance(value, list) else []
+
+
+def validate_hosted(config):
+    """Erreurs de `access.hosted_only` : serveurs déclarés, dotés d'un canal HTTP, sur un dossier de données et un port DISTINCTS de ceux des autres
+    serveurs de mémoire (deux processus sur le même dossier se verrouillent mutuellement)."""
+    errors = []
+    declared = declared_servers(config)
+    value = ((config or {}).get("access") or {}).get("hosted_only", [])
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        return ["access.hosted_only doit être une liste de noms de serveurs MCP"]
+    memoires = {n: c for n, c in declared.items() if _is_memory(c)}
+    dossiers, ports = {}, {}
+    for n, c in memoires.items():
+        env = c.get("env") or {}
+        dossiers.setdefault(str(env.get("MEMORY_DIR", "")) + "/" + str(env.get("MEMORY_NAMESPACE", "default")), []).append(n)
+        if _has_http(c):
+            from .memory_link import http_port
+            ports.setdefault(http_port(c), []).append(n)
+    for d, noms in dossiers.items():
+        if d.strip("/") and len(noms) > 1:
+            errors.append(f"les serveurs de mémoire {', '.join(sorted(noms))} partagent le même dossier de données ({d.strip('/')}) : ils se verrouilleraient")
+    for p, noms in ports.items():
+        if len(noms) > 1:
+            errors.append(f"les serveurs de mémoire {', '.join(sorted(noms))} partagent le même port HTTP ({p})")
+    for n in value:
+        if n not in declared:
+            errors.append(f"hosted_only : serveur « {n} » inconnu")
+        elif not _has_http(declared[n]):
+            errors.append(f"hosted_only : le serveur « {n} » n'a pas de canal HTTP (MEMORY_HTTP_PORT)")
+        elif "MEMORY_UI_PORT" in (declared[n].get("env") or {}):
+            errors.append(f"hosted_only : le serveur « {n} » déclare une page de gestion (MEMORY_UI_PORT) : un seul serveur la porte")
+    return errors
+
+
 def exposable_servers(config):
     """Noms des serveurs qu'un profil peut référencer : déclarés, non privés, et — pour la mémoire — dotés d'un canal HTTP (voir validate_profiles)."""
     private, declared = private_servers(config), declared_servers(config)
