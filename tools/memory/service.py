@@ -18,14 +18,14 @@ class Service:
         self.i = interlocuteurs
 
     # ------------------------------------------------------------------ outils du LLM
-    def identifier(self, nom, complement="", surnom="", principal=None):
-        return self.i.identifier(nom, complement, surnom, principal=principal)
+    def identifier(self, nom, complement="", surnom="", principal=None, trace=None):
+        return self.i.identifier(nom, complement, surnom, principal=principal, trace=trace)
 
-    def relier(self, personne_a, lien, personne_b, precision="", principal=None):
-        return self.i.relier(personne_a, lien, personne_b, precision, principal=principal)
+    def relier(self, personne_a, lien, personne_b, precision="", principal=None, trace=None):
+        return self.i.relier(personne_a, lien, personne_b, precision, principal=principal, trace=trace)
 
-    def memoriser(self, fait, type="fait", tags="", principal=None):
-        status, rec = self.store.add(fait, type, tags, src="llm", owner=principal)
+    def memoriser(self, fait, type="fait", tags="", principal=None, trace=None):
+        status, rec = self.store.add(fait, type, tags, src="llm", owner=principal, trace=trace)
         if status == "added":
             return f"OK {rec['id']}"
         if status == "duplicate":
@@ -51,5 +51,5 @@ class Service:
             lines.extend(f"- {r['txt']}" for r in proches)
         return "\n".join(lines)
 
-    def oublier(self, rid, principal=None):
-        return "Oublié." if self.store.delete((rid or "").strip(), why="user", src="llm", owner=principal) else "Souvenir introuvable."
+    def oublier(self, rid, principal=None, trace=None):
+        return "Oublié." if self.store.delete((rid or "").strip(), why="user", src="llm", owner=principal, trace=trace) else "Souvenir introuvable."

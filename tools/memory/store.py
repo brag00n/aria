@@ -23,6 +23,7 @@ from pathlib import Path
 
 import scoring
 import textproc
+import audit_trace as trace_mod
 from activity import NullActivity
 from personnes import Personnes, est_systeme
 
@@ -242,6 +243,7 @@ class Store:
                 "src": str(obj.get("src", "llm")),
                 "o": str(obj.get("o") or ""),                       # propriétaire ; vide = partagé
                 "rel": obj.get("rel") if isinstance(obj.get("rel"), dict) else None,   # relation : {a, l, b, ia, ib}
+                "tr": trace_mod.clean(obj.get("tr")),               # trace d'audit : l'échange d'origine (absente des anciennes données)
             }
         except (KeyError, TypeError, ValueError):
             self.activity.warn("enregistrement invalide ignoré")
@@ -250,7 +252,7 @@ class Store:
     def _record_to_json(self, rec):
         return {"id": rec["id"], "t": rec["t"], "txt": rec["txt"], "imp": rec["imp"], "tags": rec["tags"],
                 "h": rec["h"], "c": iso(rec["c"]), "last": iso(rec["last"]), "hits": rec["hits"],
-                "s": round(rec["s"], 3), "src": rec["src"], "o": rec.get("o", ""), **({"rel": rec["rel"]} if rec.get("rel") else {})}
+                "s": round(rec["s"], 3), "src": rec["src"], "o": rec.get("o", ""), **({"rel": rec["rel"]} if rec.get("rel") else {}), **({"tr": rec["tr"]} if rec.get("tr") else {})}
 
     @staticmethod
     def _hash(text, owner=""):
@@ -402,10 +404,11 @@ class Store:
         return False
 
     # ---------------------------------------------------------------- opérations
-    def add(self, text, mtype="fait", tags="", src="llm", owner=None, rel=None):
+    def add(self, text, mtype="fait", tags="", src="llm", owner=None, rel=None, trace=None):
         """Retourne (statut, enregistrement). statut : 'added' | 'duplicate' | 'locked' | 'rate_limit' | 'empty' | 'unknown_speaker'.
         `owner` : propriétaire explicite (page de gestion) ; sinon l'interlocuteur actif. Types partagés (foyer, relation) : sans
-        propriétaire. Interlocuteur inconnu : rien n'est mémorisé (sauf par la page de gestion, qui désigne un propriétaire)."""
+        propriétaire. Interlocuteur inconnu : rien n'est mémorisé (sauf par la page de gestion, qui désigne un propriétaire).
+        `trace` : échange d'origine (voir trace.py), conservé dans le souvenir ; jamais modifiable ensuite (hors de la liste de `update`)."""
         with self.lock:
             self._check_external_changes()
             if (err := self._writable()):
@@ -439,12 +442,14 @@ class Store:
             if mtype == "relation" and "core" not in tag_list:
                 tag_list.append("core")                 # une relation ne décroît jamais
             rec = {"id": "m_" + secrets.token_hex(3), "t": mtype, "txt": text, "imp": float(scoring.START_IMP[mtype]),
-                   "tags": tag_list, "h": h, "c": now, "last": now, "hits": 0, "s": 1.0, "src": src, "o": who, "rel": rel}
+                   "tags": tag_list, "h": h, "c": now, "last": now, "hits": 0, "s": 1.0, "src": src, "o": who, "rel": rel,
+                   "tr": trace_mod.clean(trace)}
             while rec["id"] in self.records:
                 rec["id"] = "m_" + secrets.token_hex(3)
             self._index_add(rec)
             self._append({"op": "add", "ts": iso(now), "r": self._record_to_json(rec)}, sync=True)
-            self.activity.log("add", id=rec["id"], t=mtype, imp=rec["imp"], dup=False, src=src, n=len(text), o=who)
+            self.activity.log("add", id=rec["id"], t=mtype, imp=rec["imp"], dup=False, src=src, n=len(text), o=who,
+                              **({"ex": rec["tr"]["e"]} if rec["tr"] else {}))
             self._maybe_compact()
             return "added", rec
 
@@ -462,7 +467,7 @@ class Store:
             self.activity.log("update", id=rid, fields=sorted(clean), src=src)
             return True
 
-    def delete(self, rid, why="user", src="llm", force=False, owner=None):
+    def delete(self, rid, why="user", src="llm", force=False, owner=None, trace=None):
         """Oubli : le souvenir quitte l'index mais reste dans l'archive (jamais perdu en silence).
         L'interlocuteur n'oublie que ses souvenirs et le partagé (si identifié) ; un SYSTÈME (`owner`) n'oublie que les siens ;
         `force` : page de gestion, sans restriction."""
@@ -483,7 +488,8 @@ class Store:
             self._archive(rec, why)
             self._index_remove(rec)
             self._append({"op": "del", "ts": iso(self.clock()), "id": rid, "why": why}, sync=True)
-            self.activity.log("delete", id=rid, why=why, src=src)
+            tr = trace_mod.clean(trace)
+            self.activity.log("delete", id=rid, why=why, src=src, **({"ex": tr["e"]} if tr else {}))
             return True
 
     def restore(self, rid, src="ui"):

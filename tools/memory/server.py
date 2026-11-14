@@ -26,9 +26,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))      # modules frères (store, textproc...) : aucun paquet à installer
 
-from mcp.server.fastmcp import FastMCP  # noqa: E402
+from mcp.server.fastmcp import Context, FastMCP  # noqa: E402
 
 import store as store_mod  # noqa: E402
+import audit_trace as trace_mod  # noqa: E402
 from activity import Activity  # noqa: E402
 from interlocuteur import Interlocuteurs  # noqa: E402
 from service import Service  # noqa: E402
@@ -58,15 +59,15 @@ def _line(rec):
 
 
 @mcp.tool(name="identifier_interlocuteur")
-def identifier_interlocuteur(nom: str, complement: str = "", surnom: str = "") -> str:
+def identifier_interlocuteur(nom: str, complement: str = "", surnom: str = "", ctx: Context = None) -> str:
     """Désigne la personne qui parle: nom = son prénom, complement = nom de famille (distingue les homonymes), surnom = comment elle veut être appelée. La crée si inconnue."""
-    return service.identifier(nom, complement, surnom)
+    return service.identifier(nom, complement, surnom, trace=trace_mod.from_context(ctx))
 
 
 @mcp.tool(name="relier")
-def relier(personne_a: str, lien: str, personne_b: str, precision: str = "") -> str:
+def relier(personne_a: str, lien: str, personne_b: str, precision: str = "", ctx: Context = None) -> str:
     """personne_a est le <lien> de personne_b. lien: conjoint, parent, enfant, fratrie, demi, beauparent, beauenfant, ami, collegue, voisin, ou autre + precision. « moi » = l'interlocuteur."""
-    return service.relier(personne_a, lien, personne_b, precision)
+    return service.relier(personne_a, lien, personne_b, precision, trace=trace_mod.from_context(ctx))
 
 
 @mcp.tool(name="ui_etat")
@@ -76,9 +77,9 @@ def ui_etat(activer: str = "?") -> str:
 
 
 @mcp.tool(name="memoriser")
-def memoriser(fait: str, type: str = "fait", tags: str = "") -> str:
+def memoriser(fait: str, type: str = "fait", tags: str = "", ctx: Context = None) -> str:
     """Retient une information durable de l'interlocuteur actuel. type: fait, preference, tache, ephemere, ou foyer (concerne toute la maison). tags: mots séparés par des virgules."""
-    return service.memoriser(fait, type, tags)
+    return service.memoriser(fait, type, tags, trace=trace_mod.from_context(ctx))
 
 
 @mcp.tool(name="rechercher_souvenir")
@@ -88,9 +89,9 @@ def rechercher_souvenir(question: str = "", limite: int = 5) -> str:
 
 
 @mcp.tool(name="oublier")
-def oublier(id: str) -> str:
+def oublier(id: str, ctx: Context = None) -> str:
     """Oublie un souvenir à partir de son identifiant (donné par rechercher_souvenir)."""
-    return service.oublier(id)
+    return service.oublier(id, trace=trace_mod.from_context(ctx))
 
 
 if __name__ == "__main__":

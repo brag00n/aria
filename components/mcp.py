@@ -2,6 +2,7 @@ import asyncio
 import os
 import json
 import components.utils as utils
+from components import echanges
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -121,7 +122,9 @@ class Mcp:
         
         session = self.tool_registry[tool_name]
         try:
-            result = await session.call_tool(tool_name, arguments=arguments)
+            # `_meta` du message MCP : échange courant (journal d'audit). Hors des arguments, donc hors de portée du LLM ; None hors échange.
+            echanges.note_tool(tool_name)
+            result = await session.call_tool(tool_name, arguments=arguments, meta=echanges.current_meta())
             
             # Extraction de la réponse
             response_text = result.content[0].text if result.content else "Aucune réponse"
@@ -147,7 +150,8 @@ class Mcp:
         utils.log_info("MCP", f"🚀 (Sync) APPEL OUTIL : [{tool_name}]")
         session = self.tool_registry[tool_name]
         try:
-            result = self.loop.run_until_complete(session.call_tool(tool_name, arguments))
+            echanges.note_tool(tool_name)
+            result = self.loop.run_until_complete(session.call_tool(tool_name, arguments, meta=echanges.current_meta()))
             res_text = result.content[0].text
             utils.log_info("MCP", f"📥 (Sync) RETOUR OUTIL : [{tool_name}] | {res_text[:100]}...")
             return res_text

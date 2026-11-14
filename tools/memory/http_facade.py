@@ -14,6 +14,8 @@ from urllib.parse import quote, unquote
 
 from mcp.server.fastmcp import Context, FastMCP
 
+import audit_trace as trace_mod
+
 PRINCIPAL_HEADER = "x-memory-principal"
 NAME_HEADER = "x-memory-name"          # nom encodé en pourcentage (UTF-8) : un en-tête HTTP ne porte que de l'ASCII
 
@@ -43,7 +45,7 @@ def make_app(store, service, secret):
         if not cle or not nom:
             raise Refus("identité de l'accès absente")
         with store.lock:
-            person = store.personnes.ensure_system(cle, nom)
+            person = store.personnes.ensure_system(cle, nom, trace=trace_mod.from_context(ctx))
         if person is None:
             raise Refus("identité de l'accès invalide")
         return person["id"]
@@ -51,30 +53,31 @@ def make_app(store, service, secret):
     @mcp.tool(name="memoriser")
     def memoriser(fait: str, type: str = "fait", tags: str = "", ctx: Context = None) -> str:
         """Retient une information durable. type: fait, preference, tache, ephemere, ou foyer. tags: mots séparés par des virgules. Ce que tu retiens t'appartient."""
-        return _run(ctx, lambda p: service.memoriser(fait, type, tags, principal=p))
+        return _run(ctx, lambda p, tr: service.memoriser(fait, type, tags, principal=p, trace=tr))
 
     @mcp.tool(name="rechercher_souvenir")
     def rechercher_souvenir(question: str = "", limite: int = 5, ctx: Context = None) -> str:
         """Cherche tes souvenirs et ce que l'on sait des personnes du foyer et de leurs liens. À appeler avant de répondre sur ce que tu as appris."""
-        return _run(ctx, lambda p: service.rechercher(question, limite, principal=p))
+        return _run(ctx, lambda p, tr: service.rechercher(question, limite, principal=p))
 
     @mcp.tool(name="oublier")
     def oublier(id: str, ctx: Context = None) -> str:
         """Oublie un de tes souvenirs à partir de son identifiant (donné par rechercher_souvenir)."""
-        return _run(ctx, lambda p: service.oublier(id, principal=p))
+        return _run(ctx, lambda p, tr: service.oublier(id, principal=p, trace=tr))
 
     @mcp.tool(name="relier")
     def relier(personne_a: str, lien: str, personne_b: str, precision: str = "", ctx: Context = None) -> str:
         """personne_a est le <lien> de personne_b. lien: conjoint, parent, enfant, fratrie, demi, beauparent, beauenfant, ami, collegue, voisin, ou autre + precision. L'une des deux personnes doit être « moi »."""
-        return _run(ctx, lambda p: service.relier(personne_a, lien, personne_b, precision, principal=p))
+        return _run(ctx, lambda p, tr: service.relier(personne_a, lien, personne_b, precision, principal=p, trace=tr))
 
     def _run(ctx, action):
         try:
             pid = principal(ctx)
         except Refus as e:
             return f"Refusé : {e}."
+        tr = trace_mod.from_context(ctx)           # échange d'origine, lu dans `_meta` (jamais dans les arguments du LLM)
         with store.lock:
-            return action(pid)
+            return action(pid, tr)
 
     inner = mcp.streamable_http_app()
     expected = f"Bearer {secret}".encode("utf-8")

@@ -81,7 +81,7 @@ class Interlocuteurs:
         return {"liste": self.store.personnes.listing(), "actif": self.store.active, "contexte": self.contexte()}
 
     # ------------------------------------------------------------------ outils du LLM
-    def identifier(self, nom, complement="", surnom="", principal=None):
+    def identifier(self, nom, complement="", surnom="", principal=None, trace=None):
         """Outil identifier_interlocuteur : active la personne qui parle, la crée si besoin, signale les homonymes. Un principal SYSTÈME
         (accès tiers) est identifié par l'infrastructure : le serveur refuse ici tout changement d'identité, quoi que dise le LLM."""
         if self.store.is_system(principal):
@@ -89,7 +89,7 @@ class Interlocuteurs:
         completed = self._completer_actif(nom, complement, surnom)
         if completed:
             return completed
-        status, person, candidates = self.store.personnes.resolve(nom, complement, surnom)
+        status, person, candidates = self.store.personnes.resolve(nom, complement, surnom, trace=trace)
         if status == "empty":
             return "Je n'ai pas compris le nom. Demande-lui son prénom."
         if status == "ambiguous":
@@ -103,7 +103,7 @@ class Interlocuteurs:
             return f"OK, {label} créé et actif. " + APRES_CREATION.format(nom=person["nom"])
         return f"OK, {label} est maintenant actif." + (" (Changement d'interlocuteur.)" if previous and previous != person["id"] else "")
 
-    def relier(self, personne_a, lien, personne_b, precision="", principal=None):
+    def relier(self, personne_a, lien, personne_b, precision="", principal=None, trace=None):
         """Outil relier : mémorise « personne_a est le <lien> de personne_b » (« moi » = l'interlocuteur actif). `lien` appartient à une liste
         fermée (liens.TYPES) ; `autre` + `precision` couvre le reste. Un lien hors liste est refusé avec la liste, pour que le LLM corrige."""
         a, b = self._designation(personne_a, principal), self._designation(personne_b, principal)
@@ -122,7 +122,7 @@ class Interlocuteurs:
                 return "Tu ne peux relier que toi-même à une personne : l'un des deux doit être « moi »."
             if not self._designation_connue(a if key(b) == key(moi["nom"]) else b):
                 return "Cette personne n'est pas connue du foyer : tu ne peux pas la créer."
-        fa, fb = self._fiches(a, lien, b)
+        fa, fb = self._fiches(a, lien, b, trace=trace)
         ia, ib = (fa or {}).get("id") or self._id_of(a), (fb or {}).get("id") or self._id_of(b)
         info = liens.analyser(a, lien, b, t)
         # Le même lien redit dans l'autre sens (« A frère de B » puis « B sœur de A ») n'est enregistré qu'une fois
@@ -131,7 +131,7 @@ class Interlocuteurs:
                 return f"Déjà connu : {rec['txt']}."
         text = f"{a} est {liens.article(lien)} {b}"
         rel = {"a": a, "l": lien, "b": b, "t": t, "ia": ia, "ib": ib, "cle": info["cle"], "inv": info["inv"]}
-        status, rec = self.store.add(text, "relation", "", src="llm", rel=rel, owner=principal)
+        status, rec = self.store.add(text, "relation", "", src="llm", rel=rel, owner=principal, trace=trace)
         if status == "added":
             inverse = f" (donc {b} est {info['invp']} {a})" if info["invp"] else ""
             return f"OK {rec['id']} : {text}{inverse}."
@@ -200,11 +200,11 @@ class Interlocuteurs:
             return f"OK, fiche complétée : {self.store.personnes.full(person)} (toujours actif). Ne crée pas de nouvelle personne."
         return f"OK, {self.store.personnes.full(person)} est toujours actif."
 
-    def _fiches(self, a, lien, b, principal=None):
+    def _fiches(self, a, lien, b, principal=None, trace=None):
         """Crée (ou complète) la fiche des deux personnes d'un lien, pour que le moteur de parenté connaisse leur sexe.
         « Tiphaine est la mère de Emma » => Tiphaine est une femme. Celui qui parle (« moi ») garde sa fiche, jamais écrasée."""
         sexe_a = liens.sexe_du_lien(lien)
-        return self.store.personnes.reference(a, sexe=sexe_a), self.store.personnes.reference(b)
+        return self.store.personnes.reference(a, sexe=sexe_a, trace=trace), self.store.personnes.reference(b, trace=trace)
 
     def _designation(self, value, principal=None):
         value = " ".join(str(value or "").split())[:60]
