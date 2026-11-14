@@ -56,11 +56,15 @@ class SessionRegistry:
     def sid_of(key_id, client_session):
         return f"{key_id}:{client_session}"
 
+    @staticmethod
+    def clean_client(client_session):
+        """Identifiant de session fourni par le client : lettres, chiffres, - et _ seulement, 40 caractères au plus."""
+        return "".join(c for c in str(client_session or "default") if c.isalnum() or c in "-_")[:40] or "default"
+
     async def get(self, key_rec, client_session, app_prompt=""):
         """Session de (clé, session client), créée à la demande. `app_prompt` (prompt système de l'application, déjà nettoyé) n'est pris en
         compte QU'À LA CRÉATION : une session existante garde le sien. Lève SessionError (code HTTP dans `.code`)."""
-        client_session = "".join(c for c in str(client_session or "default") if c.isalnum() or c in "-_")[:40] or "default"
-        sid = self.sid_of(key_rec["id"], client_session)
+        sid = self.sid_of(key_rec["id"], self.clean_client(client_session))
         self._loop = asyncio.get_running_loop()          # pour request_close_key, appelée depuis un autre thread
         async with self._guard():
             s = self.sessions.get(sid)
@@ -132,6 +136,14 @@ class SessionRegistry:
                 await asyncio.wait_for(s.task, timeout=10)
             except (asyncio.TimeoutError, Exception):
                 s.task.cancel()
+
+    async def close_client(self, key_rec, client_session):
+        """Ferme la session `client_session` de CETTE clé (jamais celle d'une autre : l'identifiant contient l'identifiant de la clé).
+        Ne crée rien. Retourne True si elle existait."""
+        sid = self.sid_of(key_rec["id"], self.clean_client(client_session))
+        existed = sid in self.sessions
+        await self.close(sid)
+        return existed
 
     async def close_key(self, key_id):
         """Ferme toutes les sessions d'une clé (révocation ou changement de profil)."""

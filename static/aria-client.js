@@ -16,6 +16,7 @@
  *   aria.on("level", ({source, value}) => …)   niveau sonore 0..1 de "mic" (votre voix) ou "voice" (celle d'Aria), une mesure toutes les 50 ms
  *   aria.analyser("voice" | "mic")             AnalyserNode Web Audio pour un spectre ou une forme d'onde personnalisés
  *   aria.bindState(element)                    écrit data-aria-state et la variable CSS --aria-level sur l'élément : habillage en CSS pur
+ *   aria.newSession({systemPrompt})            nouvelle conversation avec de NOUVELLES consignes (reset() garde les consignes)
  * Options : baseUrl, apiKey, voice (true), speak (true : lire la réponse), session ("default"), vad {positive, negative, redemption, minFrames},
  *           systemPrompt (consignes de l'application, fixées à la création de la session ; elles complètent celles de la clé, 4000 caractères au plus),
  *           modelUrl (modèle Silero, par défaut servi par Aria), cdn {ort, vad} (adresses des bibliothèques du VAD),
@@ -322,6 +323,19 @@
 
     function reset() { return postJson('/v1/reset'); }
 
+    // Nouvelle conversation avec, au choix, de nouvelles consignes d'application : les consignes d'une session sont fixées à sa création,
+    // donc on ferme l'ancienne session côté serveur (elle libère sa place) puis on en ouvre une autre au prochain tour.
+    async function newSession(opts) {
+      opts = opts || {};
+      if (opts.systemPrompt != null && typeof opts.systemPrompt !== 'string') throw new Error('AriaClient : systemPrompt doit être un texte');
+      interrupt();
+      try { await postJson('/v1/close'); } catch (e) { /* meilleur effort : le serveur la fermera à l'expiration */ }
+      o.session = opts.session ? String(opts.session) : 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      if (opts.systemPrompt != null) systemPrompt = opts.systemPrompt.trim();
+      seen = {};
+      return o.session;
+    }
+
     function mute(value) {
       muted = value !== false;
       if (muted) stopPlayback();
@@ -396,10 +410,11 @@
 
     var api = {
       on: on, off: off, start: start, stop: stop, say: say, interrupt: interrupt, reset: reset, mute: mute, destroy: destroy,
-      analyser: analyser, bindState: bindState,
+      analyser: analyser, bindState: bindState, newSession: newSession,
       get state() { return state; },
       get listening() { return listening; },
-      get muted() { return muted; }
+      get muted() { return muted; },
+      get session() { return o.session; }
     };
     return api;
   }

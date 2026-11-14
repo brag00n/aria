@@ -59,7 +59,7 @@
     <button id="stop" disabled>⏹ Arrêter Aria</button>
     <button id="mute" disabled>🔊 Son actif</button>
     <button id="reset" disabled>🧹 Nouvelle conversation</button>
-    <label for="consignes">Consignes de l'application (prompt système, fixé à la création de la session)</label>
+    <label for="consignes">Consignes de l'application (prompt système : prises en compte à la connexion et à chaque « Nouvelle conversation »)</label>
     <input id="consignes" value="Tu es l'assistante d'un site de démonstration. Réponds en une ou deux phrases courtes.">
     <label for="texte">Saisie texte</label>
     <input id="texte" placeholder="Écrire à Aria puis Entrée" disabled>
@@ -153,7 +153,13 @@
     aria.mute(coupe);
     $('mute').textContent = coupe ? '🔇 Son coupé' : '🔊 Son actif';
   };
-  $('reset').onclick = async () => { await aria.reset(); $('log').replaceChildren(); ligne('mut', 'Nouvelle conversation.'); };
+  // Les consignes d'une session sont fixées à sa création : une nouvelle conversation ouvre une NOUVELLE session avec le texte actuel du champ.
+  // (aria.reset() effacerait seulement l'historique et garderait les anciennes consignes.)
+  $('reset').onclick = async () => {
+    const id = await aria.newSession({ systemPrompt: $('consignes').value });
+    $('log').replaceChildren();
+    ligne('mut', 'Nouvelle conversation (session ' + id + ') avec les consignes : « ' + ($('consignes').value.trim() || 'aucune') + ' »');
+  };
   $('texte').onkeydown = e => {
     if (e.key !== 'Enter' || !$('texte').value.trim()) return;
     const t = $('texte').value; $('texte').value = '';

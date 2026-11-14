@@ -98,10 +98,13 @@ class ApiCase(unittest.TestCase):
         self.audit = []
         self.deps = api.Deps(keys=self.keys, sessions=self.sessions, stt=self.stt, tts=self.tts, decode_audio=_decode,
                              on_audit=lambda ev, **kw: self.audit.append((ev, kw)))
+        # `with` : une seule boucle d'événements pour tous les appels, comme sous uvicorn (les tâches des sessions y survivent d'une requête à l'autre)
         self.client = TestClient(api.create_app(self.deps))
+        self.client.__enter__()
         self.view, self.key = self.keys.create("Portail", [ORIGIN], profile="portail", limits={"rate_per_min": 100, "daily_turns": 100})
 
     def tearDown(self):
+        self.client.__exit__(None, None, None)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def hdr(self, key=None, origin=ORIGIN):
@@ -361,6 +364,14 @@ class PromptSystemTests(ApiCase):
         self.turn({"text": "x", "session": "s2", "system": "B"})
         self.assertEqual(sorted(e.app_prompt for e in self.engines), ["A", "B"])
 
+    def test_reset_garde_les_consignes_de_la_session(self):
+        self.turn({"text": "un", "session": "s1", "system": "Consignes A"})
+        self.client.post("/v1/reset", json={"session": "s1"}, headers=self.hdr())
+        ev = self.events(self.turn({"text": "deux", "session": "s1", "system": "Consignes B"}))
+        self.assertEqual(self.engines[0].app_prompt, "Consignes A")                   # inchangées : seule l'historique est effacé
+        self.assertEqual(len(self.engines), 1)
+        self.assertIn("warning", [n for n, _ in ev])
+
     def test_prompt_invalide(self):
         r = self.turn({"text": "x", "system": 12})
         self.assertEqual((r.status_code, r.json()["error"]["code"]), (400, "bad_request"))
@@ -386,6 +397,62 @@ class PromptSystemTests(ApiCase):
     def test_json_null_equivaut_a_aucun(self):
         r = self.turn({"text": "x", "system": None})
         self.assertEqual(r.status_code, 200)
+
+
+class FermetureTests(ApiCase):
+    def test_close_ferme_la_session_et_libere_sa_place(self):
+        self.turn({"text": "x", "session": "s1"})
+        self.assertEqual(len(self.sessions.sessions), 1)
+        r = self.client.post("/v1/close", json={"session": "s1"}, headers=self.hdr())
+        self.assertEqual((r.status_code, r.json()), (200, {"ok": True, "closed": True}))
+        self.assertEqual(self.sessions.sessions, {})
+
+    def test_close_d_une_session_inconnue_ne_cree_rien(self):
+        r = self.client.post("/v1/close", json={"session": "nexistepas"}, headers=self.hdr())
+        self.assertEqual((r.status_code, r.json()["closed"]), (200, False))
+        self.assertEqual(self.sessions.sessions, {})
+        self.assertEqual(self.engines, [])
+
+    def test_close_ne_touche_pas_les_sessions_d_une_autre_cle(self):
+        v2, k2 = self.keys.create("Autre appli", [ORIGIN], profile="autre")
+        self.turn({"text": "x", "session": "s1"})
+        self.turn({"text": "x", "session": "s1"}, headers=self.hdr(k2))
+        self.assertEqual(len(self.sessions.sessions), 2)
+        self.client.post("/v1/close", json={"session": "s1"}, headers=self.hdr())
+        self.assertEqual(len(self.sessions.sessions), 1)
+        self.assertTrue(next(iter(self.sessions.sessions)).startswith(v2["id"]))
+
+    def test_close_cible_la_session_de_la_cle_meme_si_une_autre_cle_ouverte_avant_porte_le_meme_nom(self):
+        # la clé B ouvre « s1 » EN PREMIER : une fermeture « par nom seul » fermerait la sienne au lieu de celle de la clé A
+        v2, k2 = self.keys.create("Autre appli", [ORIGIN], profile="autre")
+        self.turn({"text": "b", "session": "s1"}, headers=self.hdr(k2))
+        self.turn({"text": "a", "session": "s1"})
+        self.assertEqual(len(self.sessions.sessions), 2)
+        r = self.client.post("/v1/close", json={"session": "s1"}, headers=self.hdr())
+        self.assertTrue(r.json()["closed"])
+        restant = list(self.sessions.sessions)
+        self.assertEqual(len(restant), 1)
+        self.assertTrue(restant[0].startswith(v2["id"]), restant)                      # celle de la clé B est intacte
+        self.assertEqual(self.client.post("/v1/close", json={"session": "s1"}, headers=self.hdr()).json()["closed"], False)
+        self.assertEqual(len(self.sessions.sessions), 1)
+
+    def test_close_exige_une_cle_valide(self):
+        self.turn({"text": "x", "session": "s1"})
+        r = self.client.post("/v1/close", json={"session": "s1"}, headers=self.hdr("ak_" + "z" * 43))
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(len(self.sessions.sessions), 1)
+
+    def test_nouvelle_session_apres_fermeture_prend_les_nouvelles_consignes(self):
+        self.turn({"text": "un", "session": "s1", "system": "Ancien"})
+        self.client.post("/v1/close", json={"session": "s1"}, headers=self.hdr())
+        ev = self.events(self.turn({"text": "deux", "session": "s1", "system": "Nouveau"}))
+        self.assertEqual([e.app_prompt for e in self.engines], ["Ancien", "Nouveau"])
+        self.assertNotIn("warning", [n for n, _ in ev])                              # c'est une création : pas d'avertissement
+        self.assertEqual(list(self.engines[1].user_aware_messages.values()), [["deux"]])      # historique neuf
+
+    def test_close_corps_invalide(self):
+        r = self.client.post("/v1/close", content=b"{x", headers={**self.hdr(), "Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 400)
 
 
 class ComposeSystemTests(unittest.TestCase):

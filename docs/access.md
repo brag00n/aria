@@ -1,5 +1,8 @@
 # Accès à Aria pour des applications tierces
 
+> **Ce document s'adresse à l'administrateur d'Aria** (configuration, clés, profils, sécurité). Le guide destiné aux développeurs des
+> applications tierces, sans détail d'installation, est `docs/integration.md` : c'est celui à leur remettre avec leur clé.
+
 Une page web tierce peut utiliser Aria (écoute du micro, saisie texte, réponse en texte et en voix) avec une **clé API**. Chaque clé est associée à
 un **profil** : ses propres serveurs MCP (outils), son message système et son LLM. Les outils et la mémoire d'Aria ne sont jamais exposés.
 
@@ -67,13 +70,14 @@ jamais en `innerHTML` : le texte vient d'un modèle de langage.
 | `stop()` | arrête l'écoute ; une réponse en cours continue |
 | `say(texte)` | envoie une saisie texte |
 | `interrupt()` | coupe la réponse en cours (lecture et génération) |
-| `reset()` | efface l'historique de la session |
+| `reset()` | efface l'historique de la session ; ses consignes (`systemPrompt`) sont conservées |
+| `await newSession({systemPrompt, session})` | nouvelle conversation : ferme la session actuelle et en ouvre une autre au prochain tour, avec de **nouvelles consignes** si `systemPrompt` est fourni (sinon les mêmes) ; `session` impose un identifiant, sinon il est généré. Renvoie l'identifiant |
 | `mute(true)` / `mute(false)` | coupe ou rétablit la voix d'Aria (le texte continue) |
 | `destroy()` | libère le micro, la lecture et l'analyse ; le client est inutilisable ensuite |
 | `on(nom, fn)`, `off(nom, fn)` | abonnement aux événements |
 | `analyser("voice")` ou `analyser("mic")` | `AnalyserNode` Web Audio (voir plus bas) |
 | `bindState(élément)` | habillage en CSS pur (voir plus bas) ; renvoie la fonction qui le retire |
-| `state`, `listening`, `muted` | état courant (lecture seule) |
+| `state`, `listening`, `muted`, `session` | état courant et identifiant de session (lecture seule) |
 
 ### Événements
 
@@ -108,8 +112,9 @@ const aria = AriaClient.create({
   suivi des consignes de l'application sous le titre « Consignes de l'application ». Un prompt qui demande d'ignorer les règles précédentes n'enlève rien : les
   règles du profil restent en tête. Les outils disponibles sont toujours ceux du profil.
 - **Il est fixé à la création de la session.** Le client l'envoie à chaque tour, mais le serveur ne le retient qu'au premier tour de la session `(clé, session)`.
-  Un prompt différent envoyé ensuite est ignoré et l'événement `warning` (`code: "system_ignored"`) l'indique. Pour changer de consignes, utiliser une autre
-  valeur de `session` (nouvel historique) ; `reset()` efface l'historique mais garde les consignes.
+  Un prompt différent envoyé ensuite est ignoré et l'événement `warning` (`code: "system_ignored"`) l'indique. Pour changer de consignes, appeler
+  `await aria.newSession({ systemPrompt: "nouvelles consignes" })` : l'ancienne session est fermée (elle libère sa place) et la suivante démarre avec un
+  historique vide. `reset()`, lui, efface l'historique mais **garde** les consignes.
 - **Limites :** 4000 caractères au plus (`413`, code `too_large`, sans consommer de quota), un texte seulement (`400` sinon), caractères de contrôle retirés,
   retours à la ligne conservés. Un prompt vide équivaut à aucun prompt.
 - **En appel direct :** champ `system` du corps de `POST /v1/turn` (voir la section API).
@@ -171,6 +176,7 @@ Un exemple complet (halo CSS, forme d'onde, boutons) est dans `docs/access-demo.
 | `POST /v1/turn` | `{"text": "…"}` ou `{"audio": "data:audio/wav;base64,…", "session": "…", "speak": true, "system": "consignes de l'application"}` ; réponse `text/event-stream` |
 | `POST /v1/stop` | coupe la réponse en cours de la session |
 | `POST /v1/reset` | efface l'historique de la session |
+| `POST /v1/close` | ferme la session `{"session": "…"}` de la clé (jamais celle d'une autre clé) et libère sa place ; sans effet si elle n'existe pas |
 | `GET /v1/health` | vérifie la clé |
 | `GET /aria-client.js`, `GET /assets/silero_vad.onnx` | fichiers publics du client |
 

@@ -203,6 +203,16 @@ def create_app(deps):
         deps.sessions.reset(session)
         return JSONResponse({"ok": True}, headers=cors)
 
+    async def close_session(request):
+        rec, cors, err = await authenticate(request)
+        if err:
+            return err
+        body, err = await read_json(request, cors)
+        if err:
+            return err
+        closed = await deps.sessions.close_client(rec, body.get("session"))
+        return JSONResponse({"ok": True, "closed": closed}, headers=cors)
+
     async def asset(request):
         """Fichiers publics du client : le script et ses ressources (liste fermée, jamais de chemin libre). Sans clé : ce sont des fichiers
         publics, utiles avant même d'avoir une clé ; le CORS est ouvert en lecture seule pour que `<script src>` et le chargement du
@@ -222,7 +232,7 @@ def create_app(deps):
         return Response(data, media_type=entry[1], headers=headers)
 
     routes = [Route("/aria-client.js", asset, methods=["GET"]), Route("/assets/{name}", asset, methods=["GET"])]
-    for path, handler in (("/v1/health", health), ("/v1/turn", turn), ("/v1/stop", stop), ("/v1/reset", reset)):
+    for path, handler in (("/v1/health", health), ("/v1/turn", turn), ("/v1/stop", stop), ("/v1/reset", reset), ("/v1/close", close_session)):
         routes.append(Route(path, handler, methods=["GET"] if path.endswith("health") else ["POST"]))
         routes.append(Route(path, preflight, methods=["OPTIONS"]))
     app = Starlette(routes=routes)

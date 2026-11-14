@@ -253,6 +253,76 @@ test('erreur 413 sur le prompt : relayée, le client reste utilisable', async ()
   assert.strictEqual(c.state, 'idle');
 });
 
+// ---------------------------------------------------------------- nouvelle conversation avec de nouvelles consignes
+const okTurn = () => ({ ok: true, status: 200, body: streamOf(sse([['done', {}]])) });
+const okJson = { ok: true, status: 200, json: async () => ({ ok: true }) };
+
+test('newSession : ferme l’ancienne session, change d’identifiant, et le tour suivant porte les nouvelles consignes', async () => {
+  const { c, log } = client({ '/v1/turn': okTurn, '/v1/close': okJson }, { session: 'ancienne', systemPrompt: 'Ancien' });
+  await c.say('un');
+  const id = await c.newSession({ systemPrompt: '  Nouveau  ' });
+  await c.say('deux');
+  const close = log.find(l => l.url === '/v1/close');
+  assert.deepStrictEqual(JSON.parse(close.init.body), { session: 'ancienne' });           // la session fermée est l'ancienne
+  const turns = log.filter(l => l.url === '/v1/turn').map(l => JSON.parse(l.init.body));
+  assert.strictEqual(turns[0].session, 'ancienne');
+  assert.strictEqual(turns[0].system, 'Ancien');
+  assert.notStrictEqual(turns[1].session, 'ancienne');
+  assert.strictEqual(turns[1].session, id);
+  assert.strictEqual(turns[1].system, 'Nouveau');
+  assert.strictEqual(c.session, id);
+});
+
+test('newSession sans systemPrompt : garde les consignes actuelles, mais ouvre une nouvelle session', async () => {
+  const { c, log } = client({ '/v1/turn': okTurn, '/v1/close': okJson }, { session: 's0', systemPrompt: 'Garde-moi' });
+  await c.newSession();
+  await c.say('x');
+  const b = JSON.parse(log.find(l => l.url === '/v1/turn').init.body);
+  assert.strictEqual(b.system, 'Garde-moi');
+  assert.notStrictEqual(b.session, 's0');
+});
+
+test('newSession : texte vide retire les consignes ; un identifiant imposé est respecté', async () => {
+  const { c, log } = client({ '/v1/turn': okTurn, '/v1/close': okJson }, { systemPrompt: 'A retirer' });
+  const id = await c.newSession({ systemPrompt: '', session: 'imposee' });
+  assert.strictEqual(id, 'imposee');
+  await c.say('x');
+  const b = JSON.parse(log.find(l => l.url === '/v1/turn').init.body);
+  assert.ok(!('system' in b));
+  assert.strictEqual(b.session, 'imposee');
+});
+
+test('newSession : deux appels donnent deux identifiants différents', async () => {
+  const { c } = client({ '/v1/close': okJson });
+  const a = await c.newSession();
+  const b = await c.newSession();
+  assert.notStrictEqual(a, b);
+});
+
+test('newSession : un non-texte est refusé sans rien fermer', async () => {
+  const { c, log } = client({ '/v1/close': okJson }, { session: 's0' });
+  await assert.rejects(() => c.newSession({ systemPrompt: 42 }), /texte/);
+  assert.strictEqual(log.filter(l => l.url === '/v1/close').length, 0);
+  assert.strictEqual(c.session, 's0');
+});
+
+test('newSession : une réponse en cours est interrompue, et l’échec de la fermeture n’empêche pas la nouvelle session', async () => {
+  const { c, log } = client({ '/v1/turn': okTurn, '/v1/stop': okJson }, { session: 's0' });   // pas de route /v1/close : 404
+  const id = await c.newSession({ systemPrompt: 'N' });
+  assert.notStrictEqual(id, 's0');
+  assert.strictEqual(c.session, id);
+});
+
+test('reset ne change ni la session ni les consignes', async () => {
+  const { c, log } = client({ '/v1/turn': okTurn, '/v1/reset': okJson }, { session: 's0', systemPrompt: 'Fixe' });
+  await c.reset();
+  await c.say('x');
+  const b = JSON.parse(log.find(l => l.url === '/v1/turn').init.body);
+  assert.strictEqual(b.session, 's0');
+  assert.strictEqual(b.system, 'Fixe');
+  assert.strictEqual(JSON.parse(log.find(l => l.url === '/v1/reset').init.body).session, 's0');
+});
+
 // ---------------------------------------------------------------- visualisation : niveaux, analyseur, liaison CSS
 class FakeAnalyser {
   constructor(level) { this.level = level; this.fftSize = 1024; this.smoothingTimeConstant = 0; this.connected = []; }
