@@ -426,6 +426,65 @@ class UiGrapheTests(UiCase):
             self.assertIn(mot, ui.PAGE)
 
 
+class UiSystemeTests(UiCase):
+    """Personnes de type système (accès tiers) dans la page de gestion."""
+
+    def setUp(self):
+        super().setUp()
+        from interlocuteur import Interlocuteurs
+        Interlocuteurs(self.store).identifier("Olivier", "Cousinier")
+        self.olivier = self.store.active
+        self.robot = self.store.personnes.ensure_system("k_robot", "Robot")["id"]
+        from service import Service
+        self.svc = Service(self.store, Interlocuteurs(self.store))
+        self.svc.memoriser("La batterie est à 80 pour cent", principal=self.robot)
+
+    def lignes(self):
+        return {p["id"]: p for p in self.call("GET", "/api/personnes")[1] if not p.get("special")}
+
+    def test_un_systeme_est_signale_avec_sa_cle_interne_et_ses_souvenirs(self):
+        p = self.lignes()[self.robot]
+        self.assertTrue(p["systeme"])
+        self.assertEqual((p["cle"], p["souvenirs"]), ("k_robot", 1))
+        self.assertFalse(self.lignes()[self.olivier]["systeme"])
+
+    def test_la_page_voit_le_proprietaire_des_souvenirs_du_robot(self):
+        rows = self.call("GET", "/api/memories?q=batterie")[1]
+        self.assertEqual([(r["texte"], r["proprietaire"]) for r in rows], [("La batterie est à 80 pour cent", "Robot")])
+
+    def test_un_systeme_ne_devient_pas_interlocuteur_d_aria(self):
+        x = self.call("POST", "/api/personne/update", {"id": self.robot, "connue": True})[1]
+        self.assertTrue(x["ok"])
+        self.assertTrue(self.store.is_system(self.robot))
+        self.assertNotIn(self.robot, {p["id"] for p in self.store.personnes.listing(avec_citees=True)})
+        # l'interrupteur n'a rien changé, y compris dans le fichier : la fiche n'est ni « citée » ni marquée autrement
+        fiche = self.store.personnes.get(self.robot)
+        self.assertNotIn("ref", fiche)
+        brut = [json.loads(l) for l in (self.tmp / "default" / "personnes.jsonl").read_text("utf-8").splitlines()]
+        self.assertEqual([{k: v for k, v in p.items() if k in ("type", "cle", "ref")} for p in brut if p["id"] == self.robot],
+                         [{"type": "systeme", "cle": "k_robot"}])
+        self.call("POST", "/api/personne/update", {"id": self.robot, "connue": False})            # même décoché : pas de « citée » sur un système
+        self.assertNotIn("ref", self.store.personnes.get(self.robot))
+
+    def test_on_ne_fusionne_pas_un_systeme_avec_une_personne(self):
+        for source, cible in ((self.robot, self.olivier), (self.olivier, self.robot)):
+            x = self.call("POST", "/api/personne/merge", {"id": source, "vers": cible})[1]
+            self.assertFalse(x["ok"])
+            self.assertIn("séparées", x["erreur"])
+        self.assertIsNotNone(self.store.personnes.get(self.robot))
+        self.assertIsNotNone(self.store.personnes.get(self.olivier))
+        self.assertEqual([r["o"] for r in self.store.records.values() if "batterie" in r["txt"]], [self.robot])
+
+    def test_fusionner_deux_systemes_reste_possible(self):
+        autre = self.store.personnes.ensure_system("k_robot2", "Robot bis")["id"]
+        x = self.call("POST", "/api/personne/merge", {"id": autre, "vers": self.robot})[1]
+        self.assertTrue(x["ok"])
+
+    def test_la_page_affiche_le_badge_systeme(self):
+        self.assertIn("système", ui.PAGE)
+        self.assertIn("Accès tiers (système)", ui.PAGE)
+
+
 class UiTokenTests(UiCase):
     token = "secret-test"
 
