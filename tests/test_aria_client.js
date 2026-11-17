@@ -196,6 +196,46 @@ test('start : charge ort puis vad, crée le VAD avec le modèle d’Aria, envoie
 });
 
 // ---------------------------------------------------------------- prompt système de l'application
+test('speaker : envoyé à chaque tour, nettoyé ; absent => pas de champ', async () => {
+  const turn = { '/v1/turn': () => ({ ok: true, status: 200, body: streamOf(sse([['done', {}]])) }) };
+  const { c, log } = client(turn, { speaker: { name: '  Léa ', family: ' Dupont ' } });
+  await c.say('bonjour');
+  assert.deepStrictEqual(JSON.parse(log.find(l => l.url === '/v1/turn').init.body).speaker, { name: 'Léa', family: 'Dupont' });
+  const sans = client(turn, {});
+  await sans.c.say('bonjour');
+  assert.ok(!('speaker' in JSON.parse(sans.log.find(l => l.url === '/v1/turn').init.body)));
+  const court = client(turn, { speaker: { name: 'Léa' } });
+  await court.c.say('x');
+  assert.deepStrictEqual(JSON.parse(court.log.find(l => l.url === '/v1/turn').init.body).speaker, { name: 'Léa', family: '' });
+});
+
+test('speaker : une mauvaise forme est refusée à la création', () => {
+  for (const mauvais of ['Léa', 42, [], { family: 'x' }, { name: '' }, { name: '  ' }, { name: 3 }, { name: 'Léa', family: 4 }]) {
+    assert.throws(() => AriaClient.create({ baseUrl: 'https://a', apiKey: 'k', speaker: mauvais }), /speaker/, JSON.stringify(mauvais));
+  }
+});
+
+test('newSession : change de personne avec la session, et la garde si elle n’est pas redonnée', async () => {
+  const turn = { '/v1/turn': () => ({ ok: true, status: 200, body: streamOf(sse([['done', {}]])) }), '/v1/close': { ok: true, status: 200, json: async () => ({}) } };
+  const { c, log } = client(turn, { speaker: { name: 'Léa' } });
+  await c.newSession({ speaker: { name: 'Paul', family: 'Martin' } });
+  await c.say('x');
+  assert.deepStrictEqual(JSON.parse(log.filter(l => l.url === '/v1/turn').pop().init.body).speaker, { name: 'Paul', family: 'Martin' });
+  await c.newSession({});
+  await c.say('y');
+  assert.deepStrictEqual(JSON.parse(log.filter(l => l.url === '/v1/turn').pop().init.body).speaker, { name: 'Paul', family: 'Martin' });
+  await c.newSession({ speaker: null });
+  await c.say('z');
+  assert.ok(!('speaker' in JSON.parse(log.filter(l => l.url === '/v1/turn').pop().init.body)));
+});
+
+test('newSession : un interlocuteur invalide est refusé sans fermer la session en cours', async () => {
+  const turn = { '/v1/close': { ok: true, status: 200, json: async () => ({}) } };
+  const { c, log } = client(turn, { speaker: { name: 'Léa' } });
+  await assert.rejects(() => c.newSession({ speaker: { name: '' } }), /speaker/);
+  assert.ok(!log.some(l => l.url === '/v1/close'));
+});
+
 test('systemPrompt : envoyé dans le champ system, nettoyé, à chaque tour', async () => {
   const { c, log } = client({ '/v1/turn': () => ({ ok: true, status: 200, body: streamOf(sse([['done', {}]])) }) }, { systemPrompt: '  Tu es l’assistante du site Bleu.  ' });
   await c.say('un');

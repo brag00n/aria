@@ -90,6 +90,18 @@ Mémoire et les réponses d'Aria. Garde-fous, imposés par le serveur de mémoir
 - chaque lien et chaque fiche gardent leur **trace d'audit** (l'échange d'origine) ; un humain peut tout supprimer dans la page Mémoire ;
 - si plusieurs personnes portent le même prénom, il est invité à préciser le nom de famille (rien n'est deviné).
 
+**Publier les informations de son interlocuteur (option par clé, désactivée par défaut, indépendante de la précédente).** Case « Peut publier les informations de
+son interlocuteur » (champ `publish_speaker`). L'accès agit alors **au nom de la personne qui lui parle**, avec les droits d'Aria : ce que la personne dit va dans
+**ses** souvenirs (privés), l'accès lit les siens et ceux du foyer, relie n'importe quelles personnes (liens publics), crée des fiches **sans validation** et peut oublier
+les souvenirs de cette personne. Ses propres constats (mesures, état d'un appareil) restent dans **sa** mémoire privée, par l'outil séparé `noter_observation`.
+
+- **L'interlocuteur est propre à la session.** Il n'est jamais celui d'Aria : un accès tiers ne change pas à qui parle l'interface.
+- **Il est désigné de deux façons** : par l'application (`speaker: {name, family}` à la création de la session, voir `docs/integration.md`) ; sinon par le LLM, qui reçoit l'outil `identifier_interlocuteur` et demande le prénom comme le fait Aria. Quand l'application l'a fourni, le LLM **ne peut plus le changer**.
+- **La personne n'est pas authentifiée** (prévu plus tard) : l'application, ou ce que dit l'utilisateur, est cru sur parole. Celui qui peut parler à l'application peut donc se
+  faire passer pour n'importe quelle personne du foyer, lire ses souvenirs et en écrire à son nom. **À réserver aux applications de confiance de votre réseau.** Tout reste
+  tracé : le journal d'audit et la trace de chaque souvenir portent l'accès **et** la personne (`who`).
+- Un accès qui n'a pas ce droit ignore le champ `speaker` (il n'est même pas examiné).
+
 Un tiers du foyer connaît donc les noms de toutes les personnes et leurs liens, mais jamais leurs souvenirs privés. Pour un tiers **hors foyer**, ne pas lui
 donner la mémoire d'Aria : lui fournir un serveur de mémoire dédié (même programme, autre `MEMORY_DIR`, son propre `MEMORY_HTTP_PORT`).
 

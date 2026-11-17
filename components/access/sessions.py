@@ -44,7 +44,7 @@ class Session:
 
 class SessionRegistry:
     """`factory(profile, identity) -> (engine, mcp)` construit le moteur d'une session (injectable : les tests passent un moteur factice).
-    `identity` : (clé interne de l'accès, nom de l'accès, option « publier ses liens »), que le serveur mémoire utilise pour retrouver la personne système."""
+    `identity` : (clé interne de l'accès, nom de l'accès, option « publier ses liens », [interlocuteur fourni, identifiant de session]), que le serveur mémoire utilise pour retrouver la personne système."""
 
     def __init__(self, profiles, factory, max_sessions=8, ttl_s=900, clock=time.monotonic):
         self.profiles, self.factory = profiles, factory
@@ -68,9 +68,10 @@ class SessionRegistry:
         """Identifiant de session fourni par le client : lettres, chiffres, - et _ seulement, 40 caractères au plus."""
         return "".join(c for c in str(client_session or "default") if c.isalnum() or c in "-_")[:40] or "default"
 
-    async def get(self, key_rec, client_session, app_prompt=""):
+    async def get(self, key_rec, client_session, app_prompt="", speaker=None):
         """Session de (clé, session client), créée à la demande. `app_prompt` (prompt système de l'application, déjà nettoyé) n'est pris en
-        compte QU'À LA CRÉATION : une session existante garde le sien. Lève SessionError (code HTTP dans `.code`)."""
+        compte QU'À LA CRÉATION : une session existante garde le sien. `speaker` : interlocuteur fourni par l'application ({"n": prénom, "c": nom}), lui aussi
+        fixé à la création, et seulement pour une clé qui a le droit « publier les informations de son interlocuteur ». Lève SessionError (code HTTP dans `.code`)."""
         sid = self.sid_of(key_rec["id"], self.clean_client(client_session))
         self._loop = asyncio.get_running_loop()          # pour request_close_key, appelée depuis un autre thread
         async with self._guard():
@@ -89,7 +90,11 @@ class SessionRegistry:
                 raise SessionError(500, str(e))
             profile = dict(profile, app_prompt=app_prompt)
             try:
-                engine, mcp = self.factory(profile, (key_rec["id"], key_rec.get("label", ""), bool(key_rec.get("publish_links"))))
+                if key_rec.get("publish_speaker"):
+                    identity = (key_rec["id"], key_rec.get("label", ""), bool(key_rec.get("publish_links")), dict(speaker or {}), sid)
+                else:
+                    identity = (key_rec["id"], key_rec.get("label", ""), bool(key_rec.get("publish_links")))
+                engine, mcp = self.factory(profile, identity)
             except Exception as e:
                 utils.log_info("ACCESS", f"❌ Session impossible pour la clé {key_rec['id']} : {type(e).__name__}: {str(e)[:200]}")
                 raise SessionError(500, "configuration du profil invalide")
@@ -208,7 +213,8 @@ def build_engine(profile, base_config, language=None, identity=None):
     # Serveur mémoire (canal HTTP) : pas de processus propre, connexion au serveur d'Aria avec l'identité de l'accès (clé interne + nom)
     from . import memory_link
     key_id, key_name, *reste = identity or ("", "")
-    servers, indisponibles = memory_link.resolve_servers(servers, key_id, key_name, publish=bool(reste and reste[0]))
+    servers, indisponibles = memory_link.resolve_servers(servers, key_id, key_name, publish=bool(reste and reste[0]),
+                                                         speaker=reste[1] if len(reste) > 1 else None, session=reste[2] if len(reste) > 2 else None)
     if indisponibles:
         raise ProfileError("la mémoire n'est pas disponible pour cet accès (" + ", ".join(indisponibles) + ")")
     all_config = {"memory": memory, "mcp": {"params": {"servers": servers}}} if servers else {"memory": memory}

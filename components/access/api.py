@@ -24,7 +24,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from . import security
-from .profile import AppPromptError, clean_app_prompt
+from .profile import AppPromptError, clean_app_prompt, clean_speaker
 
 # Fichiers publics : nom d'URL -> (chemin relatif à static/, type MIME). Rien d'autre n'est jamais servi.
 PUBLIC_FILES = {
@@ -133,9 +133,9 @@ def create_app(deps):
             return None, error(400, "bad_json", "un objet JSON est attendu", cors)
         return body, None
 
-    async def get_session(rec, body, cors, app_prompt=""):
+    async def get_session(rec, body, cors, app_prompt="", speaker=None):
         try:
-            return await deps.sessions.get(rec, body.get("session"), app_prompt), None
+            return await deps.sessions.get(rec, body.get("session"), app_prompt, speaker), None
         except Exception as e:
             code = getattr(e, "code", 500)
             return None, error(code, "session", getattr(e, "message", "session impossible"), cors)
@@ -166,7 +166,11 @@ def create_app(deps):
             app_prompt = clean_app_prompt(body.get("system"))
         except AppPromptError as e:
             return error(e.status, "bad_request" if e.status == 400 else "too_large", str(e), cors)
-        session, err = await get_session(rec, body, cors, app_prompt)
+        try:
+            speaker = clean_speaker(body.get("speaker")) if rec.get("publish_speaker") else None      # ignoré pour une clé sans ce droit
+        except AppPromptError as e:
+            return error(e.status, "bad_request", str(e), cors)
+        session, err = await get_session(rec, body, cors, app_prompt, speaker)
         if err:
             return err
         if not quota.take(rec["id"], rec["limits"]["daily_turns"]):

@@ -54,6 +54,7 @@ Un exemple complet (halo animé, forme d'onde, boutons) est fourni dans `access-
 | `speak` | `true` | demander la réponse en voix ; `mute(true)` la coupe ensuite sans changer l'option |
 | `session` | `"default"` | identifiant de conversation. Deux identifiants différents ont chacun leur historique. Utilisez-en un par utilisateur final de votre page |
 | `systemPrompt` | aucun | consignes de votre application pour l'assistant (voir plus bas) |
+| `speaker` | aucun | `{ name: "Léa", family: "Dupont" }` : la personne qui parle, si l'administrateur d'Aria a autorisé votre clé à « publier les informations de son interlocuteur ». Fixée à la création de la session. **Ce n'est pas une authentification** : Aria vous croit sur parole. Ignoré par une clé sans ce droit |
 | `vad` | `{}` | sensibilité de l'écoute : `positive` (0,8), `negative` (0,4), `redemption` (20 trames de silence), `minFrames` (3) |
 | `analyser` | `false` | prépare d'emblée l'analyse du son pour vos visuels (sinon, à la première utilisation) |
 | `debug` | `false` | écrit dans la console l'état de l'écoute : utile quand le micro ne réagit pas |
@@ -68,7 +69,7 @@ Un exemple complet (halo animé, forme d'onde, boutons) est fourni dans `access-
 | `say(texte)` | envoie une saisie texte |
 | `interrupt()` | coupe la réponse en cours (voix et génération) |
 | `reset()` | efface l'historique de la conversation ; les consignes `systemPrompt` sont conservées |
-| `await newSession({systemPrompt, session})` | nouvelle conversation, avec de **nouvelles consignes** si `systemPrompt` est fourni. Renvoie l'identifiant de session |
+| `await newSession({systemPrompt, speaker, session})` | nouvelle conversation, avec de **nouvelles consignes** si `systemPrompt` est fourni et une **autre personne** si `speaker` l'est (`speaker: null` l'efface). Renvoie l'identifiant de session |
 | `mute(true)` / `mute(false)` | coupe ou rétablit la voix (le texte continue) |
 | `destroy()` | libère le micro, la lecture et l'analyse ; le client est inutilisable ensuite |
 | `on(nom, fn)`, `off(nom, fn)` | s'abonne ou se désabonne d'un événement |
@@ -203,9 +204,10 @@ Authentification : en-tête `Authorization: Bearer ak_…` (ou `X-Api-Key: ak_�
 
 Corps de `POST /v1/turn` :
 ```json
-{ "text": "Quelle heure est-il ?", "session": "utilisateur-42", "speak": true, "system": "consignes de l'application" }
+{ "text": "Quelle heure est-il ?", "session": "utilisateur-42", "speak": true, "system": "consignes de l'application", "speaker": {"name": "Léa", "family": "Dupont"} }
 ```
 ou `"audio": "data:audio/wav;base64,…"` à la place de `text` (WAV mono, 30 secondes au plus). Tous les champs sauf `text` ou `audio` sont facultatifs.
+`speaker` n'a d'effet que pour une clé autorisée à publier les informations de son interlocuteur, et seulement à la création de la session.
 Limites : texte de 2000 caractères, requête de 8 Mo, consignes de 4000 caractères.
 
 Événements du flux (`event:` et `data:` en JSON) :

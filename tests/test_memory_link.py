@@ -1,8 +1,10 @@
 """Liaison des accès tiers avec le serveur de mémoire unique (components/access/memory_link.py) : secret du canal, identité, serveurs résolus.
 Bibliothèque standard seulement."""
+import json
 import sys
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -65,6 +67,23 @@ class SessionTiersTests(unittest.TestCase):
         self.assertEqual(servers["memoire"]["headers"]["X-Memory-Publish"], "1")
         servers, _ = memory_link.resolve_servers({"memoire": MEM}, "k_robot1", "Bamboo", SECRET)
         self.assertNotIn("X-Memory-Publish", servers["memoire"]["headers"])
+
+    def test_canal_interlocuteur_seulement_pour_une_cle_qui_en_a_le_droit(self):
+        normal = memory_link.third_party_conf(MEM, "k_robot1", "Bamboo", SECRET)
+        self.assertTrue(normal["url"].endswith("/mcp"))
+        self.assertNotIn("X-Memory-Session", normal["headers"])
+        self.assertNotIn("X-Memory-Speaker", normal["headers"])
+        i = memory_link.third_party_conf(MEM, "k_robot1", "Bamboo", SECRET, speaker={}, session="k_robot1:s1")
+        self.assertTrue(i["url"].endswith("/mcp-i"))
+        self.assertEqual(i["headers"]["X-Memory-Session"], "k_robot1%3As1")
+        self.assertNotIn("X-Memory-Speaker", i["headers"])
+        self.assertEqual(i["hide_tools"], [])                                  # sans interlocuteur fourni, le LLM l'identifie lui-même
+
+    def test_interlocuteur_fourni_par_l_application_cache_l_identification_au_llm(self):
+        i = memory_link.third_party_conf(MEM, "k_robot1", "Bamboo", SECRET, speaker={"n": "Léa", "c": "Dupont"}, session="s")
+        self.assertEqual(i["hide_tools"], ["identifier_interlocuteur"])
+        self.assertEqual(json.loads(unquote(i["headers"]["X-Memory-Speaker"])), {"n": "Léa", "c": "Dupont"})
+        i["headers"]["X-Memory-Speaker"].encode("ascii")                       # en-tête HTTP : ASCII seulement
 
     def test_les_en_tetes_sont_de_l_ascii(self):
         c = memory_link.third_party_conf(MEM, "k_cam", "Caméra du garage « test »", SECRET)

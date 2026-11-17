@@ -87,7 +87,10 @@ class ApiCase(unittest.TestCase):
         self.keys = keys.KeyStore(self.tmp / "data")
         self.engines = []
 
+        self.identites = []
+
         def factory(prof, identity=None):
+            self.identites.append(identity)
             e = FakeEngine(prof["name"], slow=getattr(self, "slow", False), app_prompt=prof.get("app_prompt", ""))
             self.engines.append(e)
             return FakeLlm(e), None
@@ -508,6 +511,66 @@ class MoteurPromptTests(unittest.TestCase):
             self.assertEqual(captured["system"], "Règles.")
         finally:
             llm_mod.Llm = original
+
+
+class InterlocuteurFourniTests(ApiCase):
+    """Interlocuteur fourni par l'application (clé « publish_speaker ») : transmis au serveur de mémoire, fixé à la création de la session."""
+
+    def cle_interlocuteur(self, **kw):
+        vue, cle = self.keys.create("Robot", [ORIGIN], profile="portail", limits={"rate_per_min": 100, "daily_turns": 100}, **kw)
+        return vue, cle
+
+    def test_interlocuteur_transmis_a_la_session_pour_une_cle_autorisee(self):
+        _, cle = self.cle_interlocuteur(publish_speaker=True)
+        r = self.turn({"text": "bonjour", "session": "s1", "speaker": {"name": "  Léa ", "family": "Dupont"}}, headers=self.hdr(cle))
+        self.assertEqual(r.status_code, 200)
+        ident = self.identites[-1]
+        self.assertEqual(ident[3], {"n": "Léa", "c": "Dupont"})
+        self.assertTrue(ident[4].endswith(":s1"))                              # identifiant de session transmis au serveur de mémoire
+
+    def test_sans_interlocuteur_fourni_la_cle_autorisee_garde_le_canal_interlocuteur(self):
+        _, cle = self.cle_interlocuteur(publish_speaker=True)
+        self.turn({"text": "bonjour", "session": "s2"}, headers=self.hdr(cle))
+        self.assertEqual(self.identites[-1][3], {})                            # le LLM identifiera lui-même la personne
+
+    def test_interlocuteur_ignore_pour_une_cle_sans_le_droit(self):
+        r = self.turn({"text": "bonjour", "session": "s3", "speaker": {"name": "Léa"}})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(self.identites[-1]), 3)                           # identité classique : ni interlocuteur ni canal /mcp-i
+
+    def test_interlocuteur_mal_forme_d_une_cle_sans_le_droit_est_ignore_pas_refuse(self):
+        """Sans le droit, le champ n'est pas examiné du tout : une application qui l'envoie quand même (par erreur) n'est pas bloquée."""
+        r = self.turn({"text": "bonjour", "session": "s3b", "speaker": 42})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(self.identites[-1]), 3)
+
+    def test_interlocuteur_fige_a_la_creation_de_la_session(self):
+        _, cle = self.cle_interlocuteur(publish_speaker=True)
+        self.turn({"text": "un", "session": "s4", "speaker": {"name": "Léa"}}, headers=self.hdr(cle))
+        self.turn({"text": "deux", "session": "s4", "speaker": {"name": "Paul"}}, headers=self.hdr(cle))
+        self.assertEqual(len(self.identites), 1)
+        self.assertEqual(self.identites[0][3]["n"], "Léa")
+
+    def test_deux_sessions_deux_interlocuteurs(self):
+        _, cle = self.cle_interlocuteur(publish_speaker=True)
+        self.turn({"text": "a", "session": "sA", "speaker": {"name": "Léa"}}, headers=self.hdr(cle))
+        self.turn({"text": "b", "session": "sB", "speaker": {"name": "Paul"}}, headers=self.hdr(cle))
+        self.assertEqual(sorted(i[3]["n"] for i in self.identites), ["Léa", "Paul"])
+
+    def test_interlocuteur_mal_forme_refuse_sans_creer_de_session(self):
+        _, cle = self.cle_interlocuteur(publish_speaker=True)
+        for mauvais in ("Léa", ["Léa"], {"name": ""}, {"family": "Dupont"}, {"name": 42}, {"name": "Léa", "family": 3}, 7):
+            r = self.turn({"text": "x", "session": "sM", "speaker": mauvais}, headers=self.hdr(cle))
+            self.assertEqual(r.status_code, 400, mauvais)
+        self.assertEqual(self.identites, [])
+
+    def test_interlocuteur_nettoye_et_borne(self):
+        _, cle = self.cle_interlocuteur(publish_speaker=True)
+        self.turn({"text": "x", "session": "sN", "speaker": {"name": "Lé\x00a\n" + "x" * 200, "family": " Du  pont "}}, headers=self.hdr(cle))
+        n = self.identites[-1][3]
+        self.assertLessEqual(len(n["n"]), 60)
+        self.assertNotIn("\x00", n["n"])
+        self.assertEqual(n["c"], "Du pont")
 
 
 class ProfilsEnDirectTests(ApiCase):

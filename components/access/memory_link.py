@@ -8,6 +8,7 @@ processus : elle se connecte au canal HTTP du processus d'Aria, avec
   - `X-Memory-Name: <nom de l'accès>`  son nom (encodé), pour que la fiche suive un renommage.
 Le LLM d'un tiers ne reçoit jamais `identifier_interlocuteur` (le serveur ne le sert pas non plus : double sécurité).
 """
+import json
 import secrets
 from urllib.parse import quote
 
@@ -52,7 +53,7 @@ def with_secret(conf, secret=None):
     return {**conf, "env": env}
 
 
-def third_party_conf(conf, key_id, name, secret=None, publish=False):
+def third_party_conf(conf, key_id, name, secret=None, publish=False, speaker=None, session=None):
     """Configuration de connexion d'un serveur mémoire pour UNE session tierce : URL locale du canal HTTP et en-têtes d'identité.
     Retourne None si le serveur n'a pas de canal HTTP ou si le secret du démarrage n'est pas disponible (la mémoire est alors indisponible,
     jamais ouverte sans authentification)."""
@@ -63,16 +64,23 @@ def third_party_conf(conf, key_id, name, secret=None, publish=False):
     headers = {"Authorization": f"Bearer {secret}", "X-Memory-Principal": str(key_id), "X-Memory-Name": quote(str(name).strip(), safe="")}
     if publish:
         headers["X-Memory-Publish"] = "1"          # option de la clé : ses liens avec une personne sont publics ; posé par Aria, jamais par le LLM
+    if speaker is not None:
+        # Accès qui publie les informations de son interlocuteur : canal /mcp-i, interlocuteur propre à la session (fourni par l'application s'il l'est).
+        headers["X-Memory-Session"] = quote(str(session or "default"), safe="")
+        given = speaker or {}
+        if given.get("n"):
+            headers["X-Memory-Speaker"] = quote(json.dumps({"n": str(given["n"])[:60], "c": str(given.get("c", ""))[:60]}, ensure_ascii=False, separators=(",", ":")), safe="")
+        return {"url": f"http://{HTTP_HOST}:{port}/mcp-i", "headers": headers, "hide_tools": [] if not given.get("n") else ["identifier_interlocuteur"]}
     return {"url": f"http://{HTTP_HOST}:{port}/mcp", "headers": headers, "hide_tools": list(HIDDEN_FOR_THIRD_PARTIES)}
 
 
-def resolve_servers(servers, key_id, name, secret=None, publish=False):
+def resolve_servers(servers, key_id, name, secret=None, publish=False, speaker=None, session=None):
     """Serveurs MCP d'une session tierce : un serveur mémoire est remplacé par sa connexion HTTP identifiée, les autres sont inchangés.
     Retourne (serveurs résolus, noms des serveurs mémoire indisponibles)."""
     out, missing = {}, []
     for srv_name, conf in servers.items():
         if is_memory_server(conf):
-            link = third_party_conf(conf, key_id, name, secret, publish)
+            link = third_party_conf(conf, key_id, name, secret, publish, speaker, session)
             if link is None:
                 missing.append(srv_name)
             else:

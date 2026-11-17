@@ -334,6 +334,34 @@ class PublicationLiensTests(StoreCase):
         self.assertTrue(self.store.get(vue["id"])["publish_links"])
 
 
+class PublicationInterlocuteurTests(StoreCase):
+    """Option « publier les informations de son interlocuteur » : désactivée par défaut, indépendante de « publier ses liens »."""
+
+    def test_defaut_desactive_modifiable_et_independant(self):
+        vue, _ = self.store.create("Robot")
+        self.assertFalse(vue["publish_speaker"])
+        self.assertTrue(self.store.update(vue["id"], publish_speaker=True)["publish_speaker"])
+        self.assertFalse(self.store.get(vue["id"])["publish_links"])
+        self.assertTrue(self.store.create("Autre", publish_speaker=True)[0]["publish_speaker"])
+
+    def test_persistante_et_anciennes_cles(self):
+        vue, _ = self.store.create("Robot", publish_speaker=True)
+        self.assertTrue(keys.KeyStore(self.store.dir).get(vue["id"])["publish_speaker"])
+        brut = json.loads(self.store.path.read_text("utf-8"))
+        for k in brut["keys"]:
+            k.pop("publish_speaker", None)
+        self.store.path.write_text(json.dumps(brut), "utf-8")
+        self.assertFalse(keys.KeyStore(self.store.dir).get(vue["id"])["publish_speaker"])
+
+    def test_valeurs_ramenees_a_un_booleen_et_regeneration(self):
+        vue, _ = self.store.create("Robot")
+        for entree, attendu in (("oui", True), ("", False), (0, False), (1, True), (None, False)):
+            self.assertEqual(self.store.update(vue["id"], publish_speaker=entree)["publish_speaker"], attendu)
+        self.store.update(vue["id"], publish_speaker=True)
+        self.store.regenerate(vue["id"])
+        self.assertTrue(self.store.get(vue["id"])["publish_speaker"])
+
+
 class DebitTests(unittest.TestCase):
     def test_fenetre_glissante(self):
         c = Clock(100.0)

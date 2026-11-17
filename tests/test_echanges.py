@@ -139,6 +139,20 @@ class EcritureTests(Base):
             json.loads(ligne)                                                         # toutes les lignes sont du JSON complet
         self.assertEqual(len({l["id"] for l in self.lignes()}), 180)
 
+    def test_unicite_garantie_meme_avec_un_alea_identique(self):
+        """Régression : 24 bits d'aléa seuls pouvaient collisionner dans la même milliseconde (échec rare observé)."""
+        import unittest.mock as mock
+        with mock.patch.object(echanges.secrets, "token_hex", return_value="abcd"), mock.patch.object(echanges.time, "time", return_value=1_800_000_000.123):
+            ids = [echanges.new_id() for _ in range(300)]
+        self.assertEqual(len(set(ids)), 300)
+        self.assertTrue(all(echanges.valid_id(i) for i in ids))
+
+    def test_unicite_entre_threads(self):
+        import concurrent.futures as cf
+        with cf.ThreadPoolExecutor(16) as pool:
+            ids = [i for lot in pool.map(lambda _: [echanges.new_id() for _ in range(500)], range(16)) for i in lot]
+        self.assertEqual(len(set(ids)), len(ids))
+
     def test_identifiants_uniques_et_valides(self):
         ids = {echanges.new_id() for _ in range(2000)}
         self.assertEqual(len(ids), 2000)

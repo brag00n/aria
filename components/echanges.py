@@ -51,9 +51,21 @@ def directory():
     return _settings["dir"]
 
 
+_last_ids = {"ms": 0, "n": 0}
+
+
 def new_id():
-    """Identifiant d'échange : horodatage (tri chronologique) + aléa. Valide pour EXCHANGE_ID_RE."""
-    return f"e_{int(time.time() * 1000):x}{secrets.token_hex(3)}"
+    """Identifiant d'échange : horodatage en ms (tri chronologique) + compteur du processus + aléa. Valide pour EXCHANGE_ID_RE.
+    Le compteur rend l'unicité GARANTIE dans un même processus (deux échanges de la même milliseconde ne se confondent jamais, même si leur aléa
+    était identique) ; l'aléa évite les collisions entre redémarrages. Les traces des souvenirs et le journal s'appuient sur cette unicité."""
+    ms = int(time.time() * 1000)
+    with _lock:
+        if ms == _last_ids["ms"]:
+            _last_ids["n"] += 1
+        else:
+            _last_ids["ms"], _last_ids["n"] = ms, 0
+        n = _last_ids["n"]
+    return f"e_{ms:x}{n:02x}{secrets.token_hex(2)}"
 
 
 def valid_id(value):

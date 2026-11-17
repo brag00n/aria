@@ -349,6 +349,18 @@ class JournalTests(AdminCase):
         self.call("POST", "/api/keys/update", {"id": vue["id"], "publish_links": True})
         self.assertIn(vue["id"], self.sessions.closed)
 
+    def test_option_publier_les_infos_de_son_interlocuteur(self):
+        vue = self.create(label="Robot", publish_speaker=True)["key"]
+        self.assertTrue(vue["publish_speaker"])
+        self.call("POST", "/api/keys/update", {"id": vue["id"], "publish_speaker": False})
+        self.assertFalse(self.store.get(vue["id"])["publish_speaker"])
+        self.sessions.closed.clear()
+        self.call("POST", "/api/keys/update", {"id": vue["id"], "publish_speaker": True})
+        self.assertTrue(self.store.get(vue["id"])["publish_speaker"])
+        self.assertIn(vue["id"], self.sessions.closed)                       # les sessions ouvertes repartent avec le nouveau droit
+        self.assertIn("publish_speaker", admin_ui.PAGE)
+        self.assertIn("PAS authentifiée", admin_ui.PAGE)                     # l'avertissement est dans la page
+
     def test_la_page_a_son_onglet_sans_innerhtml(self):
         self.assertIn('data-t="jrn"', admin_ui.PAGE)
         self.assertIn("/api/journal/purge", admin_ui.PAGE)

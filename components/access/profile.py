@@ -53,6 +53,26 @@ def clean_app_prompt(value, limit=MAX_APP_PROMPT):
     return text
 
 
+def clean_speaker(value):
+    """Interlocuteur fourni par l'application : {"name": prénom, "family": nom de famille} -> {"n", "c"} nettoyé (60 caractères, sans caractère de contrôle),
+    ou None si absent. Lève AppPromptError(400) si la forme est mauvaise. Ce n'est PAS une authentification : l'application affirme qui parle."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise AppPromptError(400, "speaker : un objet {name, family} est attendu")
+
+    def propre(x):
+        if x is None:
+            return ""
+        if not isinstance(x, str):
+            raise AppPromptError(400, "speaker : name et family sont des textes")
+        return " ".join("".join(c for c in x if unicodedata.category(c) not in ("Cc", "Cs")).split())[:60]
+    name, family = propre(value.get("name")), propre(value.get("family"))
+    if not name:
+        raise AppPromptError(400, "speaker : name (prénom) est obligatoire")
+    return {"n": name, "c": family}
+
+
 def compose_system(base, app_prompt):
     """Message système d'une session : celui du profil (ou du module LLM), puis les consignes de l'application sous un titre."""
     base = (base or "").strip()

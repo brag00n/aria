@@ -16,9 +16,11 @@
  *   aria.on("level", ({source, value}) => …)   niveau sonore 0..1 de "mic" (votre voix) ou "voice" (celle d'Aria), une mesure toutes les 50 ms
  *   aria.analyser("voice" | "mic")             AnalyserNode Web Audio pour un spectre ou une forme d'onde personnalisés
  *   aria.bindState(element)                    écrit data-aria-state et la variable CSS --aria-level sur l'élément : habillage en CSS pur
- *   aria.newSession({systemPrompt})            nouvelle conversation avec de NOUVELLES consignes (reset() garde les consignes)
+ *   aria.newSession({systemPrompt, speaker})   nouvelle conversation avec de NOUVELLES consignes et, au besoin, une nouvelle personne (reset() garde les deux)
  * Options : baseUrl, apiKey, voice (true), speak (true : lire la réponse), session ("default"), vad {positive, negative, redemption, minFrames},
  *           systemPrompt (consignes de l'application, fixées à la création de la session ; elles complètent celles de la clé, 4000 caractères au plus),
+ *           speaker ({name, family} : la personne qui parle, fixée à la création de la session ; ignorée par le serveur sauf pour une clé autorisée à
+ *           « publier les informations de son interlocuteur » ; ce n'est pas une authentification),
  *           modelUrl (modèle Silero, par défaut servi par Aria), cdn {ort, vad} (adresses des bibliothèques du VAD),
  *           debug (false : trace dans la console les événements du VAD et les envois, utile quand l'écoute ne réagit pas),
  *           analyser (false : prépare d'emblée l'analyse du son ; sinon elle l'est dès qu'on écoute "level" ou qu'on appelle analyser()).
@@ -31,6 +33,15 @@
     ort: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.min.js',
     vad: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js'
   };
+
+  // Interlocuteur fourni par la page : {name, family} (textes) ou rien. Une autre forme est une erreur de programmation, signalée tout de suite.
+  function cleanSpeaker(v) {
+    if (v == null) return null;
+    if (typeof v !== 'object' || Array.isArray(v) || typeof v.name !== 'string' || !v.name.trim() || (v.family != null && typeof v.family !== 'string')) {
+      throw new Error('AriaClient : speaker doit être {name: "Prénom", family: "Nom"}');
+    }
+    return { name: v.name.trim(), family: (v.family || '').trim() };
+  }
 
   // Découpe un flux Server-Sent Events : retourne les événements complets et le reste du tampon.
   function parseSse(buffer) {
@@ -68,6 +79,7 @@
     if (!o.baseUrl || !o.apiKey) throw new Error('AriaClient : baseUrl et apiKey sont obligatoires');
     var base = String(o.baseUrl).replace(/\/+$/, '');
     var systemPrompt = typeof o.systemPrompt === 'string' ? o.systemPrompt.trim() : '';
+    var speaker = cleanSpeaker(o.speaker);
     if (o.systemPrompt != null && typeof o.systemPrompt !== 'string') throw new Error('AriaClient : systemPrompt doit être un texte');
     var cdn = Object.assign({}, DEFAULT_CDN, o.cdn);
     var fetchFn = o.fetch || (root.fetch && root.fetch.bind(root));
@@ -269,7 +281,7 @@
       try {
         res = await fetchFn(base + '/v1/turn', {
           method: 'POST', headers: headers(), signal: ctl.signal,
-          body: JSON.stringify(Object.assign({ session: o.session, speak: o.speak && !muted }, systemPrompt ? { system: systemPrompt } : {}, body))
+          body: JSON.stringify(Object.assign({ session: o.session, speak: o.speak && !muted }, systemPrompt ? { system: systemPrompt } : {}, speaker ? { speaker: speaker } : {}, body))
         });
       } catch (e) {
         if (abortCtl === ctl) abortCtl = null;
@@ -328,10 +340,12 @@
     async function newSession(opts) {
       opts = opts || {};
       if (opts.systemPrompt != null && typeof opts.systemPrompt !== 'string') throw new Error('AriaClient : systemPrompt doit être un texte');
+      var nextSpeaker = opts.speaker !== undefined ? cleanSpeaker(opts.speaker) : speaker;
       interrupt();
       try { await postJson('/v1/close'); } catch (e) { /* meilleur effort : le serveur la fermera à l'expiration */ }
       o.session = opts.session ? String(opts.session) : 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       if (opts.systemPrompt != null) systemPrompt = opts.systemPrompt.trim();
+      speaker = nextSpeaker;
       seen = {};
       return o.session;
     }
