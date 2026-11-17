@@ -109,10 +109,17 @@ class Interlocuteurs:
     def identifier_session(self, nom, complement="", surnom="", courant="", trace=None):
         """Désigne l'interlocuteur d'UNE SESSION d'accès tiers (celui d'Aria, `store.active`, n'est jamais touché : un tiers ne change pas à qui parle
         Aria). Mêmes règles qu'`identifier` (homonymes, création, fiche complétée). Retourne (texte pour le LLM, identifiant de l'interlocuteur) ;
-        l'identifiant est `courant` inchangé si rien n'est désigné. Un accès tiers (système) n'est jamais un interlocuteur."""
+        l'identifiant est `courant` inchangé si rien n'est désigné. Un accès tiers (système) n'est jamais un interlocuteur. Une fois un interlocuteur
+        désigné (`courant`), seule la complétion de SA fiche (surnom, nom de famille) est acceptée : jamais de changement de personne."""
         completed = self._completer_actif(nom, complement, surnom, pid=courant or "")        # '' : pas d'interlocuteur dans la session, pas celui d'Aria
         if completed:
             return completed, courant
+        if courant and self.store.personnes.get(courant):
+            # Interlocuteur déjà désigné : le LLM ne peut plus en changer en cours de conversation. Une phrase comme « corrige le nom de Charles-Henri »
+            # n'est pas une identification : elle ne doit jamais faire parler la session « au nom » d'une autre personne.
+            actuel = self.store.personnes.full(self.store.personnes.get(courant))
+            return (f"Ton interlocuteur est déjà {actuel} : tu ne peux pas en changer en cours de conversation. Si ce n'est pas lui, dis-lui de commencer "
+                    f"une nouvelle conversation. Pour corriger la fiche d'une autre personne, demande-le à un humain via la page Mémoire."), courant
         status, person, candidates = self.store.personnes.resolve(nom, complement, surnom, trace=trace)
         if status == "empty":
             return "Je n'ai pas compris le nom. Demande-lui son prénom.", courant

@@ -184,6 +184,28 @@ class IdentificationTests(Base):
         self.assertEqual(self.s.personnes.get(tiph)["surnom"], "Titi")
         self.assertEqual(self.s.personnes.get(self.olivier)["surnom"], "")
 
+    def test_une_fois_designe_l_interlocuteur_ne_change_plus(self):
+        """Régression (17/11) : « corrige le nom de Charles-Henri » a fait parler la session au nom de Charles-Henri."""
+        tiph = self.personne("Tiphaine")["id"]
+        avant = len(self.s.personnes.items)
+        texte, pid = self.i.identifier_session("Olivier", "Cousinier", courant=tiph)
+        self.assertEqual(pid, tiph)
+        self.assertIn("déjà", texte)
+        self.assertIn("Tiphaine", texte)
+        texte, pid = self.i.identifier_session("Charles-Henri", "Cousinier", courant=tiph)
+        self.assertEqual(pid, tiph)
+        self.assertEqual(len(self.s.personnes.items), avant)                  # aucune fiche créée non plus
+
+    def test_le_refus_n_empeche_pas_de_completer_sa_propre_fiche(self):
+        tiph = self.personne("Tiphaine")["id"]
+        texte, pid = self.i.identifier_session("Tiphaine", "Cousinier", "Titi", courant=tiph)
+        self.assertEqual(pid, tiph)
+        self.assertEqual(self.s.personnes.get(tiph)["surnom"], "Titi")
+
+    def test_sans_interlocuteur_on_peut_toujours_en_designer_un(self):
+        _, pid = self.i.identifier_session("Tiphaine", courant="")
+        self.assertEqual(pid, self.personne("Tiphaine")["id"])
+
     def test_un_acces_ne_peut_pas_etre_designe_comme_interlocuteur(self):
         texte, pid = self.i.identifier_session("Bamboo")
         self.assertEqual(pid, "")
@@ -234,8 +256,9 @@ class CanalTests(Base):
         return sorted(t["name"] for t in r.json()["result"]["tools"])
 
     def test_outils_du_canal_interlocuteur(self):
-        self.assertEqual(self.outils(), ["identifier_interlocuteur", "memoriser", "noter_observation", "oublier", "relier", "rechercher_souvenir"][:0]
-                         or sorted(["identifier_interlocuteur", "memoriser", "noter_observation", "oublier", "relier", "rechercher_souvenir"]))
+        # `ui_interlocuteur` est appelé par Aria (préfixe ui_ : jamais proposé au LLM par components/mcp.py)
+        self.assertEqual(self.outils(), sorted(["identifier_interlocuteur", "memoriser", "noter_observation", "oublier", "relier", "rechercher_souvenir",
+                                                "ui_interlocuteur"]))
 
     def test_le_canal_d_origine_ne_change_pas(self):
         self.assertEqual(self.outils("/mcp", self.direct), ["memoriser", "oublier", "rechercher_souvenir", "relier"])
@@ -298,6 +321,30 @@ class CanalTests(Base):
         out = self.appel("memoriser", {"fait": "Fait forgé", "speaker": self.olivier, "o": self.olivier, "owner": self.olivier})
         self.assertIn("Interlocuteur inconnu", out)
         self.assertIsNone(self.rec("Fait forgé"))
+
+    def interlocuteur(self, **kw):
+        return json.loads(self.appel("ui_interlocuteur", {}, **kw))
+
+    def test_outil_ui_interlocuteur_renvoie_celui_de_la_session(self):
+        self.assertEqual(self.interlocuteur(), {"id": "", "nom": ""})
+        self.appel("identifier_interlocuteur", {"nom": "Tiphaine", "complement": "Cousinier"})
+        self.assertEqual(self.interlocuteur(), {"id": self.personne("Tiphaine")["id"], "nom": "Tiphaine Cousinier"})
+        self.assertEqual(self.interlocuteur(session="autre"), {"id": "", "nom": ""})                   # une autre session ne le voit pas
+        self.assertEqual(self.interlocuteur(cle="k_autre", nom="Autre"), {"id": "", "nom": ""})         # ni un autre accès
+
+    def test_ui_interlocuteur_donne_celui_fourni_par_l_application(self):
+        self.assertEqual(self.interlocuteur(speaker=("Tiphaine", "Cousinier"))["nom"], "Tiphaine Cousinier")
+
+    def test_ui_interlocuteur_n_est_pas_sur_le_canal_d_origine(self):
+        self.assertNotIn("ui_interlocuteur", self.outils("/mcp", self.direct))
+
+    def test_le_llm_ne_peut_pas_changer_d_interlocuteur_en_cours_de_session(self):
+        self.appel("identifier_interlocuteur", {"nom": "Tiphaine", "complement": "Cousinier"})
+        out = self.appel("identifier_interlocuteur", {"nom": "Charles-Henri", "complement": "Cousinier"})
+        self.assertIn("déjà", out)
+        self.assertEqual(self.interlocuteur()["nom"], "Tiphaine Cousinier")
+        self.appel("memoriser", {"fait": "Fait de la session"})
+        self.assertEqual(self.rec("Fait de la session")["o"], self.personne("Tiphaine")["id"])
 
     def test_authentification_du_canal_inchangee(self):
         """Le garde (secret) s'applique aussi à /mcp-i : testé sur l'application complète (le garde répond avant tout outil, sans gestionnaire de session)."""
