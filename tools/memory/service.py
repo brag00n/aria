@@ -51,5 +51,45 @@ class Service:
             lines.extend(f"- {r['txt']}" for r in proches)
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------ accès tiers « qui publie les infos de son interlocuteur »
+    # Le tiers a alors les droits d'Aria pour la personne qui lui parle (`speaker`, propre à sa session, jamais `store.active`) ; ses propres
+    # observations (`system`) restent dans sa mémoire privée, par l'outil séparé noter_observation.
+    def _speaker_ok(self, speaker):
+        """Un interlocuteur est une personne connue qui n'est PAS un accès d'application : un système ne parle jamais « au nom » d'un autre système."""
+        return bool(speaker) and self.store.personnes.get(speaker) is not None and not self.store.is_system(speaker)
+
+    def memoriser_pour(self, speaker, fait, type="fait", tags="", trace=None):
+        if not self._speaker_ok(speaker):
+            return self.i.refus("unknown_speaker")
+        status, rec = self.store.add(fait, type, tags, src="llm", owner=speaker, trace=trace)
+        if status == "added":
+            return f"OK {rec['id']}"
+        if status == "duplicate":
+            return f"Déjà connu ({rec['id']}), renforcé."
+        return self.i.refus(status)
+
+    def rechercher_pour(self, speaker, system, question="", limite=5):
+        """Souvenirs de l'interlocuteur et du foyer (comme Aria), puis les observations propres du tiers."""
+        who = speaker if self._speaker_ok(speaker) else ""
+        text = self.rechercher(question, limite, principal=who)
+        propres, _ = self.store.search(question, limite, src="llm", owner=system)
+        vus = set(text.split())
+        propres = [r for r in propres if r.get("o") == system and r["id"] not in vus]
+        if not propres:
+            return text
+        lignes = ["Tes propres observations :"] + [_line(r) for r in propres]
+        return ("\n".join(lignes)) if text == "Aucun souvenir." else text + "\n" + "\n".join(lignes)
+
+    def oublier_pour(self, speaker, system, rid, trace=None):
+        rid = (rid or "").strip()
+        if self._speaker_ok(speaker) and self.store.delete(rid, why="user", src="llm", owner=speaker, trace=trace):
+            return "Oublié."
+        return "Oublié." if self.store.delete(rid, why="user", src="llm", owner=system, trace=trace) else "Souvenir introuvable."
+
+    def relier_pour(self, speaker, personne_a, lien, personne_b, precision="", trace=None):
+        if not self._speaker_ok(speaker):
+            return self.i.refus("unknown_speaker")
+        return self.i.relier(personne_a, lien, personne_b, precision, principal=speaker, trace=trace)
+
     def oublier(self, rid, principal=None, trace=None):
         return "Oublié." if self.store.delete((rid or "").strip(), why="user", src="llm", owner=principal, trace=trace) else "Souvenir introuvable."

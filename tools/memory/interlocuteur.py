@@ -106,6 +106,28 @@ class Interlocuteurs:
             return f"OK, {label} créé et actif. " + APRES_CREATION.format(nom=person["nom"])
         return f"OK, {label} est maintenant actif." + (" (Changement d'interlocuteur.)" if previous and previous != person["id"] else "")
 
+    def identifier_session(self, nom, complement="", surnom="", courant="", trace=None):
+        """Désigne l'interlocuteur d'UNE SESSION d'accès tiers (celui d'Aria, `store.active`, n'est jamais touché : un tiers ne change pas à qui parle
+        Aria). Mêmes règles qu'`identifier` (homonymes, création, fiche complétée). Retourne (texte pour le LLM, identifiant de l'interlocuteur) ;
+        l'identifiant est `courant` inchangé si rien n'est désigné. Un accès tiers (système) n'est jamais un interlocuteur."""
+        completed = self._completer_actif(nom, complement, surnom, pid=courant or "")        # '' : pas d'interlocuteur dans la session, pas celui d'Aria
+        if completed:
+            return completed, courant
+        status, person, candidates = self.store.personnes.resolve(nom, complement, surnom, trace=trace)
+        if status == "empty":
+            return "Je n'ai pas compris le nom. Demande-lui son prénom.", courant
+        if status == "ambiguous":
+            names = ", ".join(self.store.personnes.full(c) for c in candidates)
+            return (f"Plusieurs personnes portent ce prénom ({names}). N'active personne : demande le nom de famille "
+                    f"ou un surnom, puis rappelle identifier_interlocuteur avec le complément."), courant
+        if est_systeme(person):
+            return "Cette personne est un accès d'application, pas un interlocuteur. Demande le nom de la personne qui te parle.", courant
+        self.store.activity.log("speaker", frm=courant or "", to=person["id"], src="session")
+        label = self.store.personnes.full(person)
+        if status == "created":
+            return f"OK, {label} créé et interlocuteur. " + APRES_CREATION.format(nom=person["nom"]), person["id"]
+        return f"OK, {label} est maintenant l'interlocuteur.", person["id"]
+
     def relier(self, personne_a, lien, personne_b, precision="", principal=None, trace=None, publier=False):
         """Outil relier : mémorise « personne_a est le <lien> de personne_b » (« moi » = l'interlocuteur actif). `lien` appartient à une liste
         fermée (liens.TYPES) ; `autre` + `precision` couvre le reste. Un lien hors liste est refusé avec la liste, pour que le LLM corrige.
@@ -201,10 +223,11 @@ class Interlocuteurs:
         }.get(status, "Rien à retenir.")
 
     # ------------------------------------------------------------------ aides
-    def _completer_actif(self, nom, complement, surnom):
+    def _completer_actif(self, nom, complement, surnom, pid=None):
         """L'interlocuteur actif donne plus de détails sur lui (« Tiphaine », puis « Tiphaine Cousinier, appelez-moi Titi ») :
         on complète sa fiche au lieu de créer un homonyme. Retourne le texte de réponse, ou None si ce n'est pas ce cas."""
-        person = self.store.personnes.get(self.store.active)
+        # `pid` = interlocuteur d'une SESSION d'accès tiers : '' veut dire « personne », jamais « celui d'Aria » (seul None retombe sur `store.active`)
+        person = self.store.personnes.get(self.store.active if pid is None else pid)
         if not person:
             return None
         nom, complement, surnom = (" ".join(str(x or "").split())[:60] for x in (nom, complement, surnom))

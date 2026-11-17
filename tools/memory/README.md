@@ -36,6 +36,7 @@ se lisent sans migration. L'identité suit la **clé interne** : renommer l'acc�
 | Ce qu'il écrit | toujours **privé** (propriétaire = lui), même de type `foyer` ou `relation` | comme avant |
 | Liens (`relier`) | seulement entre **lui** (« moi ») et une personne : jamais entre deux humains ; **privés** par défaut ; **publics** avec l'option de sa clé (en-tête `X-Memory-Publish: 1`, posé par Aria), qui lui permet aussi de créer une fiche **« à valider »** (5 par 24 h) et de mettre à jour ou oublier **ses** liens (`rel.par`), jamais ceux des autres | tous |
 | Oublier | ses souvenirs seulement | les siens et le partagé |
+| Droit « publier les informations de son interlocuteur » (canal `/mcp-i`, en-têtes `X-Memory-Session` et `X-Memory-Speaker` posés par Aria) | agit **au nom de la personne qui lui parle**, avec les droits d'Aria : souvenirs à son nom, liens entre n'importe quelles personnes, fiches sans validation. L'interlocuteur est propre à la **session** (jamais `store.active`) ; ses constats restent privés (`noter_observation`). La personne n'est **pas authentifiée** | - |
 | Changer d'identité (`identifier_interlocuteur`, `ui_*`) | **impossible**, refusé par le serveur | oui |
 | Débit d'écriture | borné **par principal** (un tiers bavard ne bloque pas Aria) | idem |
 
