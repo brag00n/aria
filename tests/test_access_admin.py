@@ -25,9 +25,17 @@ def free_port():
 class FakeSessions:
     def __init__(self):
         self.closed = []
+        self.closed_sessions = []
+        self.open = {"k_1:s"}                      # sessions « ouvertes » du faux registre
 
     def request_close_key(self, kid):
         self.closed.append(kid)
+
+    def request_close_session(self, sid):
+        if sid not in self.open:
+            return False
+        self.closed_sessions.append(sid)
+        return True
 
     def stats(self):
         return [{"id": "k_1:s", "key": "k_1", "profile": "portail", "idle_s": 3}]
@@ -360,6 +368,31 @@ class JournalTests(AdminCase):
         self.assertIn(vue["id"], self.sessions.closed)                       # les sessions ouvertes repartent avec le nouveau droit
         self.assertIn("publish_speaker", admin_ui.PAGE)
         self.assertIn("PAS authentifiée", admin_ui.PAGE)                     # l'avertissement est dans la page
+
+    def test_fermer_une_session_depuis_la_page(self):
+        r = self.call("POST", "/api/sessions/close", {"id": "k_1:s"})[1]
+        self.assertTrue(r["ok"])
+        self.assertEqual(self.sessions.closed_sessions, ["k_1:s"])
+        self.assertIn(("session_closed", {"id": "k_1:s", "ok": True}), self.audit)
+
+    def test_fermer_une_session_inconnue_ne_ferme_rien(self):
+        for sid in ("k_1:autre", "", "k_2:s", "../k_1:s", "k_1:s ", "x" * 500):
+            r = self.call("POST", "/api/sessions/close", {"id": sid})[1]
+            self.assertFalse(r["ok"], sid)
+        self.assertEqual(self.sessions.closed_sessions, [])
+
+    def test_fermer_une_session_exige_jeton_origine_et_hote(self):
+        corps = {"id": "k_1:s"}
+        self.assertEqual(self.call("POST", "/api/sessions/close", corps, token=None)[0], 401)
+        self.assertEqual(self.call("POST", "/api/sessions/close", corps, origin=None)[0], 403)
+        self.assertEqual(self.call("POST", "/api/sessions/close", corps, origin="http://evil.example.com")[0], 403)
+        self.assertEqual(self.call("POST", "/api/sessions/close", corps, host="evil.example.com")[0], 403)
+        self.assertEqual(self.sessions.closed_sessions, [])
+
+    def test_la_page_a_le_bouton_de_fermeture_sans_innerhtml(self):
+        self.assertIn("/api/sessions/close", admin_ui.PAGE)
+        self.assertIn("confirm(", admin_ui.PAGE)
+        self.assertNotIn("innerHTML", admin_ui.PAGE)
 
     def test_la_page_a_son_onglet_sans_innerhtml(self):
         self.assertIn('data-t="jrn"', admin_ui.PAGE)

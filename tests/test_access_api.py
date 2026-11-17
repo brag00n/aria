@@ -513,6 +513,58 @@ class MoteurPromptTests(unittest.TestCase):
             llm_mod.Llm = original
 
 
+class FermetureParAdminTests(ApiCase):
+    """`request_close_session` : fermeture ciblée depuis la page d'administration (autre thread), sans effet sur les autres sessions."""
+
+    def sid(self, nom, vue=None):
+        return f"{(vue or self.view)['id']}:{nom}"
+
+    def fermer(self, sid):
+        """Demande la fermeture depuis le thread du test (comme la page d'administration), puis laisse la boucle de l'API la traiter."""
+        import time
+        ok = self.sessions.request_close_session(sid)
+        for _ in range(50):
+            if sid not in self.sessions.sessions:
+                break
+            time.sleep(0.05)
+        return ok
+
+    def test_ferme_seulement_la_session_visee(self):
+        self.turn({"text": "a", "session": "s1"})
+        self.turn({"text": "b", "session": "s2"})
+        self.assertTrue(self.fermer(self.sid("s1")))
+        self.assertNotIn(self.sid("s1"), self.sessions.sessions)
+        self.assertIn(self.sid("s2"), self.sessions.sessions)
+
+    def test_session_inconnue_ou_vide_retourne_faux_et_ne_cree_rien(self):
+        self.turn({"text": "a", "session": "s1"})
+        avant = set(self.sessions.sessions)
+        for sid in ("", "inconnue", self.sid("absente"), None):
+            self.assertFalse(self.sessions.request_close_session(sid))
+        self.assertEqual(set(self.sessions.sessions), avant)
+
+    def test_la_session_fermee_repart_neuve_au_tour_suivant(self):
+        self.turn({"text": "a", "session": "s1"})
+        self.assertEqual(len(self.engines), 1)
+        self.fermer(self.sid("s1"))
+        r = self.turn({"text": "b", "session": "s1"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(self.engines), 2)                                  # un nouveau moteur : historique vide
+
+    def test_les_sessions_d_une_autre_cle_ne_sont_pas_touchees(self):
+        autre, cle = self.keys.create("Autre", [ORIGIN], profile="portail", limits={"rate_per_min": 100, "daily_turns": 100})
+        self.turn({"text": "a", "session": "s1"})
+        self.turn({"text": "b", "session": "s1"}, headers=self.hdr(cle))
+        self.fermer(self.sid("s1"))
+        self.assertNotIn(self.sid("s1"), self.sessions.sessions)
+        self.assertIn(self.sid("s1", autre), self.sessions.sessions)
+
+    def test_fermer_deux_fois_est_sans_danger(self):
+        self.turn({"text": "a", "session": "s1"})
+        self.assertTrue(self.fermer(self.sid("s1")))
+        self.assertFalse(self.sessions.request_close_session(self.sid("s1")))
+
+
 class InterlocuteurCourantTests(ApiCase):
     """L'interlocuteur courant d'une session est suivi (page d'administration) et porté par le journal d'audit (`who`), `src` gardant l'accès."""
 

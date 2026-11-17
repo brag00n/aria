@@ -200,6 +200,17 @@ class SessionRegistry:
         if loop is not None and loop.is_running():
             asyncio.run_coroutine_threadsafe(self.close_key(key_id), loop)
 
+    def request_close_session(self, sid):
+        """Ferme UNE session (identifiant complet « clé:session ») depuis un AUTRE thread (page d'administration). Retourne True si elle existait au moment
+        de la demande ; la fermeture elle-même est planifiée dans la boucle de l'API. Ne crée jamais de session et n'en touche aucune autre."""
+        sid = str(sid or "")
+        if sid not in self.sessions:
+            return False
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.close(sid), loop)
+        return True
+
     async def close_all(self):
         for sid in list(self.sessions):
             await self.close(sid)

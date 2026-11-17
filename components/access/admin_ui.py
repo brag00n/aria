@@ -160,6 +160,11 @@ def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=(), e
                     self._close_sessions(kid)
                 log("key_deleted", id=kid)
                 return self._json({"ok": ok})
+            if path == "/api/sessions/close":
+                sid = str(body.get("id", ""))[:120]
+                ok = bool(sessions and getattr(sessions, "request_close_session", None) and sessions.request_close_session(sid))
+                log("session_closed", id=sid, ok=ok)
+                return self._json({"ok": ok} if ok else {"ok": False, "erreur": "session inconnue ou déjà fermée"})
             if path == "/api/journal/purge-age":
                 r = audit_retention.purge_auto(echanges._settings["retention_days"], store.retention_of, par="admin")
                 log("audit_purge_age", lignes=r["lignes"], fichiers=r["fichiers"])
@@ -333,9 +338,10 @@ async function renderProfils(main){
 }
 async function renderSessions(main){
   const rows=await get('/api/sessions');
-  main.append(el('table',{},el('tr',{},...['Session','Clé','Profil','Interlocuteur','Inactive depuis'].map(h=>el('th',{},h))),
+  main.append(el('table',{},el('tr',{},...['Session','Clé','Profil','Interlocuteur','Inactive depuis',''].map(h=>el('th',{},h))),
     ...rows.map(s=>el('tr',{},el('td',{},s.id),el('td',{},s.key),el('td',{},s.profile),
-      el('td',{className:s.speaker?'':'mut'},s.speaker===null?'–':(s.speaker||'inconnu')),el('td',{className:'mut'},s.idle_s+' s')))));
+      el('td',{className:s.speaker?'':'mut'},s.speaker===null?'–':(s.speaker||'inconnu')),el('td',{className:'mut'},s.idle_s+' s'),
+      el('td',{},el('button',{title:'Fermer cette session et libérer sa place (le journal d\u2019audit et les souvenirs sont conservés)',onclick:async()=>{if(!confirm('Fermer la session « '+s.id+' » ?'))return;const r=await post('/api/sessions/close',{id:s.id});say(r.ok?'Session fermée':(r.erreur||'Impossible'));setTimeout(render,400)}},'🗑'))))));
   if(!rows.length)main.append(el('p',{className:'mut'},'Aucune session ouverte.'));
 }
 async function renderJournal(main){
