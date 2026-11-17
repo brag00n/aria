@@ -26,7 +26,7 @@ déjà présent dans l'image. Les données sont **100 % locales**, en JSONL lisi
 ## Accès tiers : des personnes de type système
 
 Il n'y a **qu'un seul serveur de mémoire** : c'est lui qui garantit l'intégrité et la confidentialité. Une application ou un appareil tiers (un robot) y est une
-**personne de type système** (`type: "systeme"`, `cle` = identifiant interne de son accès, voir `docs/access.md`). Absence de `type` = humain : les fichiers existants
+**personne de type système** (`type: "systeme"`, `cle` = identifiant interne de son accès, voir `docs/agents.md`). Absence de `type` = humain : les fichiers existants
 se lisent sans migration. L'identité suit la **clé interne** : renommer l'accès ou régénérer sa clé API ne fait pas perdre sa mémoire.
 
 | | Système (accès tiers) | Humain (Aria, page de gestion) |

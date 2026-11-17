@@ -60,7 +60,7 @@ from components import visualizer, mic_toggle
 from components.language import Language, normalize
 from components.conversation import Conversation
 from components import https
-from components import memory_tab, access_tab, audit_retention, echanges, settings as settings_mod
+from components import memory_tab, agents_tab, audit_retention, echanges, settings as settings_mod
 from components import interlocuteur
 from components import history as history_mod
 utils.log_info("app","Stt, Llm, Tts chargés")
@@ -71,7 +71,7 @@ DEBUG_SAVE_WAV = False
 _TMP_DIR = utils.aria_path("tmp", "tts")
 _CONFIG_FILE = "configs/default.json"
 _boucle_mcp = {}          # boucle asyncio qui porte les sessions MCP (posée au démarrage de l'application)
-access_srv = None          # serveur de l'API tierce (components/access/server.py), None si la fonction est désactivée
+agents_srv = None          # serveur de l'API tierce (components/agents/server.py), None si la fonction est désactivée
 
 if os.path.exists(_TMP_DIR):
     shutil.rmtree(_TMP_DIR)
@@ -100,7 +100,8 @@ vad = Vad(config["vad"][active_vad]["params"])
 stt = Stt(config["stt"][active_stt]["params"], language=language)
 # Secret du canal HTTP de la mémoire : généré à CHAQUE démarrage, en mémoire vive seulement. Il passe par une copie de la config réservée au LLM
 # d'Aria (jamais dans `config`, qui est réécrite dans default.json) ; le gestionnaire MCP le transmet au processus mémoire par son environnement.
-from components.access import memory_link
+from components.agents import compat as agents_compat, memory_link
+agents_compat.migrate_config(config)          # ancienne section « access » -> « agents » (en mémoire ; le fichier est réécrit à la prochaine sauvegarde des Paramètres)
 llm = Llm(config["llm"][active_llm]["params"], all_config={**config, "_memory_secret": memory_link.new_secret()}, language=language)
 tts = Tts(config["tts"][active_tts]["params"], language=language)
 conv = Conversation(config.get("conversation"))   # sessions de conversation + mots d'arrêt
@@ -150,14 +151,14 @@ def update_config_ui(global_json, vad_choix, vad_json, conv_json, memory_json, s
             echanges.configure(echanges.directory(), enabled=a.get("enabled", True), log_text=a.get("log_text", True),
                                retention_days=a.get("retention_days", echanges.DEFAULT_RETENTION_DAYS))
         closed, warnings = 0, []
-        if changed and access_srv is not None:
-            from components.access import server as access_server
-            used = access_server.keys_using_profiles(access_srv, changed)
+        if changed and agents_srv is not None:
+            from components.agents import server as agents_server
+            used = agents_server.keys_using_profiles(agents_srv, changed)
             if used:
                 warnings.append("Des clés utilisent un profil modifié ou supprimé : " + ", ".join(used)
                                 + ". Un profil supprimé donne une erreur à ces clés ; cochez « Fermer les conversations ouvertes » pour appliquer le changement tout de suite.")
             if close_open:
-                closed = access_server.close_sessions_for_profiles(access_srv, changed)
+                closed = agents_server.close_sessions_for_profiles(agents_srv, changed)
         return settings_mod.save_message(changed, closed, warnings)
     except json.JSONDecodeError as e:
         return f"❌ Erreur de syntaxe JSON dans l'un des blocs : {str(e)}"
@@ -737,7 +738,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                 gr.Markdown("#### 🔑 Accès tiers : profils")
                 profiles_help_md = gr.Markdown(settings_mod.profiles_help(config))
                 profiles_code = gr.Code(
-                    value=json.dumps((config.get("access") or {}).get("profiles", {}), indent=2, ensure_ascii=False),
+                    value=json.dumps(agents_compat.section(config).get("profiles", {}), indent=2, ensure_ascii=False),
                     language="json",
                     label="Profils d'accès (chaque clé API d'une application tierce en choisit un)",
                     lines=12
@@ -836,11 +837,11 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
             memory_tab_item.select(None, None, None, js=memory_tab.js_reload())
 
         # --- ONGLET ACCÈS TIERS (clés API des applications tierces) : seulement si "access.enabled" est vrai dans la config ---
-        _access_port = access_tab.admin_port(config)
-        if _access_port:
-            with gr.TabItem("🔑 Accès tiers") as access_tab_item:
-                gr.HTML(access_tab.html(_access_port))
-            access_tab_item.select(None, None, None, js=access_tab.js_reload())
+        _agents_port = agents_tab.admin_port(config)
+        if _agents_port:
+            with gr.TabItem("🔑 Accès tiers") as agents_tab_item:
+                gr.HTML(agents_tab.html(_agents_port))
+            agents_tab_item.select(None, None, None, js=agents_tab.js_reload())
 
     ariaHmi.load(None, None, None, js=JS_ON_LOAD)
     # Au chargement de la page : liste à jour (ou masquée si le serveur de mémoire est absent)
@@ -924,13 +925,13 @@ if __name__ == "__main__":
     _https_args = https.launch_args(config.get("https"))
     # Accès des applications tierces par clé API (config "access", désactivé par défaut) : API sur un port dédié
     try:
-        from components.access import server as access_server
-        access_srv = access_server.start(config, stt, tts, _https_args, language=language, effacer_traces=_effacer_traces_memoire)
+        from components.agents import server as agents_server
+        agents_srv = agents_server.start(config, stt, tts, _https_args, language=language, effacer_traces=_effacer_traces_memoire)
     except Exception as e:                          # jamais empêcher Aria de démarrer à cause de cette option
         utils.log_info("ACCESS", f"❌ API tierce non démarrée : {type(e).__name__}: {e}")
     # Purge automatique du journal d'audit (au démarrage puis toutes les 6 h) : durée par défaut et durée de chaque accès relues à chaque passage
     def _reglages_audit():
-        cles = getattr(getattr(access_srv, "access_deps", None), "keys", None)
+        cles = getattr(getattr(agents_srv, "agents_deps", None), "keys", None)
         jours = (config.get("audit") or {}).get("retention_days", echanges.DEFAULT_RETENTION_DAYS)
         return jours, (cles.retention_of if cles else None)
     try:

@@ -17,7 +17,7 @@ try:
 except ImportError:
     HAVE_STARLETTE = False
 
-from components.access import api, keys, profile, sessions  # noqa: E402
+from components.agents import api, keys, profile, sessions  # noqa: E402
 
 ORIGIN = "https://app.example.com"
 
@@ -83,7 +83,7 @@ class ApiCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="accapi_"))
         # Config d'Aria factice : les profils y sont lus en direct, comme dans l'application
-        self.config = {"access": {"profiles": {"portail": {"description": "Portail"}, "autre": {"description": "Autre"}}}}
+        self.config = {"agents": {"profiles": {"portail": {"description": "Portail"}, "autre": {"description": "Autre"}}}}
         self.keys = keys.KeyStore(self.tmp / "data")
         self.engines = []
 
@@ -734,14 +734,14 @@ class InterlocuteurFourniTests(ApiCase):
 
 
 class ProfilsEnDirectTests(ApiCase):
-    """Fermeture des conversations d'un profil modifié depuis l'onglet Paramètres (components/access/server.py)."""
+    """Fermeture des conversations d'un profil modifié depuis l'onglet Paramètres (components/agents/server.py)."""
 
     def setUp(self):
         super().setUp()
-        from components.access import server as srv
+        from components.agents import server as srv
         self.srv_mod = srv
         self.server = type("Srv", (), {})()
-        self.server.access_deps = self.deps                                          # ce que start() attache à l'objet serveur
+        self.server.agents_deps = self.deps                                          # ce que start() attache à l'objet serveur
 
     def test_clés_utilisant_un_profil(self):
         v2, k2 = self.keys.create("Autre appli", [ORIGIN], profile="autre")
@@ -776,21 +776,21 @@ class ProfilsEnDirectTests(ApiCase):
         self.assertTrue(restant[0].startswith(v2["id"]), restant)
 
     def test_une_nouvelle_conversation_prend_le_profil_modifie(self):
-        self.config["access"]["profiles"]["portail"] = {"description": "Modifié", "system_message": "NOUVELLES REGLES"}
+        self.config["agents"]["profiles"]["portail"] = {"description": "Modifié", "system_message": "NOUVELLES REGLES"}
         self.turn({"text": "x", "session": "neuve"})
         self.assertEqual(self.engines[-1].name, "portail")
         self.assertEqual(self.sessions.sessions[next(iter(self.sessions.sessions))].profile["system_message"], "NOUVELLES REGLES")
 
     def test_une_conversation_ouverte_garde_l_ancien_profil_jusqu_a_fermeture(self):
         self.turn({"text": "x", "session": "s1"})
-        self.config["access"]["profiles"]["portail"] = {"system_message": "APRES"}
+        self.config["agents"]["profiles"]["portail"] = {"system_message": "APRES"}
         self.turn({"text": "y", "session": "s1"})
         self.assertEqual(len(self.engines), 1)                                       # même moteur : l'ancien profil reste en place
         sess = next(iter(self.sessions.sessions.values()))
         self.assertEqual(sess.profile["system_message"], "")
 
     def test_profil_supprime_donne_une_erreur_a_la_creation(self):
-        del self.config["access"]["profiles"]["portail"]
+        del self.config["agents"]["profiles"]["portail"]
         r = self.turn({"text": "x", "session": "nouvelle"})
         self.assertEqual(r.status_code, 500)
         self.assertEqual(r.json()["error"]["code"], "session")
@@ -838,14 +838,14 @@ CONFIG = {
         "memoire_stdio": {"run": "uv", "args": ["run", "tools/memory/server.py"], "env": {"MEMORY_DIR": "/aria/models/memoire_stdio"}}}}},
     "llm": {"Llm_Anthropic": {"params": {"backend_type": "anthropic"}}, "Llm_local": {"params": {"backend_type": "local"}},
             "Llm_Vide": {"params": {}}},
-    "access": {},
+    "agents": {},
 }
 
 
 def conf(profiles=None, **access):
     import copy
     c = copy.deepcopy(CONFIG)
-    c["access"] = {**access, "profiles": profiles or {}}
+    c["agents"] = {**access, "profiles": profiles or {}}
     return c
 
 
@@ -880,28 +880,32 @@ class ProfilTests(unittest.TestCase):
             self.p.load("absent")
 
     def test_liste_triee_et_noms_invalides_ignores(self):
-        self.config["access"]["profiles"] = {"b": {}, "a": {}, "../x": {}, "c d": {}}
+        self.config["agents"]["profiles"] = {"b": {}, "a": {}, "../x": {}, "c d": {}}
         self.assertEqual(self.p.names(), ["a", "b"])
 
+    def test_l_ancienne_section_access_est_encore_lue(self):
+        cfg = {"access": {"profiles": {"b": {}, "a": {}}}}
+        self.assertEqual(profile.ConfigProfiles(lambda c=cfg: c).names(), ["a", "b"])
+
     def test_sans_section_access_ni_profils(self):
-        for cfg in ({}, {"access": {}}, {"access": {"profiles": None}}, {"access": {"profiles": []}}):
+        for cfg in ({}, {"agents": {}}, {"agents": {"profiles": None}}, {"agents": {"profiles": []}}, {"access": {}}, {"access": {"profiles": None}}):
             self.assertEqual(profile.ConfigProfiles(lambda c=cfg: c).names(), [])
 
     def test_rechargement_a_chaud_la_config_vivante_est_relue_a_chaque_appel(self):
         self.assertEqual(self.p.names(), ["ok", "vide"])
-        self.config["access"]["profiles"]["nouveau"] = {"servers": ["web"]}
+        self.config["agents"]["profiles"]["nouveau"] = {"servers": ["web"]}
         self.assertEqual(self.p.names(), ["nouveau", "ok", "vide"])
         self.assertEqual(list(self.p.load("nouveau")["mcp"]["servers"]), ["web"])
-        self.config["access"]["profiles"]["ok"]["servers"] = ["web"]
+        self.config["agents"]["profiles"]["ok"]["servers"] = ["web"]
         self.assertEqual(list(self.p.load("ok")["mcp"]["servers"]), ["web"])
 
     def test_rechargement_a_chaud_apres_apply_profiles_qui_remplace_la_section_access(self):
-        # apply_profiles remplace config["access"] par un NOUVEAU dict : un lecteur qui aurait gardé l'ancien objet ne verrait rien
-        sections = self.config["access"]
+        # apply_profiles remplace config["agents"] par un NOUVEAU dict : un lecteur qui aurait gardé l'ancien objet ne verrait rien
+        sections = self.config["agents"]
         self.assertEqual(self.p.names(), ["ok", "vide"])
         ok, msg, changes, new = profile.apply_profiles(self.config, json.dumps({"seul": {"servers": ["loc"]}}))
         self.assertTrue(ok, msg)
-        self.assertIsNot(self.config["access"], sections)
+        self.assertIsNot(self.config["agents"], sections)
         self.assertEqual(self.p.names(), ["seul"])
         self.assertEqual(list(self.p.load("seul")["mcp"]["servers"]), ["loc"])
         with self.assertRaises(profile.ProfileError):
@@ -929,10 +933,10 @@ class ProfilTests(unittest.TestCase):
         self.assertEqual(p.load("a")["mcp"]["servers"]["web"]["url"], "http://nouvelle/mcp")
 
     def test_un_serveur_devenu_inconnu_ou_prive_est_refuse_au_chargement(self):
-        self.config["access"]["profiles"]["ok"]["servers"] = ["loc", "disparu"]
+        self.config["agents"]["profiles"]["ok"]["servers"] = ["loc", "disparu"]
         with self.assertRaises(profile.ProfileError):
             self.p.load("ok")
-        self.config["access"]["profiles"]["ok"]["servers"] = ["memoire_stdio"]
+        self.config["agents"]["profiles"]["ok"]["servers"] = ["memoire_stdio"]
         with self.assertRaises(profile.ProfileError):
             self.p.load("ok")                                                              # mémoire sans canal HTTP, même éditée à la main
 
@@ -1011,8 +1015,8 @@ class ApplicationProfilsTests(unittest.TestCase):
         ok, msg, changes, new = self.apply({"ancien": {"description": "avant", "servers": ["web"]}, "neuf": {"servers": ["loc"]}})
         self.assertTrue(ok, msg)
         self.assertEqual(changes, ["neuf"])
-        self.assertEqual(sorted(self.config["access"]["profiles"]), ["ancien", "neuf"])
-        self.assertEqual((self.config["access"]["enabled"], self.config["access"]["port"], self.config["access"]["private_servers"]),
+        self.assertEqual(sorted(self.config["agents"]["profiles"]), ["ancien", "neuf"])
+        self.assertEqual((self.config["agents"]["enabled"], self.config["agents"]["port"], self.config["agents"]["private_servers"]),
                          (True, 7861, ["memoire"]))
 
     def test_aucune_modification_en_cas_d_erreur(self):
@@ -1026,26 +1030,27 @@ class ApplicationProfilsTests(unittest.TestCase):
             self.assertEqual(self.config, avant, data)
 
     def test_une_seule_affectation_l_ancien_ensemble_n_est_jamais_modifie_en_place(self):
-        ancien = self.config["access"]["profiles"]
+        ancien = self.config["agents"]["profiles"]
         self.apply({"neuf": {}})
         self.assertEqual(list(ancien), ["ancien"])                  # un lecteur qui tenait l'ancien dict ne voit pas un état intermédiaire
-        self.assertEqual(list(self.config["access"]["profiles"]), ["neuf"])
+        self.assertEqual(list(self.config["agents"]["profiles"]), ["neuf"])
 
     def test_texte_vide_supprime_tous_les_profils(self):
         ok, msg, changes, new = self.apply("  ")
         self.assertTrue(ok)
-        self.assertEqual((self.config["access"]["profiles"], changes), ({}, ["ancien"]))
+        self.assertEqual((self.config["agents"]["profiles"], changes), ({}, ["ancien"]))
 
     def test_profils_modifies_retires_et_ajoutes(self):
         self.assertEqual(profile.changed_profiles({"a": {"x": 1}, "b": 1, "c": 1}, {"a": {"x": 2}, "c": 1, "d": 1}), ["a", "b", "d"])
         self.assertEqual(profile.changed_profiles(None, {"a": 1}), ["a"])
         self.assertEqual(profile.changed_profiles({"a": 1}, {"a": 1}), [])
 
-    def test_sans_section_access(self):
+    def test_sans_section_agents(self):
         cfg = copy_without_access = {"mcp": CONFIG["mcp"], "llm": CONFIG["llm"]}
         ok, msg, changes, new = profile.apply_profiles(cfg, json.dumps({"a": {"servers": ["web"]}}))
         self.assertTrue(ok, msg)
-        self.assertEqual(cfg["access"], {"profiles": {"a": {"servers": ["web"]}}})
+        self.assertEqual(cfg["agents"], {"profiles": {"a": {"servers": ["web"]}}})
+        self.assertNotIn("access", cfg)
 
     def test_serveurs_exposables(self):
         # self.config ferme « memoire » (private_servers) : il n'est ni proposé ni accepté ; memoire_stdio n'a pas de canal HTTP

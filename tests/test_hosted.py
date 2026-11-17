@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from components.access import profile  # noqa: E402
+from components.agents import profile  # noqa: E402
 
 ARGS = ["run", "/aria/tools/memory/server.py"]
 RACINE = Path(__file__).resolve().parent.parent

@@ -1,4 +1,4 @@
-"""Façade HTTP du serveur de mémoire, pour les accès tiers (components/access/). Le MÊME processus et le MÊME Store que la façade stdio d'Aria :
+"""Façade HTTP du serveur de mémoire, pour les accès tiers (components/agents/). Le MÊME processus et le MÊME Store que la façade stdio d'Aria :
 un seul écrivain, un seul verrou, une seule mémoire.
 
 Sécurité (le serveur impose l'identité, jamais le client) :

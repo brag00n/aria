@@ -12,7 +12,7 @@
  *   </script>
  *
  * Événements : state, text, user_text, tool, audio-start, audio-end, done, error({code, message}), warning({code, message}), level({source, value}).
- * Aucune interface n'est imposée : la page tierce dessine ses propres boutons et sa propre visualisation (voir docs/access.md) :
+ * Aucune interface n'est imposée : la page tierce dessine ses propres boutons et sa propre visualisation (voir docs/agents.md) :
  *   aria.on("level", ({source, value}) => …)   niveau sonore 0..1 de "mic" (votre voix) ou "voice" (celle d'Aria), une mesure toutes les 50 ms
  *   aria.analyser("voice" | "mic")             AnalyserNode Web Audio pour un spectre ou une forme d'onde personnalisés
  *   aria.bindState(element)                    écrit data-aria-state et la variable CSS --aria-level sur l'élément : habillage en CSS pur

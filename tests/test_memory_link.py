@@ -1,4 +1,4 @@
-"""Liaison des accès tiers avec le serveur de mémoire unique (components/access/memory_link.py) : secret du canal, identité, serveurs résolus.
+"""Liaison des accès tiers avec le serveur de mémoire unique (components/agents/memory_link.py) : secret du canal, identité, serveurs résolus.
 Bibliothèque standard seulement."""
 import json
 import sys
@@ -8,7 +8,7 @@ from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from components.access import memory_link, profile, sessions  # noqa: E402
+from components.agents import memory_link, profile, sessions  # noqa: E402
 
 MEM = {"run": "uv", "args": ["run", "/aria/tools/memory/server.py"], "env": {"MEMORY_DIR": "/aria/models/memory", "MEMORY_HTTP_PORT": "7872"}}
 STDIO = {"run": "uv", "args": ["run", "/aria/tools/memory/server.py"], "env": {"MEMORY_DIR": "/aria/models/autre"}}

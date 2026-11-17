@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from components import access_tab, audit_retention, echanges  # noqa: E402
-from components.access import admin_ui, keys, profile  # noqa: E402
+from components import agents_tab, audit_retention, echanges  # noqa: E402
+from components.agents import admin_ui, keys, profile  # noqa: E402
 
 ORIGIN = "https://app.example.com"
 
@@ -404,18 +404,18 @@ class JournalTests(AdminCase):
 
 class OngletTests(unittest.TestCase):
     def test_port_seulement_si_active(self):
-        self.assertIsNone(access_tab.admin_port({}))
-        self.assertIsNone(access_tab.admin_port({"access": {"enabled": False}}))
-        self.assertEqual(access_tab.admin_port({"access": {"enabled": True}}), 7871)
-        self.assertEqual(access_tab.admin_port({"access": {"enabled": True, "admin_port": 9000}}), 9000)
-        self.assertIsNone(access_tab.admin_port({"access": {"enabled": True, "admin_port": "abc"}}))
-        self.assertIsNone(access_tab.admin_port({"access": {"enabled": True, "admin_port": 70000}}))
+        self.assertIsNone(agents_tab.admin_port({}))
+        self.assertIsNone(agents_tab.admin_port({"access": {"enabled": False}}))
+        self.assertEqual(agents_tab.admin_port({"access": {"enabled": True}}), 7871)
+        self.assertEqual(agents_tab.admin_port({"access": {"enabled": True, "admin_port": 9000}}), 9000)
+        self.assertIsNone(agents_tab.admin_port({"access": {"enabled": True, "admin_port": "abc"}}))
+        self.assertIsNone(agents_tab.admin_port({"access": {"enabled": True, "admin_port": 70000}}))
 
     def test_cadre_local_uniquement(self):
-        html = access_tab.html(7871)
+        html = agents_tab.html(7871)
         self.assertIn("http://127.0.0.1:7871/", html)
         self.assertIn("iframe", html)
-        self.assertIn("aria_access_frame", access_tab.js_reload())
+        self.assertIn("aria_agents_frame", agents_tab.js_reload())
 
 
 if __name__ == "__main__":

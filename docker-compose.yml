@@ -15,7 +15,7 @@ services:
       - "7860:7860"
       # Page de gestion de la mémoire (tools/memory/ui.py) : accessible depuis ce PC uniquement
       - "127.0.0.1:7870:7870"
-      # Accès des applications tierces (config "access", docs/access.md) : API pour le réseau local, administration sur ce PC uniquement
+      # Accès des applications tierces (config "access", docs/agents.md) : API pour le réseau local, administration sur ce PC uniquement
       - "7861:7861"
       - "127.0.0.1:7871:7871"
     # Les secrets (ANTHROPIC_API_KEY...) sont lus dans .env, jamais commités

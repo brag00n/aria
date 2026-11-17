@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from components.access import keys, security  # noqa: E402
+from components.agents import keys, security  # noqa: E402
 
 
 class Clock:
@@ -43,7 +43,7 @@ class CreationTests(StoreCase):
         vue, cle = self.new()
         self.assertTrue(cle.startswith("ak_") and len(cle) > 40)
         self.assertEqual(vue["prefix"], cle[:7])
-        contenu = (self.tmp / "keys.json").read_text("utf-8")
+        contenu = (self.tmp / "agents.json").read_text("utf-8")
         self.assertNotIn(cle, contenu)
         self.assertNotIn(cle[3:], contenu)
         self.assertNotIn("hash", json.dumps(self.store.list()))                    # jamais renvoyé à la page d'administration
@@ -76,7 +76,7 @@ class CreationTests(StoreCase):
         self.assertEqual(autre.authenticate(cle)[0], "unknown")
 
     def test_fichier_corrompu_ne_plante_pas(self):
-        (self.tmp / "keys.json").write_text("{pas du json", "utf-8")
+        (self.tmp / "agents.json").write_text("{pas du json", "utf-8")
         self.assertEqual(keys.KeyStore(self.tmp).list(), [])
 
 
@@ -137,13 +137,13 @@ class AuthentificationTests(StoreCase):
 
     def test_last_used_ecrit_au_plus_une_fois_par_minute(self):
         _, cle = self.new()
-        mtime = (self.tmp / "keys.json").stat().st_mtime_ns
+        mtime = (self.tmp / "agents.json").stat().st_mtime_ns
         self.store.authenticate(cle)
         self.store.authenticate(cle)
-        self.assertEqual((self.tmp / "keys.json").stat().st_mtime_ns, mtime)
+        self.assertEqual((self.tmp / "agents.json").stat().st_mtime_ns, mtime)
         self.clock.advance(61)
         self.store.authenticate(cle)
-        self.assertNotEqual((self.tmp / "keys.json").stat().st_mtime_ns, mtime)
+        self.assertNotEqual((self.tmp / "agents.json").stat().st_mtime_ns, mtime)
 
     def test_flush_ecrit_le_dernier_usage(self):
         vue, cle = self.new()
@@ -235,7 +235,7 @@ class RegenerationTests(StoreCase):
     def test_la_nouvelle_cle_n_est_jamais_stockee_en_clair(self):
         vue, _ = self.new()
         _, nouvelle = self.store.regenerate(vue["id"])
-        self.assertNotIn(nouvelle, (self.tmp / "keys.json").read_text("utf-8"))
+        self.assertNotIn(nouvelle, (self.tmp / "agents.json").read_text("utf-8"))
         self.assertNotIn(nouvelle, json.dumps(self.store.list()))
 
     def test_survit_au_rechargement(self):
@@ -293,7 +293,7 @@ class RetentionTests(StoreCase):
         rouvert = keys.KeyStore(self.store.dir)
         self.assertEqual(rouvert.retention_of(vue["id"]), 14)
         brut = json.loads(rouvert.path.read_text("utf-8"))
-        for k in brut["keys"]:
+        for k in brut["agents"]:
             k.pop("retention_days", None)                                 # fichier d'avant cette option
         rouvert.path.write_text(json.dumps(brut), "utf-8")
         self.assertEqual(keys.KeyStore(self.store.dir).retention_of(vue["id"]), 0)
@@ -318,7 +318,7 @@ class PublicationLiensTests(StoreCase):
         vue, _ = self.store.create("Robot", publish_links=True)
         self.assertTrue(keys.KeyStore(self.store.dir).get(vue["id"])["publish_links"])
         brut = json.loads(self.store.path.read_text("utf-8"))
-        for k in brut["keys"]:
+        for k in brut["agents"]:
             k.pop("publish_links", None)
         self.store.path.write_text(json.dumps(brut), "utf-8")
         self.assertFalse(keys.KeyStore(self.store.dir).get(vue["id"])["publish_links"])
@@ -348,7 +348,7 @@ class PublicationInterlocuteurTests(StoreCase):
         vue, _ = self.store.create("Robot", publish_speaker=True)
         self.assertTrue(keys.KeyStore(self.store.dir).get(vue["id"])["publish_speaker"])
         brut = json.loads(self.store.path.read_text("utf-8"))
-        for k in brut["keys"]:
+        for k in brut["agents"]:
             k.pop("publish_speaker", None)
         self.store.path.write_text(json.dumps(brut), "utf-8")
         self.assertFalse(keys.KeyStore(self.store.dir).get(vue["id"])["publish_speaker"])

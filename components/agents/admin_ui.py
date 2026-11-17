@@ -1,5 +1,5 @@
 """Page d'administration des accès tiers : clés API, domaines autorisés, profils MCP. Serveur http.server (bibliothèque standard), port dédié
-publié sur 127.0.0.1 seulement, intégré à l'interface d'Aria par un cadre (components/access_tab.py).
+publié sur 127.0.0.1 seulement, intégré à l'interface d'Aria par un cadre (components/agents_tab.py).
 
 Protections (reprises de tools/memory/ui.py, durcies) : en-tête Host dans une liste blanche (anti DNS rebinding), jeton `X-Token` généré
 au démarrage et comparé à temps constant, `Origin` OBLIGATOIRE et identique à l'hôte sur tout POST, JSON seulement, corps ≤ 16 Ko,

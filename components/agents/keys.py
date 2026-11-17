@@ -1,7 +1,7 @@
-"""Clés API des applications tierces d'Aria : création, vérification, révocation. Bibliothèque standard seulement.
+"""Agents d'Aria et leurs clés API : création, vérification, révocation. Bibliothèque standard seulement.
 
-Fichier `keys.json` (dossier de données, hors git), écrit de façon atomique :
-    {"keys": [{"id":"k_a1b2c3","label":"Portail","prefix":"ak_Xy12","hash":"<hmac>","created":"…","expires":"",
+Fichier `agents.json` (dossier de données, hors git), écrit de façon atomique (l'ancien `keys.json` est lu aussi, voir compat.py) :
+    {"agents": [{"id":"k_a1b2c3","label":"Portail","prefix":"ak_Xy12","hash":"<hmac>","created":"…","expires":"",
                "revoked":false,"origins":["https://app.example.com"],"profile":"portail","limits":{"rate_per_min":30,"daily_turns":500},
                "voice":true,"last_used":""}]}
 
@@ -16,6 +16,8 @@ import secrets
 import threading
 import time
 from pathlib import Path
+
+from . import compat
 
 KEY_PREFIX = "ak_"
 DEFAULT_LIMITS = {"rate_per_min": 30, "daily_turns": 500}
@@ -79,7 +81,7 @@ class KeyStore:
         self.dir = Path(directory)
         self.clock = clock
         self.lock = threading.RLock()
-        self.path = self.dir / "keys.json"
+        self.path = self.dir / compat.NEW_FILE
         self.items = []
         self._last_flush = 0.0
         self._dirty_use = False
@@ -112,11 +114,8 @@ class KeyStore:
 
     def _load(self):
         self.items = []
-        try:
-            obj = json.loads(self.path.read_text("utf-8"))
-        except (OSError, ValueError):
-            return
-        for k in obj.get("keys", []) if isinstance(obj, dict) else []:
+        liste, _ = compat.read_agents_file(self.dir)           # agents.json, ou l'ancien keys.json (lu tel quel, converti à la première écriture)
+        for k in liste:
             if isinstance(k, dict) and k.get("id") and k.get("hash"):
                 self.items.append({
                     "id": str(k["id"]), "label": _clean_text(k.get("label"), MAX_LABEL), "prefix": str(k.get("prefix", ""))[:12],
@@ -132,11 +131,12 @@ class KeyStore:
     def _save(self):
         tmp = self.path.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"keys": self.items}, f, ensure_ascii=False, indent=1)
+            json.dump({"agents": self.items}, f, ensure_ascii=False, indent=1)
             f.flush()
             os.fsync(f.fileno())
         self._chmod(tmp)
         os.replace(tmp, self.path)
+        compat.retire_old_file(self.dir)                       # l'ancien keys.json n'est jamais supprimé : il devient keys.json.migre
         self._last_flush = self.clock()
         self._dirty_use = False
 

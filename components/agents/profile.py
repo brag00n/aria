@@ -1,12 +1,12 @@
 """Profils d'accès : ce qu'une clé API a le droit d'utiliser. Bibliothèque standard seulement.
 
 Les profils sont dans `configs/default.json`, section `access.profiles` (éditée dans l'onglet Paramètres) :
-    "access": {"private_servers": [],
+    "agents": {"private_servers": [],
                "profiles": {"portail": {"description": "Portail RH", "system_message": "Tu aides les salariés…", "llm": "Llm_Anthropic",
                                         "voice": true, "servers": ["meteo_local", "recherche_web"]}}}
 
 `servers` est une liste de NOMS de serveurs MCP déjà déclarés dans `mcp.params.servers` : un profil ne redéclare rien et ne copie aucun
-secret (`env`, `headers` et leurs tags `<NOM>` restent dans la déclaration du serveur). Les serveurs de `access.private_servers`
+secret (`env`, `headers` et leurs tags `<NOM>` restent dans la déclaration du serveur). Les serveurs de `agents.private_servers`
 (défaut : aucun) ne peuvent jamais être donnés à un tiers. Le serveur de MÉMOIRE d'Aria peut l'être, mais seulement par son canal HTTP
 (`MEMORY_HTTP_PORT`) : la session tierce s'y connecte avec l'identité de son accès (une personne système, voir tools/memory) et ne lance jamais
 son propre processus. Sans profil, une clé n'a AUCUN outil (jamais ceux d'Aria).
@@ -81,13 +81,15 @@ def compose_system(base, app_prompt):
     return f"{base}\n\n{APP_HEADER}\n{app_prompt}".strip()
 
 
+from . import compat  # noqa: E402
+
 PROFILE_KEYS = frozenset(("description", "system_message", "llm", "voice", "servers"))
 DEFAULT_PRIVATE = ()
 
 
 def private_servers(config):
-    """Serveurs MCP qu'aucun profil ne peut exposer : `access.private_servers` (aucun par défaut)."""
-    access = (config or {}).get("access") or {}
+    """Serveurs MCP qu'aucun profil ne peut exposer : `agents.private_servers` (aucun par défaut)."""
+    access = compat.section(config)
     value = access.get("private_servers", DEFAULT_PRIVATE)
     return set(value) if isinstance(value, (list, tuple)) else set(DEFAULT_PRIVATE)
 
@@ -99,20 +101,20 @@ def declared_servers(config):
 
 
 def hosted_only(config):
-    """Serveurs démarrés par Aria pour les accès tiers seulement (`access.hosted_only`) : mémoire d'un tiers hors foyer, avec son dossier disjoint."""
-    access = (config or {}).get("access") or {}
+    """Serveurs démarrés par Aria pour les accès tiers seulement (`agents.hosted_only`) : mémoire d'un tiers hors foyer, avec son dossier disjoint."""
+    access = compat.section(config)
     value = access.get("hosted_only", [])
     return [x for x in value if isinstance(x, str)] if isinstance(value, list) else []
 
 
 def validate_hosted(config):
-    """Erreurs de `access.hosted_only` : serveurs déclarés, dotés d'un canal HTTP, sur un dossier de données et un port DISTINCTS de ceux des autres
+    """Erreurs de `agents.hosted_only` : serveurs déclarés, dotés d'un canal HTTP, sur un dossier de données et un port DISTINCTS de ceux des autres
     serveurs de mémoire (deux processus sur le même dossier se verrouillent mutuellement)."""
     errors = []
     declared = declared_servers(config)
-    value = ((config or {}).get("access") or {}).get("hosted_only", [])
+    value = compat.section(config).get("hosted_only", [])
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
-        return ["access.hosted_only doit être une liste de noms de serveurs MCP"]
+        return ["agents.hosted_only doit être une liste de noms de serveurs MCP"]
     memoires = {n: c for n, c in declared.items() if _is_memory(c)}
     dossiers, ports = {}, {}
     for n, c in memoires.items():
@@ -225,7 +227,7 @@ def changed_profiles(old, new):
 
 
 def apply_profiles(config, text):
-    """Valide le JSON des profils puis l'applique par UNE SEULE affectation de `config["access"]["profiles"]` (les autres clés de `access`
+    """Valide le JSON des profils puis l'applique par UNE SEULE affectation de `config["agents"]["profiles"]` (les autres clés de `agents`
     sont conservées ; le thread de l'API, qui relit la config vivante, voit l'ancien ou le nouvel ensemble, jamais un état intermédiaire).
     Rien n'est modifié en cas d'erreur. Retourne (ok, message d'erreur, noms des profils modifiés, nouveaux profils)."""
     new, err = parse_profiles(text)
@@ -234,10 +236,9 @@ def apply_profiles(config, text):
     errors = validate_profiles(new, config)
     if errors:
         return False, "profils d'accès refusés : " + " ; ".join(errors), [], None
-    access = config.get("access")
-    access = access if isinstance(access, dict) else {}
+    access = compat.section(config)
     changed = changed_profiles(access.get("profiles"), new)
-    config["access"] = {**access, "profiles": new}
+    compat.write_section(config, {**access, "profiles": new})
     return True, "", changed, new
 
 
@@ -249,7 +250,7 @@ class ConfigProfiles:
         self.get_config = get_config
 
     def _profiles(self):
-        access = (self.get_config() or {}).get("access") or {}
+        access = compat.section(self.get_config())
         profiles = access.get("profiles")
         return profiles if isinstance(profiles, dict) else {}
 

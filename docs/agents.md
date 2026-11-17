@@ -249,7 +249,7 @@ const data = new Uint8Array(an.fftSize);
 **4. Suivre le texte dit : `audio-start`.** `text` donne la phrase en cours de lecture (sous-titres, surbrillance) et `element` l'élément `<audio>` du bloc
 (durée, `currentTime`, pause).
 
-Un exemple complet (halo CSS, forme d'onde, boutons) est dans `docs/access-demo.html`.
+Un exemple complet (halo CSS, forme d'onde, boutons) est dans `docs/agents-demo.html`.
 
 ### Exigences et pièges
 

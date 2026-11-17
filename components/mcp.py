@@ -63,7 +63,7 @@ class Mcp:
                 conf = utils.expand_secrets(conf, f"MCP {name}")   # tags <SECRET> -> valeurs du .env
                 hidden_tools = set(conf.get("hide_tools") or ())   # outils de ce serveur jamais proposés au LLM (ex. identifier_interlocuteur pour un tiers)
                 if self.secret_for_servers:
-                    from components.access import memory_link
+                    from components.agents import memory_link
                     conf = memory_link.with_secret(conf, self.secret_for_servers)   # serveur mémoire d'Aria : secret de son canal HTTP, en mémoire seulement
                 if conf.get("url"):
                     ok, why = await server_reachable(conf["url"])
