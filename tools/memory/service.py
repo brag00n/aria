@@ -21,8 +21,8 @@ class Service:
     def identifier(self, nom, complement="", surnom="", principal=None, trace=None):
         return self.i.identifier(nom, complement, surnom, principal=principal, trace=trace)
 
-    def relier(self, personne_a, lien, personne_b, precision="", principal=None, trace=None):
-        return self.i.relier(personne_a, lien, personne_b, precision, principal=principal, trace=trace)
+    def relier(self, personne_a, lien, personne_b, precision="", principal=None, trace=None, publier=False):
+        return self.i.relier(personne_a, lien, personne_b, precision, principal=principal, trace=trace, publier=publier)
 
     def memoriser(self, fait, type="fait", tags="", principal=None, trace=None):
         status, rec = self.store.add(fait, type, tags, src="llm", owner=principal, trace=trace)

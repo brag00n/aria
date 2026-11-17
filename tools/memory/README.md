@@ -34,7 +34,7 @@ se lisent sans migration. L'identité suit la **clé interne** : renommer l'acc�
 | Personnes et relations (graphe, parenté) | **toutes**, en lecture | toutes |
 | Souvenirs | **les siens** + le partagé de type `foyer` ; jamais les souvenirs privés d'un humain ni les anciens souvenirs partagés | les siens + le partagé |
 | Ce qu'il écrit | toujours **privé** (propriétaire = lui), même de type `foyer` ou `relation` | comme avant |
-| Liens (`relier`) | seulement entre **lui** (« moi ») et une personne déjà connue : il ne crée ni lien entre deux humains ni nouvelle personne | tous |
+| Liens (`relier`) | seulement entre **lui** (« moi ») et une personne : jamais entre deux humains ; **privés** par défaut ; **publics** avec l'option de sa clé (en-tête `X-Memory-Publish: 1`, posé par Aria), qui lui permet aussi de créer une fiche **« à valider »** (5 par 24 h) et de mettre à jour ou oublier **ses** liens (`rel.par`), jamais ceux des autres | tous |
 | Oublier | ses souvenirs seulement | les siens et le partagé |
 | Changer d'identité (`identifier_interlocuteur`, `ui_*`) | **impossible**, refusé par le serveur | oui |
 | Débit d'écriture | borné **par principal** (un tiers bavard ne bloque pas Aria) | idem |

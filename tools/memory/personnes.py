@@ -13,6 +13,7 @@ d'Aria : il n'apparaît pas dans la liste déroulante (`listing`), mais il est u
 import json
 import os
 import threading
+from datetime import datetime
 from pathlib import Path
 
 import textproc
@@ -65,6 +66,8 @@ class Personnes:
                         self.items.append({"id": str(obj["id"]), "nom": _clean(obj["nom"]), "compl": _clean(obj.get("compl")),
                                            "surnom": _clean(obj.get("surnom")), "sexe": _sexe(obj.get("sexe")), "c": obj.get("c", ""),
                                            **({"ref": True} if obj.get("ref") else {}),
+                                           **({"par": str(obj.get("par"))[:40]} if obj.get("par") else {}),
+                                           **({"a_valider": True} if obj.get("a_valider") else {}),
                                            **({"tr": trace_mod.clean(obj.get("tr"))} if trace_mod.clean(obj.get("tr")) else {}),
                                            **({"type": "systeme", "cle": str(obj.get("cle", ""))[:40]} if obj.get("type") == "systeme" else {})})
         except OSError:
@@ -232,18 +235,33 @@ class Personnes:
                 return "found", p, []
         return self._create(nom, complement, trace=trace)
 
-    def _create(self, nom, complement, ref=False, sexe="", trace=None):
+    def _create(self, nom, complement, ref=False, sexe="", trace=None, par=""):
         pid = self._new_id()
         person = {"id": pid, "nom": nom, "compl": complement, "surnom": "", "sexe": _sexe(sexe), "c": self.iso(self.clock()), **self._tr(trace)}
         if ref:
             person["ref"] = True
+        if par:
+            person["par"] = str(par)[:40]            # créée par un accès tiers (identifiant de sa personne système)...
+            person["a_valider"] = True               # ... donc à valider par un humain (page Mémoire)
         self.items.append(person)
         self._append(person)
         if self.activity:
             self.activity.log("person_add", id=pid, nom=self.activity.q(nom), compl=bool(complement), ref=ref)
         return "created", person, []
 
-    def reference(self, name, sexe="", trace=None):
+    def creees_par(self, par, depuis_s=86400):
+        """Nombre de personnes créées par cet accès tiers (identifiant de sa personne système) pendant les `depuis_s` dernières secondes."""
+        now, n = self.clock(), 0
+        for p in self.items:
+            if par and p.get("par") == par:
+                try:
+                    if now - datetime.fromisoformat(p["c"]).timestamp() < depuis_s:
+                        n += 1
+                except (TypeError, ValueError):
+                    continue
+        return n
+
+    def reference(self, name, sexe="", trace=None, par=""):
         """Fiche d'une personne CITÉE dans un lien (« Emma » dans « Tiphaine est la mère de Emma »), créée si elle est inconnue.
         Elle est marquée « citée » (`ref`) : elle n'apparaît pas dans la liste des interlocuteurs tant qu'elle n'a pas parlé. Le sexe
         n'est renseigné que s'il est encore inconnu (une valeur saisie à la main n'est jamais écrasée). Retourne la personne, ou None
@@ -262,8 +280,8 @@ class Personnes:
                 same = [p for p in self.items if key(p["nom"]) == key(parts[0])]
                 if len(same) == 1 and not same[0]["compl"]:     # « Marion » était connue sans nom de famille : on la complète
                     return self._renseigner(same[0], sexe=sexe, compl=_clean(parts[1]))
-                return self._create(parts[0], _clean(parts[1]), ref=True, sexe=sexe, trace=trace)[1]
-            return self._create(name, "", ref=True, sexe=sexe, trace=trace)[1]
+                return self._create(parts[0], _clean(parts[1]), ref=True, sexe=sexe, trace=trace, par=par)[1]
+            return self._create(name, "", ref=True, sexe=sexe, trace=trace, par=par)[1]
 
     def _renseigner(self, person, sexe="", compl=""):
         changed = False
@@ -315,6 +333,11 @@ class Personnes:
                 return False
             if "sexe" in changes:
                 person["sexe"] = _sexe(changes["sexe"])
+            if "a_valider" in changes:                 # une personne créée par un accès tiers est validée (False) ou remise à valider (True) par un humain
+                if changes["a_valider"]:
+                    person["a_valider"] = True
+                else:
+                    person.pop("a_valider", None)
             if "ref" in changes:                       # True = seulement citée (hors de la liste des interlocuteurs), False = interlocutrice
                 if changes["ref"]:
                     person["ref"] = True

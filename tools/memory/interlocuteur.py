@@ -43,6 +43,9 @@ CONSIGNE_SYSTEME = (
 CATEGORIE_FAMILLE = frozenset(("conjoint", "parent", "enfant", "fratrie"))
 
 
+MAX_NOUVELLES_PERSONNES_PAR_JOUR = 5          # fiches qu'un accès tiers peut créer en 24 h (erreurs de reconnaissance vocale, jeux)
+
+
 class Interlocuteurs:
     """Façade au-dessus d'un Store : désigne l'interlocuteur actif et fabrique les réponses des outils."""
 
@@ -103,9 +106,11 @@ class Interlocuteurs:
             return f"OK, {label} créé et actif. " + APRES_CREATION.format(nom=person["nom"])
         return f"OK, {label} est maintenant actif." + (" (Changement d'interlocuteur.)" if previous and previous != person["id"] else "")
 
-    def relier(self, personne_a, lien, personne_b, precision="", principal=None, trace=None):
+    def relier(self, personne_a, lien, personne_b, precision="", principal=None, trace=None, publier=False):
         """Outil relier : mémorise « personne_a est le <lien> de personne_b » (« moi » = l'interlocuteur actif). `lien` appartient à une liste
-        fermée (liens.TYPES) ; `autre` + `precision` couvre le reste. Un lien hors liste est refusé avec la liste, pour que le LLM corrige."""
+        fermée (liens.TYPES) ; `autre` + `precision` couvre le reste. Un lien hors liste est refusé avec la liste, pour que le LLM corrige.
+        Un SYSTÈME (accès tiers) ne relie que LUI-MÊME à une personne. Avec `publier` (option de sa clé) : son lien est PUBLIC, il peut créer la fiche
+        d'une personne nouvelle (« à valider » par un humain, plafonnée par jour), mettre à jour SES liens, jamais celui qu'un humain ou un autre accès a établi."""
         a, b = self._designation(personne_a, principal), self._designation(personne_b, principal)
         if not (a and b and key(lien)):
             return "Il manque une personne ou le lien (exemple : Tiphaine, conjoint, Olivier)."
@@ -120,9 +125,17 @@ class Interlocuteurs:
             moi = self.store.personnes.get(principal)
             if key(a) != key(moi["nom"]) and key(b) != key(moi["nom"]):
                 return "Tu ne peux relier que toi-même à une personne : l'un des deux doit être « moi »."
-            if not self._designation_connue(a if key(b) == key(moi["nom"]) else b):
-                return "Cette personne n'est pas connue du foyer : tu ne peux pas la créer."
-        fa, fb = self._fiches(a, lien, b, trace=trace)
+            autre = a if key(b) == key(moi["nom"]) else b
+            connues = len(self.store.personnes.find(autre))
+            if connues > 1:
+                return f"Plusieurs personnes portent le nom « {autre} » : précise le nom de famille."
+            if connues == 0:
+                if not publier:
+                    return "Cette personne n'est pas connue du foyer : tu ne peux pas la créer."
+                if self.store.personnes.creees_par(principal) >= MAX_NOUVELLES_PERSONNES_PAR_JOUR:
+                    return "Tu as déjà créé beaucoup de nouvelles personnes aujourd'hui : demande à un humain de les valider ou de les ajouter."
+        publier = bool(publier and systeme)
+        fa, fb = self._fiches(a, lien, b, principal=principal, trace=trace, par=principal if publier else "")
         ia, ib = (fa or {}).get("id") or self._id_of(a), (fb or {}).get("id") or self._id_of(b)
         info = liens.analyser(a, lien, b, t)
         # Le même lien redit dans l'autre sens (« A frère de B » puis « B sœur de A ») n'est enregistré qu'une fois
@@ -131,7 +144,22 @@ class Interlocuteurs:
                 return f"Déjà connu : {rec['txt']}."
         text = f"{a} est {liens.article(lien)} {b}"
         rel = {"a": a, "l": lien, "b": b, "t": t, "ia": ia, "ib": ib, "cle": info["cle"], "inv": info["inv"]}
-        status, rec = self.store.add(text, "relation", "", src="llm", rel=rel, owner=principal, trace=trace)
+        if publier:
+            rel["par"] = principal                  # auteur du lien public : lui seul peut le mettre à jour ou l'oublier
+            ancien = None
+            if ia and ib:
+                for autre_rec in self.store.records.values():
+                    r = autre_rec.get("rel") or {}
+                    if autre_rec["t"] == "relation" and {r.get("ia"), r.get("ib")} == {ia, ib}:
+                        if r.get("par") != principal:
+                            return "Un lien entre ces deux personnes existe déjà (établi par un humain ou un autre accès) : tu ne peux pas le modifier."
+                        ancien = autre_rec
+                        break
+            if ancien is not None:
+                if self.store.update(ancien["id"], {"txt": text, "rel": rel}, src="llm"):
+                    return f"OK {ancien['id']} : {text} (lien mis à jour)."
+                return self.refus("locked")
+        status, rec = self.store.add(text, "relation", "", src="llm", rel=rel, owner=principal, trace=trace, publier=publier)
         if status == "added":
             inverse = f" (donc {b} est {info['invp']} {a})" if info["invp"] else ""
             return f"OK {rec['id']} : {text}{inverse}."
@@ -200,11 +228,12 @@ class Interlocuteurs:
             return f"OK, fiche complétée : {self.store.personnes.full(person)} (toujours actif). Ne crée pas de nouvelle personne."
         return f"OK, {self.store.personnes.full(person)} est toujours actif."
 
-    def _fiches(self, a, lien, b, principal=None, trace=None):
+    def _fiches(self, a, lien, b, principal=None, trace=None, par=""):
         """Crée (ou complète) la fiche des deux personnes d'un lien, pour que le moteur de parenté connaisse leur sexe.
         « Tiphaine est la mère de Emma » => Tiphaine est une femme. Celui qui parle (« moi ») garde sa fiche, jamais écrasée."""
-        sexe_a = liens.sexe_du_lien(lien)
-        return self.store.personnes.reference(a, sexe=sexe_a, trace=trace), self.store.personnes.reference(b, trace=trace)
+        # Un système ne renseigne jamais le sexe d'une personne (c'est une donnée de la fiche d'un humain)
+        sexe_a = "" if self.store.is_system(principal) else liens.sexe_du_lien(lien)
+        return self.store.personnes.reference(a, sexe=sexe_a, trace=trace, par=par), self.store.personnes.reference(b, trace=trace, par=par)
 
     def _designation(self, value, principal=None):
         value = " ".join(str(value or "").split())[:60]

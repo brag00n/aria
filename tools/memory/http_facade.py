@@ -17,6 +17,7 @@ from mcp.server.fastmcp import Context, FastMCP
 import audit_trace as trace_mod
 
 PRINCIPAL_HEADER = "x-memory-principal"
+PUBLISH_HEADER = "x-memory-publish"   # « 1 » = l'accès peut publier ses propres liens (option de sa clé, posée par Aria : le LLM ne peut pas l'envoyer)
 NAME_HEADER = "x-memory-name"          # nom encodé en pourcentage (UTF-8) : un en-tête HTTP ne porte que de l'ASCII
 
 
@@ -50,6 +51,13 @@ def make_app(store, service, secret):
             raise Refus("identité de l'accès invalide")
         return person["id"]
 
+    def publish(ctx):
+        """L'option « publier ses liens » de la clé de l'accès, d'après l'en-tête posé par Aria (déjà authentifié par le garde)."""
+        try:
+            return (ctx.request_context.request.headers.get(PUBLISH_HEADER) or "").strip() == "1"
+        except Exception:
+            return False
+
     @mcp.tool(name="memoriser")
     def memoriser(fait: str, type: str = "fait", tags: str = "", ctx: Context = None) -> str:
         """Retient une information durable. type: fait, preference, tache, ephemere, ou foyer. tags: mots séparés par des virgules. Ce que tu retiens t'appartient."""
@@ -68,7 +76,7 @@ def make_app(store, service, secret):
     @mcp.tool(name="relier")
     def relier(personne_a: str, lien: str, personne_b: str, precision: str = "", ctx: Context = None) -> str:
         """personne_a est le <lien> de personne_b. lien: conjoint, parent, enfant, fratrie, demi, beauparent, beauenfant, ami, collegue, voisin, ou autre + precision. L'une des deux personnes doit être « moi »."""
-        return _run(ctx, lambda p, tr: service.relier(personne_a, lien, personne_b, precision, principal=p, trace=tr))
+        return _run(ctx, lambda p, tr: service.relier(personne_a, lien, personne_b, precision, principal=p, trace=tr, publier=publish(ctx)))
 
     def _run(ctx, action):
         try:

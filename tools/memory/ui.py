@@ -124,6 +124,7 @@ def make_handler(store, activity, token):
                 return self._json([{"id": p["id"], "label": store.personnes.label(p), "nom": p["nom"], "compl": p["compl"],
                                     "surnom": p["surnom"], "sexe": p.get("sexe", ""), "citee": bool(p.get("ref")),
                                     "systeme": p.get("type") == "systeme", "cle": p.get("cle", ""),
+                                    "a_valider": bool(p.get("a_valider")), "par": p.get("par", ""),
                                     "cree": p["c"], "souvenirs": counts.get(p["id"], 0),
                                     "actif": p["id"] == store.active} for p in store.personnes.items]
                                    + [{"id": "", "label": "Foyer (partagé)", "souvenirs": counts.get("", 0), "actif": False, "special": True}])
@@ -208,6 +209,8 @@ def make_handler(store, activity, token):
                 return self._json({"ok": bool(person), "id": person["id"] if person else None})
             if path == "/api/personne/update":
                 fields = {k: body[k] for k in ("nom", "compl", "surnom", "sexe") if k in body}
+                if "validee" in body:                     # une personne créée par un accès tiers est validée (ou remise à valider) par un humain
+                    fields["a_valider"] = not body["validee"]
                 if "connue" in body and store.is_system(rid):
                     body.pop("connue")                    # un système (accès tiers) n'est jamais un interlocuteur d'Aria : l'interrupteur est sans objet
                 if "connue" in body:                      # connue d'Aria = a déjà discuté avec elle = présente dans la liste des interlocuteurs
@@ -373,12 +376,14 @@ function editPerson(p, retour){
   const nom = el('input',{value:p.nom}), compl = el('input',{value:p.compl}), sur = el('input',{value:p.surnom});
   const sexe = el('select',{}, ...optionsOf([['','inconnu'],['f','féminin'],['m','masculin']], p.sexe||''));
   const connue = el('input',{type:'checkbox',checked:!p.citee,disabled:!!p.systeme});
+  const validee = el('input',{type:'checkbox',checked:!p.a_valider});
   openModal('Modifier la personne', [
+    ...(p.par ? [el('label',{className:'chk'}, validee, ' Validée (fiche créée par l’accès tiers ' + p.par + ' : décochée = à valider)')] : []),
     el('div',{className:'row'}, field('Prénom', nom), field('Nom de famille', compl)),
     el('div',{className:'row'}, field('Surnom (comment elle veut être appelée)', sur), field('Sexe (pour dire fille, tante, grand-mère...)', sexe)),
     el('label',{className:'chk'}, connue, p.systeme ? ' Accès tiers (système) : jamais dans la liste des interlocuteurs d’Aria ; identité liée à la clé interne ' + p.cle : ' Connue par Aria (a déjà discuté avec elle : figure dans la liste des interlocuteurs)'),
   ], `Identifiant ${p.id} · créée ${p.cree} · ${p.souvenirs} souvenir(s)${p.actif?' · interlocuteur actif':''}${p.citee?' · seulement citée (pas encore interlocutrice)':''}`, async ()=>{
-    const x = await post('/api/personne/update', {id:p.id, nom:nom.value, compl:compl.value, surnom:sur.value, sexe:sexe.value, connue:connue.checked});
+    const x = await post('/api/personne/update', {id:p.id, nom:nom.value, compl:compl.value, surnom:sur.value, sexe:sexe.value, connue:connue.checked, ...(p.par ? {validee:validee.checked} : {})});
     return x.ok ? true : (x.erreur || 'Le prénom est obligatoire');
   }, retour);
 }
@@ -575,7 +580,7 @@ async function renderPersons(main){
   main.append(barreP,el('div',{className:'bar'},nom,compl,sur,add),
     el('table',{},el('tr',{},...['Personne','Prénom','Nom','Surnom','Sexe','Souvenirs',''].map(h=>el('th',{},h))),
       ...liste.map(p=>p.special?el('tr',{},el('td',{},p.label),el('td',{colSpan:4,className:'mut'},'souvenirs sans propriétaire (relations, foyer, anciens souvenirs)'),el('td',{},String(p.souvenirs)),el('td',{})):
-        el('tr',{},el('td',{},p.label+(p.systeme?' ⚙ système':'')+(p.actif?' ● actif':'')+(p.citee&&!p.systeme?' (citée)':'')),el('td',{},p.nom),el('td',{},p.compl),el('td',{},p.surnom),el('td',{},p.sexe==='f'?'F':p.sexe==='m'?'M':'?'),el('td',{},String(p.souvenirs)),
+        el('tr',{},el('td',{},p.label+(p.systeme?' ⚙ système':'')+(p.actif?' ● actif':'')+(p.citee&&!p.systeme?' (citée)':'')+(p.a_valider?' ⚠ à valider (créée par '+p.par+')':'')),el('td',{},p.nom),el('td',{},p.compl),el('td',{},p.surnom),el('td',{},p.sexe==='f'?'F':p.sexe==='m'?'M':'?'),el('td',{},String(p.souvenirs)),
           el('td',{},el('button',{title:'Graphe des relations',onclick:()=>openGraph(p.id)},'🕸'),' ',el('button',{title:'Modifier',onclick:()=>editPerson(p)},'✎'),' ',
             el('button',{title:'Fusionner dans une autre personne',onclick:()=>mergePerson(p)},'⇢'),' ',
             el('button',{title:'Supprimer',onclick:async()=>{if(!confirm('Supprimer '+p.label+' ?'))return;const r=await post('/api/personne/delete',{id:p.id});say(r.ok?'Supprimée':(r.erreur||'Impossible'));render()}},'🗑'))))));

@@ -409,11 +409,12 @@ class Store:
         return False
 
     # ---------------------------------------------------------------- opérations
-    def add(self, text, mtype="fait", tags="", src="llm", owner=None, rel=None, trace=None):
+    def add(self, text, mtype="fait", tags="", src="llm", owner=None, rel=None, trace=None, publier=False):
         """Retourne (statut, enregistrement). statut : 'added' | 'duplicate' | 'locked' | 'rate_limit' | 'empty' | 'unknown_speaker'.
         `owner` : propriétaire explicite (page de gestion) ; sinon l'interlocuteur actif. Types partagés (foyer, relation) : sans
         propriétaire. Interlocuteur inconnu : rien n'est mémorisé (sauf par la page de gestion, qui désigne un propriétaire).
-        `trace` : échange d'origine (voir trace.py), conservé dans le souvenir ; jamais modifiable ensuite (hors de la liste de `update`)."""
+        `trace` : échange d'origine (voir trace.py), conservé dans le souvenir ; jamais modifiable ensuite (hors de la liste de `update`).
+        `publier` : un SYSTÈME autorisé (option de sa clé) peut écrire une RELATION dans le partagé ; tout le reste d'un système reste privé."""
         with self.lock:
             self._check_external_changes()
             if (err := self._writable()):
@@ -424,7 +425,7 @@ class Store:
             mtype = normalize_type(mtype)
             system = self.is_system(owner)
             # Un système n'écrit JAMAIS dans le partagé : tout ce qu'il retient (même de type foyer ou relation) lui appartient
-            shared = mtype in scoring.SHARED_TYPES and not system
+            shared = mtype in scoring.SHARED_TYPES and (not system or (publier and mtype == "relation"))
             who = "" if shared else (self.active if owner is None else owner)
             if not shared and not who:
                 self.activity.log("add_refused", reason="unknown_speaker", src=src)
@@ -484,7 +485,7 @@ class Store:
             if not rec:
                 return False
             if not force and self.is_system(owner):
-                if rec.get("o") != owner:
+                if rec.get("o") != owner and not self._publie_par(rec, owner):
                     self.activity.log("delete_refused", id=rid, src=src)
                     return False
             elif not force and not (self.visible_to(rec, owner) and (rec.get("o") or (self.active if owner is None else owner))):
@@ -586,8 +587,13 @@ class Store:
         partagées en tant que souvenirs (il lit le graphe par l'outil de parenté), ni les anciens souvenirs sans propriétaire."""
         owner = self.active if owner is None else owner
         if self.is_system(owner):
-            return rec.get("o") == owner or (not rec.get("o") and rec.get("t") == "foyer")
+            return rec.get("o") == owner or (not rec.get("o") and rec.get("t") == "foyer") or self._publie_par(rec, owner)
         return not rec.get("o") or rec["o"] == owner
+
+    @staticmethod
+    def _publie_par(rec, owner):
+        """Relation PUBLIQUE dont ce système est l'auteur (`rel.par`) : il la voit, la met à jour et l'oublie, jamais celles des autres."""
+        return rec.get("t") == "relation" and not rec.get("o") and bool(owner) and (rec.get("rel") or {}).get("par") == owner
 
     def eff(self, rec, now=None):
         return scoring.effective(rec["imp"], rec["s"], rec["last"], now or self.clock(), rec["t"], rec["tags"])
