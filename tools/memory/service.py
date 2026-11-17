@@ -1,7 +1,7 @@
-"""Cœur des outils de mémoire : les mêmes fonctions servent la façade stdio (Aria) et la façade HTTP (accès tiers).
+"""Cœur des outils de mémoire : les mêmes fonctions servent la façade stdio (Aria) et la façade HTTP (agent).
 
 Chaque fonction prend un PRINCIPAL : l'identifiant de la personne qui parle. Pour Aria (stdio), c'est l'interlocuteur actif (`store.active`, changé par
-la liste déroulante) ; pour un accès tiers (HTTP), c'est la personne SYSTÈME de l'accès, imposée par le serveur d'après l'en-tête authentifié,
+la liste déroulante) ; pour un agent (HTTP), c'est la personne SYSTÈME de l'accès, imposée par le serveur d'après l'en-tête authentifié,
 jamais par le LLM. Les règles de visibilité sont dans `Store.visible_to` : un système ne lit que ses souvenirs (et le foyer partagé), mais connaît toutes
 les personnes et leurs liens.
 """
@@ -51,11 +51,11 @@ class Service:
             lines.extend(f"- {r['txt']}" for r in proches)
         return "\n".join(lines)
 
-    # ------------------------------------------------------------------ accès tiers « qui publie les infos de son interlocuteur »
+    # ------------------------------------------------------------------ agent « qui publie les infos de son interlocuteur »
     # Le tiers a alors les droits d'Aria pour la personne qui lui parle (`speaker`, propre à sa session, jamais `store.active`) ; ses propres
     # observations (`system`) restent dans sa mémoire privée, par l'outil séparé noter_observation.
     def _speaker_ok(self, speaker):
-        """Un interlocuteur est une personne connue qui n'est PAS un accès d'application : un système ne parle jamais « au nom » d'un autre système."""
+        """Un interlocuteur est une personne connue qui n'est PAS un agent : un système ne parle jamais « au nom » d'un autre système."""
         return bool(speaker) and self.store.personnes.get(speaker) is not None and not self.store.is_system(speaker)
 
     def memoriser_pour(self, speaker, fait, type="fait", tags="", trace=None):

@@ -3,7 +3,7 @@
 Fichier personnes.jsonl (dans le dossier de l'espace de noms), une personne par ligne :
     {"id":"p1","nom":"Olivier","compl":"Martin","surnom":"Oli","sexe":"m","c":"2026-10-30T14:02:11+00:00"}
 
-Une personne peut être de type SYSTÈME (`type: "systeme"`, `cle` = identifiant interne d'un accès tiers) : une application ou un appareil (un robot)
+Une personne peut être de type SYSTÈME (`type: "systeme"`, `cle` = identifiant interne d'un agent) : une application ou un appareil (un robot)
 qui utilise la mémoire. Absence de `type` = humain, donc les fichiers existants se lisent sans migration. Un système n'est pas un interlocuteur
 d'Aria : il n'apparaît pas dans la liste déroulante (`listing`), mais il est une personne du foyer (graphe, page de gestion).
 
@@ -33,7 +33,7 @@ def _sexe(value):
 
 
 def est_systeme(person):
-    """Vrai pour une personne de type système (accès tiers) ; absence de `type` = humain."""
+    """Vrai pour une personne de type système (agent) ; absence de `type` = humain."""
     return bool(person) and person.get("type") == "systeme"
 
 
@@ -109,18 +109,18 @@ class Personnes:
 
     def listing(self, avec_citees=False):
         """Personnes pour la liste déroulante : les interlocuteurs (qui ont parlé). Les personnes seulement citées dans un lien
-        (`ref`) n'y figurent pas, sauf `avec_citees` (page de gestion). Les systèmes (accès tiers) n'y figurent jamais : ce ne sont
+        (`ref`) n'y figurent pas, sauf `avec_citees` (page de gestion). Les systèmes (agent) n'y figurent jamais : ce ne sont
         pas des interlocuteurs d'Aria."""
         with self.lock:
             return sorted(({"id": p["id"], "label": self.label(p)} for p in self.items
                            if not est_systeme(p) and (avec_citees or not p.get("ref"))), key=lambda x: key(x["label"]))
 
     def systeme(self, cle):
-        """Personne système liée à la clé interne `cle` (id d'un accès tiers), ou None."""
+        """Personne système liée à la clé interne `cle` (id d'un agent), ou None."""
         return next((p for p in self.items if est_systeme(p) and p.get("cle") == cle), None)
 
     def ensure_system(self, cle, nom, trace=None):
-        """Retrouve ou crée la personne système d'un accès tiers. L'identité suit la CLÉ INTERNE, pas le nom : renommer l'accès renomme la
+        """Retrouve ou crée la personne système d'un agent. L'identité suit la CLÉ INTERNE, pas le nom : renommer l'accès renomme la
         fiche (même id, mêmes souvenirs). Retourne la personne, ou None si la clé ou le nom est vide."""
         cle, nom = _clean(cle), _clean(nom)
         if not cle or not key(nom):
@@ -241,7 +241,7 @@ class Personnes:
         if ref:
             person["ref"] = True
         if par:
-            person["par"] = str(par)[:40]            # créée par un accès tiers (identifiant de sa personne système)...
+            person["par"] = str(par)[:40]            # créée par un agent (identifiant de sa personne système)...
             person["a_valider"] = True               # ... donc à valider par un humain (page Mémoire)
         self.items.append(person)
         self._append(person)
@@ -250,7 +250,7 @@ class Personnes:
         return "created", person, []
 
     def creees_par(self, par, depuis_s=86400):
-        """Nombre de personnes créées par cet accès tiers (identifiant de sa personne système) pendant les `depuis_s` dernières secondes."""
+        """Nombre de personnes créées par cet agent (identifiant de sa personne système) pendant les `depuis_s` dernières secondes."""
         now, n = self.clock(), 0
         for p in self.items:
             if par and p.get("par") == par:
@@ -333,7 +333,7 @@ class Personnes:
                 return False
             if "sexe" in changes:
                 person["sexe"] = _sexe(changes["sexe"])
-            if "a_valider" in changes:                 # une personne créée par un accès tiers est validée (False) ou remise à valider (True) par un humain
+            if "a_valider" in changes:                 # une personne créée par un agent est validée (False) ou remise à valider (True) par un humain
                 if changes["a_valider"]:
                     person["a_valider"] = True
                 else:

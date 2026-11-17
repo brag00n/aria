@@ -1,6 +1,6 @@
 """Rétention et purge du journal d'audit des échanges (components/echanges.py). Bibliothèque standard seulement.
 
-- Purge AUTOMATIQUE par âge : un fichier par jour, donc un jour trop ancien = un fichier supprimé (aucune réécriture). Un accès tiers peut exiger moins que le
+- Purge AUTOMATIQUE par âge : un fichier par jour, donc un jour trop ancien = un fichier supprimé (aucune réécriture). Un agent peut exiger moins que le
   défaut (`retention_days` de sa clé, retrouvé par l'identifiant interne lu dans `src`) : le fichier est alors réécrit, une fois par passage.
 - Purge CIBLÉE (page d'administration) : par date, conversation, accès ou personne (droit à l'effacement). Réécriture atomique du seul fichier concerné.
 - Toute purge laisse une ligne dans `purges.jsonl` : quand, par qui (auto/admin), quel critère, combien de lignes et quelle période — JAMAIS de contenu.

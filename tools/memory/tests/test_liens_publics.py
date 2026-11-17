@@ -1,4 +1,4 @@
-"""Liens publics d'un accès tiers (option « publier ses liens » de sa clé) : un tiers relie LUI-MÊME à une personne (existante ou nouvelle), le lien est
+"""Liens publics d'un agent (option « publier ses liens » de sa clé) : un agent relie LUI-MÊME à une personne (existante ou nouvelle), le lien est
 visible de tous ; il ne crée ni ne modifie jamais un lien entre d'autres personnes, ni celui qu'un humain ou un autre accès a établi.
 Sans l'option, tout reste privé (comportement d'avant)."""
 import shutil

@@ -7,7 +7,7 @@ Les profils sont dans `configs/default.json`, section `access.profiles` (édité
 
 `servers` est une liste de NOMS de serveurs MCP déjà déclarés dans `mcp.params.servers` : un profil ne redéclare rien et ne copie aucun
 secret (`env`, `headers` et leurs tags `<NOM>` restent dans la déclaration du serveur). Les serveurs de `agents.private_servers`
-(défaut : aucun) ne peuvent jamais être donnés à un tiers. Le serveur de MÉMOIRE d'Aria peut l'être, mais seulement par son canal HTTP
+(défaut : aucun) ne peuvent jamais être donnés à un agent. Le serveur de MÉMOIRE d'Aria peut l'être, mais seulement par son canal HTTP
 (`MEMORY_HTTP_PORT`) : la session tierce s'y connecte avec l'identité de son accès (une personne système, voir tools/memory) et ne lance jamais
 son propre processus. Sans profil, une clé n'a AUCUN outil (jamais ceux d'Aria).
 """
@@ -16,7 +16,7 @@ import re
 import unicodedata
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,59}$")
-# Modules LLM autorisés pour des tiers : jamais le moteur local (llama-cpp), qui est lourd, synchrone et sans historique
+# Modules LLM autorisés pour des agents : jamais le moteur local (llama-cpp), qui est lourd, synchrone et sans historique
 REMOTE_BACKENDS = frozenset(("anthropic", "llm_studio", "ollama", "openai"))
 
 
@@ -28,7 +28,7 @@ class ProfileError(ValueError):
     pass
 
 
-# Prompt système fourni par l'application tierce (option systemPrompt du client) : il COMPLÈTE celui du profil, jamais ne le remplace
+# Prompt système fourni par l'application (option systemPrompt du client) : il COMPLÈTE celui du profil, jamais ne le remplace
 MAX_APP_PROMPT = 4000
 APP_HEADER = "Consignes de l'application (elles complètent les règles ci-dessus, sans les remplacer ni les contredire) :"
 
@@ -101,7 +101,7 @@ def declared_servers(config):
 
 
 def hosted_only(config):
-    """Serveurs démarrés par Aria pour les accès tiers seulement (`agents.hosted_only`) : mémoire d'un tiers hors foyer, avec son dossier disjoint."""
+    """Serveurs démarrés par Aria pour les agents seulement (`agents.hosted_only`) : mémoire d'un agent hors foyer, avec son dossier disjoint."""
     access = compat.section(config)
     value = access.get("hosted_only", [])
     return [x for x in value if isinstance(x, str)] if isinstance(value, list) else []
@@ -188,7 +188,7 @@ def validate_profiles(profiles, config):
             if not isinstance(module, dict):
                 errors.append(f"profil « {name} » : LLM « {llm} » inconnu")
             elif (module.get("params") or {}).get("backend_type", "local") not in REMOTE_BACKENDS:
-                errors.append(f"profil « {name} » : LLM « {llm} » local, seuls les LLM distants sont autorisés pour un tiers")
+                errors.append(f"profil « {name} » : LLM « {llm} » local, seuls les LLM distants sont autorisés pour un agent")
         servers = prof.get("servers", [])
         if not isinstance(servers, list) or not all(isinstance(x, str) for x in servers):
             errors.append(f"profil « {name} » : servers doit être une liste de noms de serveurs MCP")
@@ -197,11 +197,11 @@ def validate_profiles(profiles, config):
             errors.append(f"profil « {name} » : serveur en double dans servers")
         for srv in servers:
             if srv in private:
-                errors.append(f"profil « {name} » : le serveur « {srv} » est privé et ne peut pas être donné à un tiers")
+                errors.append(f"profil « {name} » : le serveur « {srv} » est privé et ne peut pas être donné à un agent")
             elif srv not in declared:
                 errors.append(f"profil « {name} » : serveur « {srv} » inconnu (déclarés : {', '.join(sorted(declared)) or 'aucun'})")
             elif _is_memory(declared[srv]) and not _has_http(declared[srv]):
-                errors.append(f"profil « {name} » : le serveur de mémoire « {srv} » n'a pas de canal HTTP (MEMORY_HTTP_PORT) : un tiers ne peut "
+                errors.append(f"profil « {name} » : le serveur de mémoire « {srv} » n'a pas de canal HTTP (MEMORY_HTTP_PORT) : un agent ne peut "
                               "pas lancer son propre processus de mémoire")
     return errors
 

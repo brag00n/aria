@@ -1,4 +1,4 @@
-"""Page d'administration des accès tiers : garde (hôte, jeton, origine), gestion des clés, profils, onglet. Bibliothèque standard seulement."""
+"""Page d'administration des agents : garde (hôte, jeton, origine), gestion des clés, profils, onglet. Bibliothèque standard seulement."""
 import http.client
 import json
 import shutil

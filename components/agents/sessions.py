@@ -1,4 +1,4 @@
-"""Sessions Aria des applications tierces : un moteur LLM, un gestionnaire MCP et un historique par (clé, session client).
+"""Sessions Aria des applications : un moteur LLM, un gestionnaire MCP et un historique par (clé, session client).
 
 Chaque session a une TÂCHE PROPRIÉTAIRE qui ouvre les connexions MCP, attend un événement d'arrêt puis les ferme : les bibliothèques
 asynchrones des clients MCP (anyio) exigent que les portées d'annulation soient ouvertes et fermées dans la même tâche, ce qui exclut
@@ -99,7 +99,7 @@ class SessionRegistry:
                     identity = (key_rec["id"], key_rec.get("label", ""), bool(key_rec.get("publish_links")))
                 engine, mcp = self.factory(profile, identity)
             except Exception as e:
-                utils.log_info("ACCESS", f"❌ Session impossible pour la clé {key_rec['id']} : {type(e).__name__}: {str(e)[:200]}")
+                utils.log_info("AGENTS", f"❌ Session impossible pour la clé {key_rec['id']} : {type(e).__name__}: {str(e)[:200]}")
                 raise SessionError(500, "configuration du profil invalide")
             s = Session(sid, key_rec["id"], profile, engine, mcp, app_prompt)
             s.watch_speaker = bool(key_rec.get("publish_speaker")) and mcp is not None
@@ -122,7 +122,7 @@ class SessionRegistry:
                     await s.mcp.ensure_connected()
                 except Exception as e:
                     s.error = f"{type(e).__name__}: {str(e)[:200]}"
-                    utils.log_info("ACCESS", f"⚠️ Connexion MCP de la session {s.sid} : {s.error}")
+                    utils.log_info("AGENTS", f"⚠️ Connexion MCP de la session {s.sid} : {s.error}")
                 if getattr(s, "watch_speaker", False) and not s.error:
                     await self.refresh_speaker(s, exchange=False)          # interlocuteur fourni par l'application : connu dès le premier tour
             s.ready.set()
@@ -133,7 +133,7 @@ class SessionRegistry:
                 try:
                     await s.mcp.close()
                 except Exception as e:
-                    utils.log_info("ACCESS", f"Fermeture MCP de {s.sid} : {type(e).__name__}")
+                    utils.log_info("AGENTS", f"Fermeture MCP de {s.sid} : {type(e).__name__}")
 
     async def refresh_speaker(self, s, exchange=True):
         """Relit auprès de la mémoire l'interlocuteur courant de la session (outil caché `ui_interlocuteur`). `exchange` : met aussi à jour la personne de
@@ -248,7 +248,7 @@ def build_engine(profile, base_config, language=None, identity=None):
     name = profile.get("llm") or base_config.get("active_modules", {}).get("llm", "")
     params = dict((llm_conf.get(name) or {}).get("params") or {})
     if params.get("backend_type", "local") not in REMOTE_BACKENDS:
-        raise ProfileError("seuls les LLM distants sont autorisés pour un accès tiers")
+        raise ProfileError("seuls les LLM distants sont autorisés pour un agent")
     # Message système : celui du profil (sinon celui du module LLM), puis les consignes de l'application, qui le complètent
     base = profile.get("system_message") or params.get("system_message", "")
     params["system_message"] = compose_system(base, profile.get("app_prompt", ""))

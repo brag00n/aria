@@ -13,7 +13,7 @@ Variables d'environnement :
   MEMORY_NAMESPACE   espace de noms (défaut : default)
   MEMORY_UI_PORT     port de la page de gestion (absent = pas de page)
   MEMORY_UI_TOKEN    jeton optionnel exigé par la page
-  MEMORY_HTTP_PORT   port du canal HTTP des accès tiers (127.0.0.1 seulement ; absent = pas de canal)
+  MEMORY_HTTP_PORT   port du canal HTTP des agents (127.0.0.1 seulement ; absent = pas de canal)
   MEMORY_HTTP_SECRET secret exigé par ce canal (≥ 16 caractères) ; sans lui le canal n'est pas ouvert
   MEMORY_LOG_TEXT    0 = ne pas consigner le texte des requêtes dans le journal d'activité (empreinte à la place)
   MEMORY_LOG_LEVEL   info (défaut) | debug
@@ -42,7 +42,7 @@ activity = Activity(DATA_DIR / "logs",
                     level=os.environ.get("MEMORY_LOG_LEVEL", "info"))
 store = store_mod.Store(DATA_DIR, NAMESPACE, activity=activity)
 interlocuteurs = Interlocuteurs(store)
-service = Service(store, interlocuteurs)          # cœur des outils : partagé par la façade stdio (Aria) et la façade HTTP (accès tiers)
+service = Service(store, interlocuteurs)          # cœur des outils : partagé par la façade stdio (Aria) et la façade HTTP (agent)
 if not store.read_only:
     try:
         interlocuteurs.rattraper()          # fiches et sexes des personnes citées dans d'anciens liens (idempotent)
@@ -113,13 +113,13 @@ if __name__ == "__main__":
     http_port = os.environ.get("MEMORY_HTTP_PORT")
     http_secret = os.environ.get("MEMORY_HTTP_SECRET")
     if http_port:
-        # Canal HTTP pour les accès tiers : même processus, même Store. Sans secret, il n'est PAS ouvert (jamais de canal sans authentification).
+        # Canal HTTP pour les agents : même processus, même Store. Sans secret, il n'est PAS ouvert (jamais de canal sans authentification).
         try:
             if not http_secret or len(http_secret) < 16:
                 raise ValueError("MEMORY_HTTP_SECRET absent ou trop court")
             import http_facade
             http_facade.start(store, service, int(http_port), http_secret)
-            activity.warn(f"canal HTTP des accès tiers sur 127.0.0.1:{http_port}")
+            activity.warn(f"canal HTTP des agents sur 127.0.0.1:{http_port}")
         except Exception as e:     # optionnel : une erreur ne doit jamais empêcher le serveur (donc Aria) de démarrer
             activity.log("error", where="http_start", msg=f"{type(e).__name__}: {e}")
             activity.warn(f"canal HTTP non démarré : {e}")

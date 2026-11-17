@@ -48,7 +48,7 @@ def parse_settings(config, fields):
             raise ValueError(f"❌ Module {cat} inconnu : {choice}")
         out[cat] = _object(fields[cat], f"{cat.upper()}")
     out["mcp"] = _object(fields["mcp"], "MCP")
-    # Profils d'accès tiers : validés contre les serveurs MCP et les LLM de la config ENREGISTRÉE avec cette même sauvegarde
+    # Profils d'agent : validés contre les serveurs MCP et les LLM de la config ENREGISTRÉE avec cette même sauvegarde
     futur = {**config, "mcp": {**(config.get("mcp") or {}), "params": out["mcp"]},
              "llm": {**(config.get("llm") or {}), fields["llm_choice"]: {**(config["llm"].get(fields["llm_choice"]) or {}), "params": out["llm"]}},
              "agents": compat.section(config)}
@@ -126,7 +126,7 @@ def profiles_help(config):
     """Aide affichée sous l'éditeur de profils : serveurs MCP utilisables et serveurs privés exclus."""
     exposable = agents_profile.exposable_servers(config)
     private = sorted(agents_profile.private_servers(config) & set(agents_profile.declared_servers(config)))
-    return ("<small>Un profil choisit ce qu'une clé API d'application tierce peut utiliser. Clés d'un profil : "
+    return ("<small>Un profil choisit ce qu'une clé API d'application peut utiliser. Clés d'un profil : "
             "<code>description</code>, <code>system_message</code>, <code>llm</code> (module LLM distant, vide = module actif), "
             "<code>voice</code> et <code>servers</code> (noms de serveurs MCP). "
             f"<br>Serveurs utilisables : <b>{', '.join(exposable) or 'aucun'}</b>"

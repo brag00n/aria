@@ -1,4 +1,4 @@
-"""Façade HTTP des accès tiers : authentification par secret, identité imposée par le serveur, outils servis. Nécessite le paquet `mcp` et uvicorn
+"""Façade HTTP des agents : authentification par secret, identité imposée par le serveur, outils servis. Nécessite le paquet `mcp` et uvicorn
 (dans le conteneur d'Aria) : ignoré sinon. Les contrôles d'identité sont aussi couverts de bout en bout (processus réel) par le script du plan."""
 import asyncio
 import json

@@ -1,4 +1,4 @@
-"""Protections de l'API tierce : débit par clé et par IP, blocage après échecs d'authentification, quota journalier, CORS.
+"""Protections de l'API des agents : débit par clé et par IP, blocage après échecs d'authentification, quota journalier, CORS.
 Bibliothèque standard seulement ; tout est en mémoire (une seule instance d'Aria).
 """
 import threading

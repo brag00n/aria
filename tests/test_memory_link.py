@@ -1,4 +1,4 @@
-"""Liaison des accès tiers avec le serveur de mémoire unique (components/agents/memory_link.py) : secret du canal, identité, serveurs résolus.
+"""Liaison des agents avec le serveur de mémoire unique (components/agents/memory_link.py) : secret du canal, identité, serveurs résolus.
 Bibliothèque standard seulement."""
 import json
 import sys

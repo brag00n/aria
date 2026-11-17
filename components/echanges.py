@@ -6,7 +6,7 @@ ne tolère pas, et la purge par âge devient la suppression de fichiers entiers 
 Ligne :
     {"id":"e_…","ts":"début ISO UTC","fin":"ISO UTC","conv":"…","src":"aria" | "k_2b7cfa:Robot","who":"…","q":"…","voix":false,"r":"…",
      "st":"ok|interrompu|erreur","outils":["memoriser"],"ms":1234}
-`src` : `aria` pour l'interface ; pour un accès tiers, son identifiant interne suivi de son nom (le nom est celui de l'accès au moment de l'échange).
+`src` : `aria` pour l'interface ; pour un agent, son identifiant interne suivi de son nom (le nom est celui de l'accès au moment de l'échange).
 
 L'échange courant est un `contextvar` (valeur PAR TÂCHE asyncio : des tours concurrents ne se mélangent pas), posé une seule fois par source. Il alimente aussi le `_meta`
 des appels d'outils de mémoire (components/mcp.py) : le LLM ne peut ni le fournir ni le modifier. Une erreur d'écriture ne doit JAMAIS faire échouer un tour.
@@ -77,7 +77,7 @@ def iso(ts=None):
 
 
 def source_label(acces_id=None, acces_nom=None):
-    """`aria` sans accès tiers ; sinon « identifiant:nom » (ex. k_2b7cfa:Robot)."""
+    """`aria` sans agent ; sinon « identifiant:nom » (ex. k_2b7cfa:Robot)."""
     if not acces_id:
         return "aria"
     nom = " ".join(str(acces_nom or "").split())[:60]
@@ -85,7 +85,7 @@ def source_label(acces_id=None, acces_nom=None):
 
 
 def acces_id_of(src):
-    """Identifiant interne d'un accès tiers lu dans `src` ('' pour Aria)."""
+    """Identifiant interne d'un agent lu dans `src` ('' pour Aria)."""
     src = str(src or "")
     return "" if src == "aria" or not src else src.split(":", 1)[0]
 

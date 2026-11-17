@@ -1,4 +1,4 @@
-"""API HTTP des applications tierces (Starlette) : POST /v1/turn (flux SSE), /v1/stop, /v1/reset, GET /v1/health.
+"""API HTTP des applications (Starlette) : POST /v1/turn (flux SSE), /v1/stop, /v1/reset, GET /v1/health.
 
 `create_app(deps)` ne dépend d'aucun module lourd d'Aria : les dépendances sont injectées dans `deps` (`Deps`) ; les tests y mettent un
 moteur LLM, un STT et un TTS factices.
@@ -268,7 +268,7 @@ async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=Fa
                     return
                 except Exception as e:
                     yield _sse("error", {"code": "bad_audio", "message": "audio illisible"})
-                    utils.log_info("ACCESS", f"audio illisible ({rec['id']}) : {type(e).__name__}")
+                    utils.log_info("AGENTS", f"audio illisible ({rec['id']}) : {type(e).__name__}")
                     return
                 text = samples
                 if not re.search(r"\w", text or ""):
@@ -296,7 +296,7 @@ async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=Fa
                             yield _sse("tool", {"name": name})
                     if full and full.startswith("Erreur LLM:"):
                         yield _sse("error", {"code": "llm", "message": "le modèle n'a pas pu répondre"})
-                        utils.log_info("ACCESS", f"{rec['id']} : {full[:200]}")
+                        utils.log_info("AGENTS", f"{rec['id']} : {full[:200]}")
                         return
                     if propre != vu:
                         vu = propre
@@ -312,7 +312,7 @@ async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=Fa
         except asyncio.CancelledError:                # client parti : on arrête proprement
             raise
         except Exception as e:
-            utils.log_info("ACCESS", f"❌ tour ({rec['id']}) : {type(e).__name__}: {str(e)[:200]}")
+            utils.log_info("AGENTS", f"❌ tour ({rec['id']}) : {type(e).__name__}: {str(e)[:200]}")
             yield _sse("error", {"code": "internal", "message": "erreur interne"})
 
 

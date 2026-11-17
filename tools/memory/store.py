@@ -394,7 +394,7 @@ class Store:
         return None
 
     def _rate_limited(self, src, who=""):
-        """Limite les ajouts émis par le LLM (une page web piégée pourrait lui faire tout mémoriser). La limite est PAR principal : un tiers
+        """Limite les ajouts émis par le LLM (une page web piégée pourrait lui faire tout mémoriser). La limite est PAR principal : un agent
         bavard ne prive pas Aria de ses écritures."""
         if src != "llm":
             return False
@@ -578,12 +578,12 @@ class Store:
 
     # ---------------------------------------------------------------- lecture / recherche
     def is_system(self, pid):
-        """Vrai si `pid` est une personne de type système (accès tiers)."""
+        """Vrai si `pid` est une personne de type système (agent)."""
         return bool(pid) and est_systeme(self.personnes.get(pid))
 
     def visible_to(self, rec, owner=None):
         """Un souvenir est visible de son propriétaire et de tous s'il est partagé. Interlocuteur inconnu : le partagé seulement.
-        Un SYSTÈME (accès tiers) ne voit que ses souvenirs, plus les souvenirs partagés de type `foyer` : jamais les relations
+        Un SYSTÈME (agent) ne voit que ses souvenirs, plus les souvenirs partagés de type `foyer` : jamais les relations
         partagées en tant que souvenirs (il lit le graphe par l'outil de parenté), ni les anciens souvenirs sans propriétaire."""
         owner = self.active if owner is None else owner
         if self.is_system(owner):

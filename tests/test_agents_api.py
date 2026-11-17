@@ -1,4 +1,4 @@
-"""API tierce (Starlette) avec LLM, STT et TTS factices. Nécessite starlette/httpx : ignoré si absents (ils sont dans le conteneur d'Aria)."""
+"""API des agents (Starlette) avec LLM, STT et TTS factices. Nécessite starlette/httpx : ignoré si absents (ils sont dans le conteneur d'Aria)."""
 import asyncio
 import base64
 import json
@@ -961,7 +961,7 @@ class ValidationProfilsTests(unittest.TestCase):
     def test_une_memoire_sans_canal_http_est_refusee(self):
         e = self.check({"a": {"servers": ["memoire_stdio"]}})
         self.assertEqual(len(e), 1)
-        self.assertIn("canal HTTP", e[0])                                                  # jamais de processus mémoire propre à un tiers
+        self.assertIn("canal HTTP", e[0])                                                  # jamais de processus mémoire propre à un agent
 
     def test_serveurs_prives_configurables(self):
         self.assertEqual(len(self.check({"a": {"servers": ["loc"]}}, private_servers=["loc"])), 1)

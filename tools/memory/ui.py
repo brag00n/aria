@@ -209,10 +209,10 @@ def make_handler(store, activity, token):
                 return self._json({"ok": bool(person), "id": person["id"] if person else None})
             if path == "/api/personne/update":
                 fields = {k: body[k] for k in ("nom", "compl", "surnom", "sexe") if k in body}
-                if "validee" in body:                     # une personne créée par un accès tiers est validée (ou remise à valider) par un humain
+                if "validee" in body:                     # une personne créée par un agent est validée (ou remise à valider) par un humain
                     fields["a_valider"] = not body["validee"]
                 if "connue" in body and store.is_system(rid):
-                    body.pop("connue")                    # un système (accès tiers) n'est jamais un interlocuteur d'Aria : l'interrupteur est sans objet
+                    body.pop("connue")                    # un système (agent) n'est jamais un interlocuteur d'Aria : l'interrupteur est sans objet
                 if "connue" in body:                      # connue d'Aria = a déjà discuté avec elle = présente dans la liste des interlocuteurs
                     if not body["connue"] and store.active == rid:
                         return self._json({"ok": False, "erreur": "cette personne est l'interlocuteur actif : choisis d'abord quelqu'un d'autre"})
@@ -224,7 +224,7 @@ def make_handler(store, activity, token):
                 return self._json({"ok": ok})
             if path == "/api/personne/merge":
                 if store.is_system(rid) != store.is_system(str(body.get("vers", ""))):
-                    return self._json({"ok": False, "erreur": "on ne fusionne pas un accès tiers (système) avec une personne : leurs mémoires doivent rester séparées"})
+                    return self._json({"ok": False, "erreur": "on ne fusionne pas un agent (système) avec une personne : leurs mémoires doivent rester séparées"})
                 moved = store.merge_persons(rid, str(body.get("vers", "")), src="ui")
                 if moved >= 0:
                     from interlocuteur import Interlocuteurs
@@ -378,10 +378,10 @@ function editPerson(p, retour){
   const connue = el('input',{type:'checkbox',checked:!p.citee,disabled:!!p.systeme});
   const validee = el('input',{type:'checkbox',checked:!p.a_valider});
   openModal('Modifier la personne', [
-    ...(p.par ? [el('label',{className:'chk'}, validee, ' Validée (fiche créée par l’accès tiers ' + p.par + ' : décochée = à valider)')] : []),
+    ...(p.par ? [el('label',{className:'chk'}, validee, ' Validée (fiche créée par l’agent ' + p.par + ' : décochée = à valider)')] : []),
     el('div',{className:'row'}, field('Prénom', nom), field('Nom de famille', compl)),
     el('div',{className:'row'}, field('Surnom (comment elle veut être appelée)', sur), field('Sexe (pour dire fille, tante, grand-mère...)', sexe)),
-    el('label',{className:'chk'}, connue, p.systeme ? ' Accès tiers (système) : jamais dans la liste des interlocuteurs d’Aria ; identité liée à la clé interne ' + p.cle : ' Connue par Aria (a déjà discuté avec elle : figure dans la liste des interlocuteurs)'),
+    el('label',{className:'chk'}, connue, p.systeme ? ' Agent (système) : jamais dans la liste des interlocuteurs d’Aria ; identité liée à la clé interne ' + p.cle : ' Connue par Aria (a déjà discuté avec elle : figure dans la liste des interlocuteurs)'),
   ], `Identifiant ${p.id} · créée ${p.cree} · ${p.souvenirs} souvenir(s)${p.actif?' · interlocuteur actif':''}${p.citee?' · seulement citée (pas encore interlocutrice)':''}`, async ()=>{
     const x = await post('/api/personne/update', {id:p.id, nom:nom.value, compl:compl.value, surnom:sur.value, sexe:sexe.value, connue:connue.checked, ...(p.par ? {validee:validee.checked} : {})});
     return x.ok ? true : (x.erreur || 'Le prénom est obligatoire');

@@ -19,7 +19,7 @@ class Stt:
             utils.log_info("STT", "Initialisation du moteur Whisper (Hugging Face) 🤗")
             self.engine = SttWhisper(self.params)
 
-    # Un seul modèle STT pour toute l'application (interface Aria et accès tiers) : il n'est pas réentrant
+    # Un seul modèle STT pour toute l'application (interface Aria et agent) : il n'est pas réentrant
     lock = threading.Lock()
 
     def transcribe_translate(self, audio_path):

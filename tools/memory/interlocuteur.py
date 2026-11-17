@@ -43,7 +43,7 @@ CONSIGNE_SYSTEME = (
 CATEGORIE_FAMILLE = frozenset(("conjoint", "parent", "enfant", "fratrie"))
 
 
-MAX_NOUVELLES_PERSONNES_PAR_JOUR = 5          # fiches qu'un accès tiers peut créer en 24 h (erreurs de reconnaissance vocale, jeux)
+MAX_NOUVELLES_PERSONNES_PAR_JOUR = 5          # fiches qu'un agent peut créer en 24 h (erreurs de reconnaissance vocale, jeux)
 
 
 class Interlocuteurs:
@@ -86,7 +86,7 @@ class Interlocuteurs:
     # ------------------------------------------------------------------ outils du LLM
     def identifier(self, nom, complement="", surnom="", principal=None, trace=None):
         """Outil identifier_interlocuteur : active la personne qui parle, la crée si besoin, signale les homonymes. Un principal SYSTÈME
-        (accès tiers) est identifié par l'infrastructure : le serveur refuse ici tout changement d'identité, quoi que dise le LLM."""
+        (agent) est identifié par l'infrastructure : le serveur refuse ici tout changement d'identité, quoi que dise le LLM."""
         if self.store.is_system(principal):
             return "Ton identité est fixée par l'application : tu ne peux pas en changer. Continue avec memoriser et rechercher_souvenir."
         completed = self._completer_actif(nom, complement, surnom)
@@ -107,9 +107,9 @@ class Interlocuteurs:
         return f"OK, {label} est maintenant actif." + (" (Changement d'interlocuteur.)" if previous and previous != person["id"] else "")
 
     def identifier_session(self, nom, complement="", surnom="", courant="", trace=None):
-        """Désigne l'interlocuteur d'UNE SESSION d'accès tiers (celui d'Aria, `store.active`, n'est jamais touché : un tiers ne change pas à qui parle
+        """Désigne l'interlocuteur d'UNE SESSION d'agent (celui d'Aria, `store.active`, n'est jamais touché : un agent ne change pas à qui parle
         Aria). Mêmes règles qu'`identifier` (homonymes, création, fiche complétée). Retourne (texte pour le LLM, identifiant de l'interlocuteur) ;
-        l'identifiant est `courant` inchangé si rien n'est désigné. Un accès tiers (système) n'est jamais un interlocuteur. Une fois un interlocuteur
+        l'identifiant est `courant` inchangé si rien n'est désigné. Un agent (système) n'est jamais un interlocuteur. Une fois un interlocuteur
         désigné (`courant`), seule la complétion de SA fiche (surnom, nom de famille) est acceptée : jamais de changement de personne."""
         completed = self._completer_actif(nom, complement, surnom, pid=courant or "")        # '' : pas d'interlocuteur dans la session, pas celui d'Aria
         if completed:
@@ -128,7 +128,7 @@ class Interlocuteurs:
             return (f"Plusieurs personnes portent ce prénom ({names}). N'active personne : demande le nom de famille "
                     f"ou un surnom, puis rappelle identifier_interlocuteur avec le complément."), courant
         if est_systeme(person):
-            return "Cette personne est un accès d'application, pas un interlocuteur. Demande le nom de la personne qui te parle.", courant
+            return "Cette personne est un agent, pas un interlocuteur. Demande le nom de la personne qui te parle.", courant
         self.store.activity.log("speaker", frm=courant or "", to=person["id"], src="session")
         label = self.store.personnes.full(person)
         if status == "created":
@@ -138,7 +138,7 @@ class Interlocuteurs:
     def relier(self, personne_a, lien, personne_b, precision="", principal=None, trace=None, publier=False):
         """Outil relier : mémorise « personne_a est le <lien> de personne_b » (« moi » = l'interlocuteur actif). `lien` appartient à une liste
         fermée (liens.TYPES) ; `autre` + `precision` couvre le reste. Un lien hors liste est refusé avec la liste, pour que le LLM corrige.
-        Un SYSTÈME (accès tiers) ne relie que LUI-MÊME à une personne. Avec `publier` (option de sa clé) : son lien est PUBLIC, il peut créer la fiche
+        Un SYSTÈME (agent) ne relie que LUI-MÊME à une personne. Avec `publier` (option de sa clé) : son lien est PUBLIC, il peut créer la fiche
         d'une personne nouvelle (« à valider » par un humain, plafonnée par jour), mettre à jour SES liens, jamais celui qu'un humain ou un autre accès a établi."""
         a, b = self._designation(personne_a, principal), self._designation(personne_b, principal)
         if not (a and b and key(lien)):
@@ -233,7 +233,7 @@ class Interlocuteurs:
     def _completer_actif(self, nom, complement, surnom, pid=None):
         """L'interlocuteur actif donne plus de détails sur lui (« Tiphaine », puis « Tiphaine Cousinier, appelez-moi Titi ») :
         on complète sa fiche au lieu de créer un homonyme. Retourne le texte de réponse, ou None si ce n'est pas ce cas."""
-        # `pid` = interlocuteur d'une SESSION d'accès tiers : '' veut dire « personne », jamais « celui d'Aria » (seul None retombe sur `store.active`)
+        # `pid` = interlocuteur d'une SESSION d'agent : '' veut dire « personne », jamais « celui d'Aria » (seul None retombe sur `store.active`)
         person = self.store.personnes.get(self.store.active if pid is None else pid)
         if not person:
             return None

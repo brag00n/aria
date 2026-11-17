@@ -1,4 +1,4 @@
-"""Principaux : humains et personnes SYSTÈME (accès tiers). Un système connaît toutes les personnes et leurs liens, mais ne lit que ses propres
+"""Principaux : humains et personnes SYSTÈME (agent). Un système connaît toutes les personnes et leurs liens, mais ne lit que ses propres
 souvenirs (et le foyer partagé) ; il n'écrit jamais dans le partagé, ne peut ni changer d'identité ni relier deux humains."""
 import json
 import shutil

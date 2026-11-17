@@ -1,4 +1,4 @@
-"""Page d'administration des accès tiers : clés API, domaines autorisés, profils MCP. Serveur http.server (bibliothèque standard), port dédié
+"""Page d'administration des agents : clés API, domaines autorisés, profils MCP. Serveur http.server (bibliothèque standard), port dédié
 publié sur 127.0.0.1 seulement, intégré à l'interface d'Aria par un cadre (components/agents_tab.py).
 
 Protections (reprises de tools/memory/ui.py, durcies) : en-tête Host dans une liste blanche (anti DNS rebinding), jeton `X-Token` généré
@@ -206,7 +206,7 @@ def start(store, profiles, sessions, port, token=None, audit=None, extra_hosts=(
 
 PAGE = """<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Accès tiers</title>
+<title>Agents</title>
 <style>
 :root{--bg:#fafafa;--fg:#1c1c1e;--mut:#6b6b70;--line:#d9d9de;--card:#fff;--acc:#2a6df4;--warn:#b45309;--ok:#15803d}
 @media (prefers-color-scheme:dark){:root{--bg:#161618;--fg:#ececf0;--mut:#9a9aa3;--line:#33333a;--card:#1f1f23;--acc:#6c9bff;--warn:#f0a35a;--ok:#4ade80}}
@@ -237,8 +237,8 @@ code,.secret{font-family:ui-monospace,Consolas,monospace}
 #modal .err{color:var(--warn);margin-top:8px;min-height:1em}
 #modal .chk{display:flex;align-items:center;gap:6px;margin-top:10px}#modal .chk input{width:auto}
 </style></head><body>
-<header><h1>🔑 Accès tiers</h1>
-<nav><button data-t="keys" class="on">Clés</button><button data-t="prof">Profils MCP</button><button data-t="ses">Sessions</button><button data-t="jrn">Journal</button><button data-t="doc">Intégration</button></nav>
+<header><h1>🤖 Agents</h1>
+<nav><button data-t="keys" class="on">Agents</button><button data-t="prof">Profils MCP</button><button data-t="ses">Sessions</button><button data-t="jrn">Journal</button><button data-t="doc">Intégration</button></nav>
 <span id="msg"></span></header>
 <main id="main"></main>
 <script>
@@ -288,7 +288,7 @@ function secretModal(titre,secret){
 }
 function editKey(k){
   const neuf=!k;
-  const label=el('input',{value:k?k.label:'',placeholder:'Nom de l\\u2019application'});
+  const label=el('input',{value:k?k.label:'',placeholder:'Nom de l\\u2019agent'});
   const origins=el('textarea',{value:k?k.origins.join('\\n'):'',placeholder:'https://app.example.com (une par ligne)'});
   const prof=profilSelect(k?k.profile:'');
   const rate=el('input',{type:'number',min:1,value:k?k.limits.rate_per_min:30});
@@ -298,7 +298,7 @@ function editKey(k){
   const publish=el('input',{type:'checkbox',checked:k?!!k.publish_links:false});
   const speaker=el('input',{type:'checkbox',checked:k?!!k.publish_speaker:false});
   const reten=el('input',{type:'number',min:0,max:3650,value:k?(k.retention_days||0):0,title:'0 = durée par défaut du journal'});
-  openModal(neuf?'Nouvelle clé':'Modifier la clé',[
+  openModal(neuf?'Nouvel agent':'Modifier l\\u2019agent',[
     field('Nom',label),field('Domaines autorisés (une origine exacte par ligne)',origins),field('Profil MCP (outils de cette application)',prof),
     el('div',{className:'row'},field('Requêtes par minute',rate),field('Tours par jour',day)),
     field(neuf?'Expire dans (jours, 0 = jamais)':'Prolonger : expire dans (jours, 0 = jamais)',exp),
@@ -308,16 +308,16 @@ function editKey(k){
     field('Conservation des échanges dans le journal d\u2019audit (jours, 0 = durée par défaut)',reten),
   ],k?('Identifiant '+k.id+' \\u00b7 préfixe '+k.prefix+' \\u00b7 '+k.etat):'La clé ne sera affichée qu\\u2019une seule fois, à la création.',async()=>{
     const corps={label:label.value,origins:lignes(origins.value),profile:prof.value,limits:{rate_per_min:+rate.value,daily_turns:+day.value},voice:voice.checked,publish_links:publish.checked,publish_speaker:speaker.checked,retention_days:+reten.value||0};
-    if(neuf){corps.expires_days=+exp.value;const r=await post('/api/keys/create',corps);if(!r.ok)return r.erreur;closeModal();secretModal('Clé créée',r.secret);return 'keep'}
+    if(neuf){corps.expires_days=+exp.value;const r=await post('/api/keys/create',corps);if(!r.ok)return r.erreur;closeModal();secretModal('Agent créé : sa clé API',r.secret);return 'keep'}
     corps.id=k.id;if(+exp.value>0||exp.value==='0'&&k.expires)corps.expires_days=+exp.value;
     const r=await post('/api/keys/update',corps);return r.ok?true:'Impossible';
   },neuf?'Créer':'Enregistrer');
 }
 async function renderKeys(main){
   const rows=await get('/api/keys');
-  main.append(el('div',{className:'bar'},el('button',{onclick:()=>editKey(null)},'+ Nouvelle clé'),
-    el('span',{className:'mut'},'Les applications tierces appellent l\\u2019API avec cette clé (Authorization: Bearer ak_…).')),
-    el('table',{},el('tr',{},...['Nom','Clé','État','Profil','Domaines','Limites','Dernier usage',''].map(h=>el('th',{},h))),
+  main.append(el('div',{className:'bar'},el('button',{onclick:()=>editKey(null)},'+ Nouvel agent'),
+    el('span',{className:'mut'},'Chaque agent appelle l\\u2019API avec sa clé API (Authorization: Bearer ak_…).')),
+    el('table',{},el('tr',{},...['Agent','Clé API','État','Profil','Domaines','Limites','Dernier usage',''].map(h=>el('th',{},h))),
       ...rows.map(k=>el('tr',{},el('td',{},k.label,el('div',{className:'mut'},k.id)),el('td',{},el('code',{},k.prefix+'…')),
         el('td',{className:k.etat==='active'?'ok':'ko'},k.etat+(k.expires?' (expire '+k.expires.slice(0,10)+')':'')),
         el('td',{},k.profile||el('span',{className:'ko'},'aucun')),
@@ -325,16 +325,16 @@ async function renderKeys(main){
         el('td',{className:'mut'},k.limits.rate_per_min+'/min · '+k.limits.daily_turns+'/jour'+(k.voice?' · voix':' · texte')+(k.publish_links?' · publie ses liens':'')+(k.publish_speaker?' · agit pour son interlocuteur':'')),
         el('td',{className:'mut'},k.last_used?k.last_used.replace('T',' ').slice(0,16):'jamais'),
         el('td',{},el('button',{title:'Modifier',onclick:()=>editKey(k)},'✎'),' ',
-          el('button',{title:'Régénérer la clé API (la mémoire et les réglages de l\\u2019accès sont conservés ; l\\u2019ancienne clé cesse de fonctionner)',onclick:async()=>{if(confirm('Régénérer la clé de « '+k.label+' » ? L\\u2019ancienne clé cessera de fonctionner immédiatement. La mémoire de l\\u2019accès est conservée.')){const r=await post('/api/keys/regenerate',{id:k.id});if(r.ok)secretModal('Nouvelle clé de « '+k.label+' »',r.secret);else say(r.erreur||'Impossible')}}},'🔄'),' ',
+          el('button',{title:'Régénérer la clé API (la mémoire et les réglages de l\\u2019agent sont conservés ; l\\u2019ancienne clé cesse de fonctionner)',onclick:async()=>{if(confirm('Régénérer la clé de « '+k.label+' » ? L\\u2019ancienne clé cessera de fonctionner immédiatement. La mémoire de l\\u2019accès est conservée.')){const r=await post('/api/keys/regenerate',{id:k.id});if(r.ok)secretModal('Nouvelle clé de « '+k.label+' »',r.secret);else say(r.erreur||'Impossible')}}},'🔄'),' ',
           el('button',{title:k.revoked?'Réactiver':'Révoquer',onclick:async()=>{await post('/api/keys/revoke',{id:k.id,revoked:!k.revoked});render()}},k.revoked?'↺':'⛔'),' ',
-          el('button',{title:'Supprimer',onclick:async()=>{if(confirm('Supprimer définitivement la clé « '+k.label+' » ?')){await post('/api/keys/delete',{id:k.id});render()}}},'🗑'))))));
+          el('button',{title:'Supprimer',onclick:async()=>{if(confirm('Supprimer définitivement l\\u2019agent « '+k.label+' » et sa clé API ?')){await post('/api/keys/delete',{id:k.id});render()}}},'🗑'))))));
 }
 async function renderProfils(main){
-  main.append(el('p',{className:'mut'},'Un profil choisit les serveurs MCP, le message système et le LLM d\\u2019une application. Il se gère dans l\\u2019onglet Paramètres d\\u2019Aria (section « Accès tiers : profils ») et accède à la mémoire d\\u2019Aria sous l\\u2019identité de son accès (une personne système aux souvenirs privés).'),
+  main.append(el('p',{className:'mut'},'Un profil choisit les serveurs MCP, le message système et le LLM d\\u2019une application. Il se gère dans l\\u2019onglet Paramètres d\\u2019Aria (section « Agents : profils ») et accède à la mémoire d\\u2019Aria sous l\\u2019identité de son accès (une personne système aux souvenirs privés).'),
     el('table',{},el('tr',{},...['Profil','Description','LLM','Serveurs MCP','Voix'].map(h=>el('th',{},h))),
       ...PROFILS.map(p=>el('tr',{},el('td',{},p.name),el('td',{},p.erreur?el('span',{className:'ko'},p.erreur):p.description||''),el('td',{className:'mut'},p.llm||'(module actif)'),
         el('td',{},...p.servers.map(s=>el('span',{className:'tag'},s.name+' · '+s.type))),el('td',{},p.voice===false?'non':'oui')))));
-  if(!PROFILS.length)main.append(el('p',{className:'ko'},'Aucun profil. Créez-en un dans l\\u2019onglet Paramètres, section « Accès tiers : profils ».'));
+  if(!PROFILS.length)main.append(el('p',{className:'ko'},'Aucun profil. Créez-en un dans l\\u2019onglet Paramètres, section « Agents : profils ».'));
 }
 async function renderSessions(main){
   const rows=await get('/api/sessions');

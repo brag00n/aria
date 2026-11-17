@@ -427,7 +427,7 @@ class UiGrapheTests(UiCase):
 
 
 class UiSystemeTests(UiCase):
-    """Personnes de type système (accès tiers) dans la page de gestion."""
+    """Personnes de type système (agent) dans la page de gestion."""
 
     def setUp(self):
         super().setUp()
@@ -482,7 +482,7 @@ class UiSystemeTests(UiCase):
 
     def test_la_page_affiche_le_badge_systeme(self):
         self.assertIn("système", ui.PAGE)
-        self.assertIn("Accès tiers (système)", ui.PAGE)
+        self.assertIn("Agents (système)", ui.PAGE)
 
 
 class UiTokenTests(UiCase):

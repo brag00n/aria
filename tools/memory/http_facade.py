@@ -1,4 +1,4 @@
-"""Façade HTTP du serveur de mémoire, pour les accès tiers (components/agents/). Le MÊME processus et le MÊME Store que la façade stdio d'Aria :
+"""Façade HTTP du serveur de mémoire, pour les agents (components/agents/). Le MÊME processus et le MÊME Store que la façade stdio d'Aria :
 un seul écrivain, un seul verrou, une seule mémoire.
 
 Sécurité (le serveur impose l'identité, jamais le client) :
@@ -10,7 +10,7 @@ Sécurité (le serveur impose l'identité, jamais le client) :
 
 Deuxième canal, `/mcp-i`, pour les accès dont la clé a le droit « publier les informations de son interlocuteur » : l'accès agit alors au nom de
 la PERSONNE qui lui parle, avec les droits d'Aria (souvenirs à son nom, lien entre n'importe quelles personnes, fiches créées sans validation).
-L'interlocuteur est propre à la SESSION (en-tête `X-Memory-Session`) et n'est JAMAIS `store.active` : un tiers ne change pas à qui parle Aria. Il est
+L'interlocuteur est propre à la SESSION (en-tête `X-Memory-Session`) et n'est JAMAIS `store.active` : un agent ne change pas à qui parle Aria. Il est
 fourni par l'application (`X-Memory-Speaker`, posé par Aria à la création de la session : le LLM ne peut pas le changer) ou, à défaut, désigné par le LLM avec
 `identifier_interlocuteur`. Les observations propres de l'accès restent dans sa mémoire privée (`noter_observation`). Aucune authentification de la personne
 n'est faite : celui qui peut parler à l'application peut se dire quelqu'un d'autre (à réserver aux applications de confiance).

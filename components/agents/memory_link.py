@@ -1,4 +1,4 @@
-"""Liaison d'un accès tiers avec le serveur de mémoire UNIQUE d'Aria (« memoire »), par son canal HTTP local.
+"""Liaison d'un agent avec le serveur de mémoire UNIQUE d'Aria (« memoire »), par son canal HTTP local.
 
 Un profil référence le serveur `memoire` comme n'importe quel autre ; si ce serveur déclare `MEMORY_HTTP_PORT`, une session tierce ne lance pas son propre
 processus : elle se connecte au canal HTTP du processus d'Aria, avec
@@ -6,7 +6,7 @@ processus : elle se connecte au canal HTTP du processus d'Aria, avec
                                       ni dans la config) ; il est transmis au processus mémoire par son environnement ;
   - `X-Memory-Principal: <clé interne de l'accès>`  l'identité de la personne système ; le serveur l'impose, le LLM n'y a pas accès ;
   - `X-Memory-Name: <nom de l'accès>`  son nom (encodé), pour que la fiche suive un renommage.
-Le LLM d'un tiers ne reçoit jamais `identifier_interlocuteur` (le serveur ne le sert pas non plus : double sécurité).
+Le LLM d'un agent ne reçoit jamais `identifier_interlocuteur` (le serveur ne le sert pas non plus : double sécurité).
 """
 import json
 import secrets

@@ -159,7 +159,7 @@ class TtsQueue:
         return audio
 
     def _enqueue(self, text):
-        if self.tts is None:           # accès tiers en texte seul : rien à synthétiser
+        if self.tts is None:           # agent en texte seul : rien à synthétiser
             return
         self.count += 1
         cf = _TTS_EXECUTOR.submit(self._run, self.count, text)

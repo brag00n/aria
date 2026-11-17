@@ -1,4 +1,4 @@
-"""Clés API des applications tierces : magasin (hachage, expiration, révocation, origines) et protections (débit, blocage, quota, CORS)."""
+"""Clés API des agents : magasin (hachage, expiration, révocation, origines) et protections (débit, blocage, quota, CORS)."""
 import json
 import shutil
 import sys

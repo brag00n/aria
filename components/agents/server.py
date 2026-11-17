@@ -52,7 +52,7 @@ def build(config, stt, tts, language=None):
                                         max_sessions=s["max_sessions"], ttl_s=s["session_ttl_s"])
 
     def audit(event, **fields):
-        utils.log_info("ACCESS", f"{event} " + " ".join(f"{k}={v}" for k, v in fields.items()))
+        utils.log_info("AGENTS", f"{event} " + " ".join(f"{k}={v}" for k, v in fields.items()))
 
     deps = api.Deps(keys=store, sessions=registry, stt=stt, tts=tts, decode_audio=make_decoder(), on_audit=audit,
                     static_dir=utils.aria_path("static"))
@@ -71,9 +71,9 @@ def start(config, stt, tts, https_args, language=None, effacer_traces=None):
         from . import admin_ui
         try:
             admin, _token = admin_ui.start(store, profiles, deps.sessions, s["admin_port"], audit=deps.on_audit, effacer_traces=effacer_traces)
-            utils.log_info("ACCESS", f"Page d'administration sur le port {s['admin_port']} (publié sur 127.0.0.1 seulement)")
+            utils.log_info("AGENTS", f"Page d'administration sur le port {s['admin_port']} (publié sur 127.0.0.1 seulement)")
         except OSError as e:
-            utils.log_info("ACCESS", f"❌ Page d'administration non démarrée : {e}")
+            utils.log_info("AGENTS", f"❌ Page d'administration non démarrée : {e}")
     conf = {"host": "0.0.0.0", "port": s["port"], "log_level": "warning", "access_log": False}
     if https_args.get("ssl_certfile"):
         conf.update(ssl_certfile=https_args["ssl_certfile"], ssl_keyfile=https_args["ssl_keyfile"])
@@ -89,7 +89,7 @@ def start(config, stt, tts, https_args, language=None, effacer_traces=None):
 
     threading.Thread(target=lambda: asyncio.run(run()), name="aria-access", daemon=True).start()
     scheme = "https" if conf.get("ssl_certfile") else "http"
-    utils.log_info("ACCESS", f"API des applications tierces sur {scheme}://0.0.0.0:{s['port']}/v1/")
+    utils.log_info("AGENTS", f"API des agents sur {scheme}://0.0.0.0:{s['port']}/v1/")
     server.admin = admin
     server.agents_deps = deps          # registre des sessions et clés, pour l'onglet Paramètres (fermeture des sessions d'un profil modifié)
     return server

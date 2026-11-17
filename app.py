@@ -71,7 +71,7 @@ DEBUG_SAVE_WAV = False
 _TMP_DIR = utils.aria_path("tmp", "tts")
 _CONFIG_FILE = "configs/default.json"
 _boucle_mcp = {}          # boucle asyncio qui porte les sessions MCP (posée au démarrage de l'application)
-agents_srv = None          # serveur de l'API tierce (components/agents/server.py), None si la fonction est désactivée
+agents_srv = None          # serveur de l'API des agents (components/agents/server.py), None si la fonction est désactivée
 
 if os.path.exists(_TMP_DIR):
     shutil.rmtree(_TMP_DIR)
@@ -733,14 +733,14 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     lines=12
                 )
 
-            # --- BLOC 6 : ACCÈS TIERS (profils des clés API) ---
+            # --- BLOC 6 : AGENTS (profils des clés API) ---
             with gr.Group():
-                gr.Markdown("#### 🔑 Accès tiers : profils")
+                gr.Markdown("#### 🤖 Agents : profils")
                 profiles_help_md = gr.Markdown(settings_mod.profiles_help(config))
                 profiles_code = gr.Code(
                     value=json.dumps(agents_compat.section(config).get("profiles", {}), indent=2, ensure_ascii=False),
                     language="json",
-                    label="Profils d'accès (chaque clé API d'une application tierce en choisit un)",
+                    label="Profils des agents (chaque agent en choisit un)",
                     lines=12
                 )
                 close_open_cb = gr.Checkbox(label="Fermer les conversations ouvertes des clés dont le profil change (sinon, elles gardent l'ancien jusqu'à leur expiration)",
@@ -836,10 +836,10 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                 gr.HTML(memory_tab.html(_memory_port))
             memory_tab_item.select(None, None, None, js=memory_tab.js_reload())
 
-        # --- ONGLET ACCÈS TIERS (clés API des applications tierces) : seulement si "access.enabled" est vrai dans la config ---
+        # --- ONGLET AGENTS (clés API des agents) : seulement si "agents.enabled" est vrai dans la config ---
         _agents_port = agents_tab.admin_port(config)
         if _agents_port:
-            with gr.TabItem("🔑 Accès tiers") as agents_tab_item:
+            with gr.TabItem("🤖 Agents") as agents_tab_item:
                 gr.HTML(agents_tab.html(_agents_port))
             agents_tab_item.select(None, None, None, js=agents_tab.js_reload())
 
@@ -923,12 +923,12 @@ if __name__ == "__main__":
 
     # HTTPS optionnel (config "https") : nécessaire pour le micro depuis un autre poste ou un smartphone
     _https_args = https.launch_args(config.get("https"))
-    # Accès des applications tierces par clé API (config "access", désactivé par défaut) : API sur un port dédié
+    # Agents (applications ou appareils qui dialoguent avec Aria par clé API ; config "agents", désactivé par défaut) : API sur un port dédié
     try:
         from components.agents import server as agents_server
         agents_srv = agents_server.start(config, stt, tts, _https_args, language=language, effacer_traces=_effacer_traces_memoire)
     except Exception as e:                          # jamais empêcher Aria de démarrer à cause de cette option
-        utils.log_info("ACCESS", f"❌ API tierce non démarrée : {type(e).__name__}: {e}")
+        utils.log_info("AGENTS", f"❌ API des agents non démarrée : {type(e).__name__}: {e}")
     # Purge automatique du journal d'audit (au démarrage puis toutes les 6 h) : durée par défaut et durée de chaque accès relues à chaque passage
     def _reglages_audit():
         cles = getattr(getattr(agents_srv, "agents_deps", None), "keys", None)

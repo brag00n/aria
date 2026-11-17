@@ -36,10 +36,10 @@ async def server_reachable(url, timeout=PROBE_TIMEOUT_S):
 class Mcp:
     def __init__(self, mcp_params, secret_for_servers="", hosted_only=()):
         self.params = mcp_params or {}
-        self.hosted_only = frozenset(hosted_only or ())          # serveurs démarrés pour les accès tiers : leurs outils ne sont PAS ceux de l'interface
-        self.secret_for_servers = secret_for_servers          # secret du canal HTTP de la mémoire (processus d'Aria seulement ; vide pour les tiers)
+        self.hosted_only = frozenset(hosted_only or ())          # serveurs démarrés pour les agents : leurs outils ne sont PAS ceux de l'interface
+        self.secret_for_servers = secret_for_servers          # secret du canal HTTP de la mémoire (processus d'Aria seulement ; vide pour les agents)
         self.servers_conf = self.params.get("servers", {})
-        self.on_tool_done = None     # async (nom d'outil) appelé après un appel réussi : une session d'accès tiers y relit son interlocuteur courant
+        self.on_tool_done = None     # async (nom d'outil) appelé après un appel réussi : une session d'agent y relit son interlocuteur courant
         self.tool_registry = {}  
         self.openai_tools = []   
         self.stack = AsyncExitStack()
@@ -61,7 +61,7 @@ class Mcp:
         for name, conf in self.servers_conf.items():
             try:
                 conf = utils.expand_secrets(conf, f"MCP {name}")   # tags <SECRET> -> valeurs du .env
-                hidden_tools = set(conf.get("hide_tools") or ())   # outils de ce serveur jamais proposés au LLM (ex. identifier_interlocuteur pour un tiers)
+                hidden_tools = set(conf.get("hide_tools") or ())   # outils de ce serveur jamais proposés au LLM (ex. identifier_interlocuteur pour un agent)
                 if self.secret_for_servers:
                     from components.agents import memory_link
                     conf = memory_link.with_secret(conf, self.secret_for_servers)   # serveur mémoire d'Aria : secret de son canal HTTP, en mémoire seulement
@@ -85,9 +85,9 @@ class Mcp:
                 
                 tools_resp = await session.list_tools()
                 if name in self.hosted_only:
-                    # Serveur réservé aux accès tiers (mémoire d'un tiers hors foyer) : il tourne, mais ses outils ne sont jamais enregistrés pour
+                    # Serveur réservé aux agents (mémoire d'un agent hors foyer) : il tourne, mais ses outils ne sont jamais enregistrés pour
                     # l'interface d'Aria, sinon ils écraseraient ceux du serveur « memoire » (mêmes noms d'outils).
-                    utils.log_info("MCP", f"✅ Serveur [{name}] démarré pour les accès tiers (outils non exposés à l'interface).")
+                    utils.log_info("MCP", f"✅ Serveur [{name}] démarré pour les agents (outils non exposés à l'interface).")
                     continue
                 for tool in tools_resp.tools:
                     self.tool_registry[tool.name] = session

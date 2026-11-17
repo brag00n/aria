@@ -1,4 +1,4 @@
-"""Serveurs de mémoire hébergés pour des tiers hors foyer (`access.hosted_only`) : validation et non-exposition à l'interface d'Aria."""
+"""Serveurs de mémoire hébergés pour des agents hors foyer (`access.hosted_only`) : validation et non-exposition à l'interface d'Aria."""
 import asyncio
 import json
 import sys

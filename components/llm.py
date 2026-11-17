@@ -29,7 +29,7 @@ class Llm:
         # `contexte` (consigne propre à la requête) n'est géré que par les moteurs à historique (Anthropic, OpenAI/LM Studio)
         args = (tts, query, user, contexte) if contexte and self.backend_type != "local" else (tts, query, user)
         # Journal d'audit : UNE ligne par échange, écrite ici pour tous les moteurs (voir components/echanges.py). Le `finally` couvre aussi
-        # l'arrêt (le générateur est fermé) et l'erreur. L'échange courant est posé par la source (interface ou accès tiers) avant l'appel.
+        # l'arrêt (le générateur est fermé) et l'erreur. L'échange courant est posé par la source (interface ou agent) avant l'appel.
         echange = echanges.current()
         if echange is not None and not echange.query:
             echange.query = query or ""

@@ -1,4 +1,4 @@
-"""Accès tiers qui « publie les informations de son interlocuteur » (canal /mcp-i) : l'accès agit au nom de la personne qui lui parle, avec les droits
+"""Agents qui « publie les informations de son interlocuteur » (canal /mcp-i) : l'accès agit au nom de la personne qui lui parle, avec les droits
 d'Aria, mais l'interlocuteur est propre à sa SESSION et n'est jamais `store.active` (celui d'Aria). Ses observations propres restent privées.
 Aucune authentification de la personne n'est faite (à venir) : l'application ou le LLM la désigne."""
 import json
@@ -178,7 +178,7 @@ class IdentificationTests(Base):
         self.assertEqual(self.s.personnes.get(self.olivier)["nom"], avant["nom"])
 
     def test_la_fiche_de_l_interlocuteur_d_aria_n_est_pas_celle_de_la_session(self):
-        """Aria parle à Olivier ; la session d'un tiers parle à Tiphaine : un complément donné pour la session va à la fiche de Tiphaine."""
+        """Aria parle à Olivier ; la session d'un agent parle à Tiphaine : un complément donné pour la session va à la fiche de Tiphaine."""
         tiph = self.personne("Tiphaine")["id"]
         self.i.identifier_session("Tiphaine", surnom="Titi", courant=tiph)
         self.assertEqual(self.s.personnes.get(tiph)["surnom"], "Titi")
@@ -209,7 +209,7 @@ class IdentificationTests(Base):
     def test_un_acces_ne_peut_pas_etre_designe_comme_interlocuteur(self):
         texte, pid = self.i.identifier_session("Bamboo")
         self.assertEqual(pid, "")
-        self.assertIn("accès d'application", texte)
+        self.assertIn("agent", texte)
 
     def test_complete_la_fiche_de_l_interlocuteur_courant(self):
         tiph = self.personne("Tiphaine")["id"]
