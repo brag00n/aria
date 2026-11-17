@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Aria - page tierce de démonstration</title>
+<title>Aria - page de démonstration d'un agent</title>
 <style>
   :root { --bg:#fafafa; --fg:#1c1c1e; --mut:#6b6b70; --line:#d9d9de; --card:#fff; --acc:#2a6df4; --warn:#b45309; }
   @media (prefers-color-scheme: dark) { :root { --bg:#161618; --fg:#ececf0; --mut:#9a9aa3; --line:#33333a; --card:#1f1f23; --acc:#6c9bff; --warn:#f0a35a; } }
@@ -24,7 +24,7 @@
   .err { color:var(--warn); }
   .mut { color:var(--mut); font-size:13px; }
 
-  /* Visuel personnalisé : tout est du CSS de la page tierce. Le client écrit seulement data-aria-state et --aria-level sur #halo. */
+  /* Visuel personnalisé : tout est du CSS de la page de l'agent. Le client écrit seulement data-aria-state et --aria-level sur #halo. */
   #halo { --aria-level:0; width:120px; height:120px; margin:8px auto; border-radius:50%; display:grid; place-items:center; font-size:36px;
           background:var(--card); border:3px solid var(--line); transition:border-color .2s, background .2s;
           box-shadow:0 0 calc(8px + var(--aria-level) * 46px) calc(var(--aria-level) * 14px) color-mix(in srgb, var(--halo, var(--acc)) 55%, transparent); }
@@ -38,10 +38,10 @@
 </head>
 <body>
 <main>
-  <h1>Page tierce de démonstration</h1>
+  <h1>Page de démonstration d'un agent</h1>
   <p class="mut">Cette page est servie depuis <strong>une autre origine</strong> que celle d'Aria : l'API ne répond que si l'origine de cette page figure
   dans les domaines autorisés de la clé. Lancer par exemple <code>python -m http.server 8080</code> dans le dossier <code>docs</code>,
-  puis ouvrir <code>http://localhost:8080/access-demo.html</code> (autoriser l'origine <code>http://localhost:8080</code> dans l'onglet « Agents »).
+  puis ouvrir <code>http://localhost:8080/agents-demo.html</code> (autoriser l'origine <code>http://localhost:8080</code> dans l'onglet « Agents »).
   Le micro exige HTTPS ou localhost, et le navigateur doit avoir accepté une fois le certificat d'Aria (ouvrir l'adresse ci-dessous dans un onglet).</p>
 
   <fieldset>

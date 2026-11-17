@@ -1,30 +1,36 @@
-# Accès à Aria pour des applications tierces
+# Agents : applications et appareils qui dialoguent avec Aria
 
-> **Ce document s'adresse à l'administrateur d'Aria** (configuration, clés, profils, sécurité). Le guide destiné aux développeurs des
-> applications tierces, sans détail d'installation, est `docs/integration.md` : c'est celui à leur remettre avec leur clé.
+> **Ce document s'adresse à l'administrateur d'Aria** (configuration, agents, profils, sécurité). Le guide destiné aux développeurs des
+> applications qui intègrent un agent, sans détail d'installation, est `docs/integration.md` : c'est celui à leur remettre avec la clé API de l'agent.
+> **Vous veniez de l'ancien vocabulaire « accès tiers » ?** Voir `docs/migration-agents.md`.
 
-Une page web tierce peut utiliser Aria (écoute du micro, saisie texte, réponse en texte et en voix) avec une **clé API**. Chaque clé est associée à
-un **profil** : ses propres serveurs MCP (outils), son message système et son LLM. Les outils d'Aria ne sont jamais exposés ; sa mémoire ne l'est que par un profil qui la référence (voir « Mémoire des accès tiers »).
+Un **agent** est une entité IA qui peut interagir avec un **interlocuteur** (un humain aujourd'hui, d'autres agents ou systèmes demain). Concrètement : une page web,
+une application ou un appareil (un robot) qui utilise Aria (écoute du micro, saisie texte, réponse en texte et en voix) avec une **clé API**. Chaque agent a
+un **profil** : ses propres serveurs MCP (outils), son message système et son LLM. Les outils d'Aria ne sont jamais exposés ; sa mémoire ne l'est que par un profil qui la référence (voir « Mémoire des agents »).
 
 ## Activer
 
 1. Ajouter dans `configs/default.json` (absente ou `enabled: false` = fonction désactivée, rien n'est ouvert) :
    ```json
-   "access": { "enabled": true, "port": 7861, "admin_port": 7871, "max_sessions": 8, "session_ttl_s": 900 }
+   "agents": { "enabled": true, "port": 7861, "admin_port": 7871, "max_sessions": 8, "session_ttl_s": 900 }
    ```
 2. Publier les ports dans `docker-compose.yml` : `"7861:7861"` (API, réseau local) et `"127.0.0.1:7871:7871"` (administration, ce PC seulement).
-3. Redémarrer Aria, puis créer un profil dans l'onglet **⚙️ Paramètres**, section « 🔑 Accès tiers : profils » (voir ci-dessous).
-4. Onglet **🔑 Accès tiers** : créer une clé, choisir son profil et ses **domaines autorisés** (une origine exacte par ligne, par exemple
-   `https://app.example.com`). La clé n'est affichée **qu'une seule fois**.
+3. Redémarrer Aria, puis créer un profil dans l'onglet **⚙️ Paramètres**, section « 🤖 Agents : profils » (voir ci-dessous).
+4. Onglet **🤖 Agents** : créer un agent, choisir son profil et ses **domaines autorisés** (une origine exacte par ligne, par exemple
+   `https://app.example.com`). Sa clé API n'est affichée **qu'une seule fois**.
+
+> **Données.** Les agents sont dans `models/agents/agents.json` (clés API hachées, jamais en clair) avec le secret d'installation `secret.key`. Au premier démarrage
+> après la mise à jour, l'ancien dossier `models/api_access/` est **renommé** et l'ancien `keys.json` lu puis conservé sous le nom `keys.json.migre` : rien n'est perdu et
+> les clés API déjà distribuées continuent de fonctionner.
 
 ## Profils (onglet ⚙️ Paramètres)
 
-Un profil décide de ce qu'une clé peut utiliser. Les profils sont dans `configs/default.json`, section `access.profiles`, et se modifient dans l'onglet
-**⚙️ Paramètres**, section « 🔑 Accès tiers : profils » (puis « 💾 SAUVEGARDER »). Un profil **référence** des serveurs MCP déjà déclarés dans la section
+Un profil décide de ce qu'un agent peut utiliser. Les profils sont dans `configs/default.json`, section `agents.profiles`, et se modifient dans l'onglet
+**⚙️ Paramètres**, section « 🤖 Agents : profils » (puis « 💾 SAUVEGARDER »). Un profil **référence** des serveurs MCP déjà déclarés dans la section
 « Outils MCP » : il n'en redéclare aucun et ne copie aucun secret.
 
 ```json
-"access": {
+"agents": {
   "enabled": true,
   "private_servers": [],
   "profiles": {
@@ -47,31 +53,31 @@ Un profil décide de ce qu'une clé peut utiliser. Les profils sont dans `config
 | `voice` | `false` : les clés de ce profil n'ont pas la voix |
 | `description` | texte affiché dans l'administration |
 
-- **Accès à la clé.** « 🔄 Régénérer » (page d'administration) donne une nouvelle clé API au **même accès** : l'identifiant interne, les réglages, les domaines et la
+- **Clé API de l'agent.** « 🔄 Régénérer » (page d'administration) donne une nouvelle clé API au **même agent** : l'identifiant interne, les réglages, les domaines et la
   mémoire sont conservés, l'ancienne clé cesse de fonctionner immédiatement et ses conversations ouvertes sont fermées. À utiliser en cas de fuite de la clé.
-- **Serveurs privés.** Les serveurs de `access.private_servers` (aucun par défaut) ne peuvent jamais figurer dans un profil : la sauvegarde est refusée.
-  À utiliser pour fermer un serveur sensible (par exemple la domotique) à tous les tiers.
+- **Serveurs privés.** Les serveurs de `agents.private_servers` (aucun par défaut) ne peuvent jamais figurer dans un profil : la sauvegarde est refusée.
+  À utiliser pour fermer un serveur sensible (par exemple la domotique) à tous les agents.
 - **Mémoire.** Le serveur `memoire` peut figurer dans un profil, à condition de déclarer son canal HTTP (`MEMORY_HTTP_PORT` dans son `env`, voir plus bas).
-  Un serveur de mémoire sans canal HTTP est refusé : un tiers ne lance jamais son propre processus de mémoire.
+  Un serveur de mémoire sans canal HTTP est refusé : un agent ne lance jamais son propre processus de mémoire.
 - **Validation à la sauvegarde.** Noms de profil (lettres, chiffres, `-`, `_`), types, **clés inconnues** (une faute de frappe est signalée), serveurs inconnus
   ou privés, LLM local. Les profils sont contrôlés contre les serveurs et LLM de la configuration **enregistrée avec la même sauvegarde** : retirer un serveur
   encore utilisé par un profil est refusé. En cas d'erreur, rien n'est modifié, ni en mémoire ni dans le fichier.
 - **Appliqué sans redémarrage.** Les profils sont relus à chaque création de conversation : un profil modifié vaut pour les **nouvelles** conversations. Les
-  conversations déjà ouvertes gardent l'ancien profil jusqu'à leur expiration ; la case « Fermer les conversations ouvertes des clés dont le profil change »
+  conversations déjà ouvertes gardent l'ancien profil jusqu'à leur expiration ; la case « Fermer les conversations ouvertes des agents dont le profil change »
   les ferme tout de suite (elles repartent avec le profil à jour au prochain échange). Les autres sections de l'onglet exigent toujours « 🔄 Redémarrer ».
-- **Profil supprimé ou renommé.** Une clé qui l'utilise reçoit une erreur à la création de sa prochaine conversation. La sauvegarde affiche un avertissement
-  qui liste ces clés : changer leur profil dans l'onglet « 🔑 Accès tiers ».
+- **Profil supprimé ou renommé.** Un agent qui l'utilise reçoit une erreur à la création de sa prochaine conversation. La sauvegarde affiche un avertissement
+  qui liste ces agents : changer leur profil dans l'onglet « 🤖 Agents ».
 - **Secrets.** Ils restent dans la déclaration du serveur (`env`, `headers`, tags `<NOM>` résolus depuis le `.env`). L'administration n'affiche des profils que
   le nom et le type (HTTP ou local) des serveurs.
 - **Granularité.** On choisit des **serveurs**, pas des outils : un serveur qui expose seize outils les donne tous. Pour n'exposer qu'une partie, déclarer un
   serveur MCP dédié.
 
-## Mémoire des accès tiers
+## Mémoire des agents
 
-Il n'y a qu'**un seul serveur de mémoire** (`memoire`) : c'est lui qui garantit l'intégrité et la confidentialité des données. Chaque accès tiers y est une
+Il n'y a qu'**un seul serveur de mémoire** (`memoire`) : c'est lui qui garantit l'intégrité et la confidentialité des données. Chaque agent y est une
 **personne de type système**, liée à la **clé interne de l'accès** (`k_xxxx`) : renommer l'accès ou **régénérer sa clé API** ne fait pas perdre sa mémoire.
 
-| | Un accès tiers (système) | Une personne (Aria, page de gestion) |
+| | Un agent (système) | Une personne (Aria, page de gestion) |
 |---|---|---|
 | Personnes et relations du foyer | **toutes**, en lecture | toutes |
 | Souvenirs | **les siens** + les souvenirs partagés de type `foyer` | les siens + le partagé |
@@ -86,7 +92,7 @@ Mémoire et les réponses d'Aria. Garde-fous, imposés par le serveur de mémoir
 - **jamais de lien entre d'autres personnes** (l'une des deux extrémités doit être l'accès lui-même) ;
 - **une personne nouvelle peut être créée**, mais sa fiche est marquée **« à valider »** (⚠ dans la page Mémoire, case « Validée » dans sa fiche) et reste « citée » (hors de la liste des interlocuteurs d'Aria) ; un accès ne crée que **5 fiches par 24 h** ;
 - **mise à jour limitée à ses propres liens** : le lien qu'un humain ou un autre accès a établi entre les mêmes deux personnes n'est jamais modifié ;
-- il peut **oublier ses liens publics**, jamais ceux des autres ; un tiers ne renseigne pas le sexe d'une fiche ;
+- il peut **oublier ses liens publics**, jamais ceux des autres ; un agent ne renseigne pas le sexe d'une fiche ;
 - chaque lien et chaque fiche gardent leur **trace d'audit** (l'échange d'origine) ; un humain peut tout supprimer dans la page Mémoire ;
 - si plusieurs personnes portent le même prénom, il est invité à préciser le nom de famille (rien n'est deviné).
 
@@ -95,26 +101,26 @@ son interlocuteur » (champ `publish_speaker`). L'accès agit alors **au nom de 
 **ses** souvenirs (privés), l'accès lit les siens et ceux du foyer, relie n'importe quelles personnes (liens publics), crée des fiches **sans validation** et peut oublier
 les souvenirs de cette personne. Ses propres constats (mesures, état d'un appareil) restent dans **sa** mémoire privée, par l'outil séparé `noter_observation`.
 
-- **L'interlocuteur est propre à la session.** Il n'est jamais celui d'Aria : un accès tiers ne change pas à qui parle l'interface.
+- **L'interlocuteur est propre à la session.** Il n'est jamais celui d'Aria : un agent ne change pas à qui parle l'interface.
 - **Il est désigné de deux façons** : par l'application (`speaker: {name, family}` à la création de la session, voir `docs/integration.md`) ; sinon par le LLM, qui reçoit l'outil `identifier_interlocuteur` et demande le prénom comme le fait Aria. Quand l'application l'a fourni, le LLM **ne peut plus le changer**.
 - **La personne n'est pas authentifiée** (prévu plus tard) : l'application, ou ce que dit l'utilisateur, est cru sur parole. Celui qui peut parler à l'application peut donc se
   faire passer pour n'importe quelle personne du foyer, lire ses souvenirs et en écrire à son nom. **À réserver aux applications de confiance de votre réseau.** Tout reste
   tracé : le journal d'audit et la trace de chaque souvenir portent l'accès **et** la personne (`who`).
 - Un accès qui n'a pas ce droit ignore le champ `speaker` (il n'est même pas examiné).
 
-Un tiers du foyer connaît donc les noms de toutes les personnes et leurs liens, mais jamais leurs souvenirs privés. Pour un tiers **hors foyer**, ne pas lui
+Un agent du foyer connaît donc les noms de toutes les personnes et leurs liens, mais jamais leurs souvenirs privés. Pour un agent **hors foyer**, ne pas lui
 donner la mémoire d'Aria : lui fournir un serveur de mémoire dédié (même programme, autre `MEMORY_DIR`, son propre `MEMORY_HTTP_PORT`).
 
 **Tiers hors foyer.** Déclarer un second serveur de mémoire (même programme, dossier distinct, port HTTP distinct, sans `MEMORY_UI_PORT`) et le lister dans
-`access.hosted_only` : Aria le démarre pour les accès tiers, mais **n'en expose jamais les outils à l'interface** (ils porteraient les mêmes noms que ceux de `memoire`
-et les écraseraient). Les profils de ces tiers le référencent comme n'importe quel serveur. Toutes les conversations d'un même profil partagent **un seul processus**
+`agents.hosted_only` : Aria le démarre pour les agents, mais **n'en expose jamais les outils à l'interface** (ils porteraient les mêmes noms que ceux de `memoire`
+et les écraseraient). Les profils de ces agents le référencent comme n'importe quel serveur. Toutes les conversations d'un même profil partagent **un seul processus**
 et la mémoire de leur accès. Deux serveurs de mémoire sur le même dossier ou le même port sont refusés à la sauvegarde (ils se verrouilleraient).
 
 ```json
 "mcp": { "params": { "servers": {
   "memoire":      { "run": "uv", "args": ["run", "/aria/tools/memory/server.py"], "env": { "MEMORY_DIR": "/aria/models/memory",      "MEMORY_UI_PORT": "7870", "MEMORY_HTTP_PORT": "7872" } },
   "memoire_acme": { "run": "uv", "args": ["run", "/aria/tools/memory/server.py"], "env": { "MEMORY_DIR": "/aria/models/memoire_acme", "MEMORY_HTTP_PORT": "7873" } } } } },
-"access": { "hosted_only": ["memoire_acme"], "profiles": { "acme": { "servers": ["memoire_acme"] } } }
+"agents": { "hosted_only": ["memoire_acme"], "profiles": { "acme": { "servers": ["memoire_acme"] } } }
 ```
 
 Mise en place pour le foyer : ajouter `MEMORY_HTTP_PORT` (par exemple `7872`) à l'`env` du serveur `memoire`, puis référencer `memoire` dans le profil. Le canal est ouvert
@@ -123,7 +129,7 @@ fichier ni dans `default.json`) ; sans lui, le canal ne s'ouvre pas. Le conteneu
 
 ## Intégration dans une page
 
-Le client JavaScript n'impose **aucune interface** : pas de bouton, pas de style. La page tierce dessine ses propres commandes et sa propre
+Le client JavaScript n'impose **aucune interface** : pas de bouton, pas de style. La page de l'agent dessine ses propres commandes et sa propre
 visualisation avec son CSS, et pilote Aria par les méthodes et les événements ci-dessous.
 
 ### Démarrage minimal

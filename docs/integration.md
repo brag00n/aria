@@ -1,14 +1,16 @@
-# Intégrer Aria dans votre application web
+# Intégrer un agent Aria dans votre application web
 
 Ce guide s'adresse aux développeurs d'une application web qui veulent offrir à leurs utilisateurs un assistant vocal et textuel : écoute du micro,
-saisie de texte, réponse en texte et en voix. Vous ajoutez un script à votre page ; l'interface (boutons, visuels, styles) reste **entièrement la vôtre**.
+saisie de texte, réponse en texte et en voix. Votre application est un **agent** d'Aria : une entité IA qui dialogue avec un interlocuteur (aujourd'hui un humain).
+
+> **Vous aviez déjà intégré Aria ?** Rien ne casse : le client JavaScript, les routes `/v1/…` et votre clé API sont inchangés. Voir `docs/migration-agents.md`. Vous ajoutez un script à votre page ; l'interface (boutons, visuels, styles) reste **entièrement la vôtre**.
 
 Ce que vous devez obtenir de l'administrateur d'Aria :
 
 | Élément | Exemple | Rôle |
 |---|---|---|
 | Adresse du service | `https://aria.exemple.fr` | `baseUrl` du client |
-| Clé API | `ak_…` | identifie votre application ; elle est montrée une seule fois, **gardez-la secrète côté serveur si possible** (voir « Sécurité ») |
+| Clé API | `ak_…` | identifie votre agent ; elle est montrée une seule fois, **gardez-la secrète côté serveur si possible** (voir « Sécurité ») |
 | Domaines autorisés | `https://app.exemple.fr` | votre page doit être servie depuis l'un d'eux |
 
 ## Démarrage en cinq minutes
@@ -36,7 +38,7 @@ Ce que vous devez obtenir de l'administrateur d'Aria :
 </script>
 ```
 
-Un exemple complet (halo animé, forme d'onde, boutons) est fourni dans `access-demo.html`.
+Un exemple complet (halo animé, forme d'onde, boutons) est fourni dans `agents-demo.html`.
 
 ## Avant de commencer : trois conditions du navigateur
 
@@ -54,7 +56,7 @@ Un exemple complet (halo animé, forme d'onde, boutons) est fourni dans `access-
 | `speak` | `true` | demander la réponse en voix ; `mute(true)` la coupe ensuite sans changer l'option |
 | `session` | `"default"` | identifiant de conversation. Deux identifiants différents ont chacun leur historique. Utilisez-en un par utilisateur final de votre page |
 | `systemPrompt` | aucun | consignes de votre application pour l'assistant (voir plus bas) |
-| `speaker` | aucun | `{ name: "Léa", family: "Dupont" }` : la personne qui parle, si l'administrateur d'Aria a autorisé votre clé à « publier les informations de son interlocuteur ». Fixée à la création de la session. **Ce n'est pas une authentification** : Aria vous croit sur parole. Ignoré par une clé sans ce droit |
+| `speaker` | aucun | `{ name: "Léa", family: "Dupont" }` : la personne qui parle, si l'administrateur d'Aria a autorisé votre agent à « publier les informations de son interlocuteur ». Fixée à la création de la session. **Ce n'est pas une authentification** : Aria vous croit sur parole. Ignoré par une clé sans ce droit |
 | `vad` | `{}` | sensibilité de l'écoute : `positive` (0,8), `negative` (0,4), `redemption` (20 trames de silence), `minFrames` (3) |
 | `analyser` | `false` | prépare d'emblée l'analyse du son pour vos visuels (sinon, à la première utilisation) |
 | `debug` | `false` | écrit dans la console l'état de l'écoute : utile quand le micro ne réagit pas |
@@ -143,7 +145,7 @@ const aria = AriaClient.create({
   systemPrompt: "Tu es l'assistante du site Bleu, une boutique de vélos. Tu tutoies. L'utilisateur est sur la page « Entretien »."
 });
 ```
-- **Vos consignes complètent celles qui sont attachées à votre clé** ; elles ne les remplacent pas. L'administrateur peut y avoir fixé des limites (sujets, outils
+- **Vos consignes complètent celles qui sont attachées à votre agent** ; elles ne les remplacent pas. L'administrateur peut y avoir fixé des limites (sujets, outils
   disponibles) que vos consignes ne peuvent pas lever.
 - **Elles sont fixées à la création de la conversation.** Si vous les modifiez en cours de route, l'événement `warning` (`code: "system_ignored"`) vous prévient
   qu'elles sont ignorées. Pour repartir avec de nouvelles consignes : `await aria.newSession({ systemPrompt: "nouvelles consignes" })`.
@@ -153,7 +155,7 @@ const aria = AriaClient.create({
 
 ## Une conversation par utilisateur
 
-Une conversation est identifiée par la paire (votre clé, `session`). Donnez à chaque utilisateur de votre page un identifiant stable et sans donnée personnelle
+Une conversation est identifiée par la paire (votre agent, `session`). Donnez à chaque utilisateur de votre page un identifiant stable et sans donnée personnelle
 (par exemple un identifiant interne opaque) : il retrouve son historique, et deux utilisateurs ne se mélangent jamais. Une conversation inactive est fermée
 au bout d'un moment ; la suivante repart d'un historique vide. Le nombre de conversations simultanées est limité.
 
@@ -165,8 +167,8 @@ L'événement `error` donne `{code, message}`. Les messages sont lisibles par l'
 |---|---|---|
 | `network` | service injoignable, ou certificat non accepté | vérifier l'adresse et le certificat (voir « Avant de commencer ») |
 | `unauthorized` | clé invalide, révoquée ou expirée | contacter l'administrateur ; ne pas réessayer en boucle |
-| `forbidden` | l'adresse de votre page n'est pas autorisée pour cette clé | demander l'ajout de votre domaine |
-| `voice_disabled` | la voix n'est pas permise pour cette clé | utiliser `voice: false` |
+| `forbidden` | l'adresse de votre page n'est pas autorisée pour cet agent | demander l'ajout de votre domaine |
+| `voice_disabled` | la voix n'est pas permise pour cet agent | utiliser `voice: false` |
 | `rate_limited` | trop de requêtes | attendre (l'en-tête `Retry-After` donne le délai en secondes) |
 | `quota` | limite quotidienne de tours atteinte | informer l'utilisateur ; reprise le lendemain |
 | `blocked` | trop d'échecs d'authentification depuis cette adresse | attendre quelques minutes |
@@ -174,7 +176,7 @@ L'événement `error` donne `{code, message}`. Les messages sont lisibles par l'
 | `audio_too_long` | phrase de plus de 30 secondes | la reformuler en plusieurs phrases |
 | `bad_audio`, `bad_request`, `bad_json` | requête mal formée | signaler un défaut d'intégration |
 | `busy` | un tour est déjà en cours dans cette conversation | attendre la fin ou appeler `interrupt()` |
-| `session` | conversation impossible (trop de conversations ouvertes, ou clé pas encore configurée) | réessayer plus tard, sinon contacter l'administrateur |
+| `session` | conversation impossible (trop de conversations ouvertes, ou agent pas encore configuré) | réessayer plus tard, sinon contacter l'administrateur |
 | `llm` | l'assistant n'a pas pu répondre | proposer de réessayer |
 | `internal` | erreur interne | réessayer ; contacter l'administrateur si cela persiste |
 
@@ -207,7 +209,7 @@ Corps de `POST /v1/turn` :
 { "text": "Quelle heure est-il ?", "session": "utilisateur-42", "speak": true, "system": "consignes de l'application", "speaker": {"name": "Léa", "family": "Dupont"} }
 ```
 ou `"audio": "data:audio/wav;base64,…"` à la place de `text` (WAV mono, 30 secondes au plus). Tous les champs sauf `text` ou `audio` sont facultatifs.
-`speaker` n'a d'effet que pour une clé autorisée à publier les informations de son interlocuteur, et seulement à la création de la session.
+`speaker` n'a d'effet que pour un agent autorisé à publier les informations de son interlocuteur, et seulement à la création de la session.
 Limites : texte de 2000 caractères, requête de 8 Mo, consignes de 4000 caractères.
 
 Événements du flux (`event:` et `data:` en JSON) :
