@@ -304,6 +304,36 @@ class RetentionTests(StoreCase):
         self.assertEqual(self.store.retention_of(vue["id"]), 9)
 
 
+class PublicationLiensTests(StoreCase):
+    """Option « publier ses propres liens » d'une clé : désactivée par défaut."""
+
+    def test_defaut_desactive_et_modifiable(self):
+        vue, _ = self.store.create("Robot")
+        self.assertFalse(vue["publish_links"])
+        self.assertFalse(self.store.update(vue["id"], publish_links=False)["publish_links"])
+        self.assertTrue(self.store.update(vue["id"], publish_links=True)["publish_links"])
+        self.assertTrue(self.store.create("Autre", publish_links=True)[0]["publish_links"])
+
+    def test_persistante_et_anciennes_cles_sans_l_option(self):
+        vue, _ = self.store.create("Robot", publish_links=True)
+        self.assertTrue(keys.KeyStore(self.store.dir).get(vue["id"])["publish_links"])
+        brut = json.loads(self.store.path.read_text("utf-8"))
+        for k in brut["keys"]:
+            k.pop("publish_links", None)
+        self.store.path.write_text(json.dumps(brut), "utf-8")
+        self.assertFalse(keys.KeyStore(self.store.dir).get(vue["id"])["publish_links"])
+
+    def test_valeurs_non_booleennes_ramenees_a_un_booleen(self):
+        vue, _ = self.store.create("Robot")
+        for entree, attendu in (("oui", True), ("", False), (0, False), (1, True), (None, False)):
+            self.assertEqual(self.store.update(vue["id"], publish_links=entree)["publish_links"], attendu)
+
+    def test_la_regeneration_garde_l_option(self):
+        vue, _ = self.store.create("Robot", publish_links=True)
+        self.store.regenerate(vue["id"])
+        self.assertTrue(self.store.get(vue["id"])["publish_links"])
+
+
 class DebitTests(unittest.TestCase):
     def test_fenetre_glissante(self):
         c = Clock(100.0)

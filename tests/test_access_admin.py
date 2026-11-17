@@ -334,6 +334,21 @@ class JournalTests(AdminCase):
         j = self.call("GET", "/api/journal")[1]
         self.assertEqual([a["retention_days"] for a in j["acces"]], [30])
 
+    def test_option_publier_ses_liens_creation_modification_et_page(self):
+        vue = self.create(label="Robot", publish_links=True)["key"]
+        self.assertTrue(vue["publish_links"])
+        self.call("POST", "/api/keys/update", {"id": vue["id"], "publish_links": False})
+        self.assertFalse(self.store.get(vue["id"])["publish_links"])
+        self.call("POST", "/api/keys/update", {"id": vue["id"], "publish_links": True})
+        self.assertTrue(self.store.get(vue["id"])["publish_links"])
+        self.assertIn("publish_links", admin_ui.PAGE)
+        self.assertIn("jamais de lien entre d", admin_ui.PAGE)
+
+    def test_changer_l_option_ferme_les_sessions_de_la_cle(self):
+        vue = self.create(label="Robot")["key"]
+        self.call("POST", "/api/keys/update", {"id": vue["id"], "publish_links": True})
+        self.assertIn(vue["id"], self.sessions.closed)
+
     def test_la_page_a_son_onglet_sans_innerhtml(self):
         self.assertIn('data-t="jrn"', admin_ui.PAGE)
         self.assertIn("/api/journal/purge", admin_ui.PAGE)

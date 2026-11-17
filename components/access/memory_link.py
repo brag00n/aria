@@ -52,7 +52,7 @@ def with_secret(conf, secret=None):
     return {**conf, "env": env}
 
 
-def third_party_conf(conf, key_id, name, secret=None):
+def third_party_conf(conf, key_id, name, secret=None, publish=False):
     """Configuration de connexion d'un serveur mémoire pour UNE session tierce : URL locale du canal HTTP et en-têtes d'identité.
     Retourne None si le serveur n'a pas de canal HTTP ou si le secret du démarrage n'est pas disponible (la mémoire est alors indisponible,
     jamais ouverte sans authentification)."""
@@ -60,18 +60,19 @@ def third_party_conf(conf, key_id, name, secret=None):
     secret = secret or current_secret()
     if port is None or not secret or not key_id or not str(name or "").strip():
         return None
-    return {"url": f"http://{HTTP_HOST}:{port}/mcp",
-            "headers": {"Authorization": f"Bearer {secret}", "X-Memory-Principal": str(key_id), "X-Memory-Name": quote(str(name).strip(), safe="")},
-            "hide_tools": list(HIDDEN_FOR_THIRD_PARTIES)}
+    headers = {"Authorization": f"Bearer {secret}", "X-Memory-Principal": str(key_id), "X-Memory-Name": quote(str(name).strip(), safe="")}
+    if publish:
+        headers["X-Memory-Publish"] = "1"          # option de la clé : ses liens avec une personne sont publics ; posé par Aria, jamais par le LLM
+    return {"url": f"http://{HTTP_HOST}:{port}/mcp", "headers": headers, "hide_tools": list(HIDDEN_FOR_THIRD_PARTIES)}
 
 
-def resolve_servers(servers, key_id, name, secret=None):
+def resolve_servers(servers, key_id, name, secret=None, publish=False):
     """Serveurs MCP d'une session tierce : un serveur mémoire est remplacé par sa connexion HTTP identifiée, les autres sont inchangés.
     Retourne (serveurs résolus, noms des serveurs mémoire indisponibles)."""
     out, missing = {}, []
     for srv_name, conf in servers.items():
         if is_memory_server(conf):
-            link = third_party_conf(conf, key_id, name, secret)
+            link = third_party_conf(conf, key_id, name, secret, publish)
             if link is None:
                 missing.append(srv_name)
             else:

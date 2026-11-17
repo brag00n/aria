@@ -76,8 +76,19 @@ Il n'y a qu'**un seul serveur de mémoire** (`memoire`) : c'est lui qui garantit
 | Personnes et relations du foyer | **toutes**, en lecture | toutes |
 | Souvenirs | **les siens** + les souvenirs partagés de type `foyer` | les siens + le partagé |
 | Ce qu'il écrit | toujours **privé** (même de type `foyer`) | comme avant |
-| Liens qu'il crée | seulement entre **lui** et une personne déjà connue | tous |
+| Liens qu'il crée | seulement entre **lui** et une personne ; **privés** par défaut, **publics** avec l'option de sa clé « publier ses propres liens » (voir ci-dessous) | tous |
 | Changer d'identité | **impossible** (imposé par le serveur) | oui |
+
+**Publier ses propres liens (option par clé, désactivée par défaut).** Case « Peut publier ses propres liens » dans l'édition d'une clé (champ `publish_links`).
+Pour un accès qui l'a, un lien dont il est l'une des deux extrémités (« moi est le propriétaire d'Olivier ») est **public** : il apparaît dans le graphe, la page
+Mémoire et les réponses d'Aria. Garde-fous, imposés par le serveur de mémoire (le LLM ne peut ni activer l'option ni la contourner) :
+
+- **jamais de lien entre d'autres personnes** (l'une des deux extrémités doit être l'accès lui-même) ;
+- **une personne nouvelle peut être créée**, mais sa fiche est marquée **« à valider »** (⚠ dans la page Mémoire, case « Validée » dans sa fiche) et reste « citée » (hors de la liste des interlocuteurs d'Aria) ; un accès ne crée que **5 fiches par 24 h** ;
+- **mise à jour limitée à ses propres liens** : le lien qu'un humain ou un autre accès a établi entre les mêmes deux personnes n'est jamais modifié ;
+- il peut **oublier ses liens publics**, jamais ceux des autres ; un tiers ne renseigne pas le sexe d'une fiche ;
+- chaque lien et chaque fiche gardent leur **trace d'audit** (l'échange d'origine) ; un humain peut tout supprimer dans la page Mémoire ;
+- si plusieurs personnes portent le même prénom, il est invité à préciser le nom de famille (rien n'est deviné).
 
 Un tiers du foyer connaît donc les noms de toutes les personnes et leurs liens, mais jamais leurs souvenirs privés. Pour un tiers **hors foyer**, ne pas lui
 donner la mémoire d'Aria : lui fournir un serveur de mémoire dédié (même programme, autre `MEMORY_DIR`, son propre `MEMORY_HTTP_PORT`).

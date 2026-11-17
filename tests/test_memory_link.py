@@ -56,6 +56,16 @@ class SessionTiersTests(unittest.TestCase):
         self.assertNotIn("run", c)                                                 # aucun processus propre au tiers
         self.assertEqual(c["hide_tools"], ["identifier_interlocuteur"])
 
+    def test_en_tete_de_publication_seulement_si_l_option_de_la_cle_est_active(self):
+        sans = memory_link.third_party_conf(MEM, "k_robot1", "Bamboo", SECRET)
+        avec = memory_link.third_party_conf(MEM, "k_robot1", "Bamboo", SECRET, publish=True)
+        self.assertNotIn("X-Memory-Publish", sans["headers"])
+        self.assertEqual(avec["headers"]["X-Memory-Publish"], "1")
+        servers, _ = memory_link.resolve_servers({"memoire": MEM}, "k_robot1", "Bamboo", SECRET, publish=True)
+        self.assertEqual(servers["memoire"]["headers"]["X-Memory-Publish"], "1")
+        servers, _ = memory_link.resolve_servers({"memoire": MEM}, "k_robot1", "Bamboo", SECRET)
+        self.assertNotIn("X-Memory-Publish", servers["memoire"]["headers"])
+
     def test_les_en_tetes_sont_de_l_ascii(self):
         c = memory_link.third_party_conf(MEM, "k_cam", "Caméra du garage « test »", SECRET)
         for valeur in c["headers"].values():
@@ -106,6 +116,15 @@ class MoteurTests(unittest.TestCase):
         conf = mcp.servers_conf["memoire"]
         self.assertEqual(conf["url"], "http://127.0.0.1:7872/mcp")
         self.assertEqual(conf["headers"]["X-Memory-Principal"], "k_robot1")
+
+    def test_l_option_de_la_cle_arrive_dans_la_connexion_de_la_session(self):
+        memory_link.new_secret()
+        _, mcp = self.build(identity=("k_robot1", "Robot", True))
+        self.assertEqual(mcp.servers_conf["memoire"]["headers"]["X-Memory-Publish"], "1")
+        _, mcp = self.build(identity=("k_robot1", "Robot", False))
+        self.assertNotIn("X-Memory-Publish", mcp.servers_conf["memoire"]["headers"])
+        _, mcp = self.build(identity=("k_robot1", "Robot"))                      # ancien appelant : pas d'option
+        self.assertNotIn("X-Memory-Publish", mcp.servers_conf["memoire"]["headers"])
 
     def test_sans_secret_la_session_est_refusee(self):
         memory_link.SECRET["value"] = ""

@@ -125,6 +125,7 @@ class KeyStore:
                     "profile": _clean_text(k.get("profile"), MAX_PROFILE), "limits": _clean_limits(k.get("limits")),
                     "voice": bool(k.get("voice", True)), "last_used": float(k.get("last_used") or 0),
                     "retention_days": _clean_retention(k.get("retention_days")),
+                    "publish_links": bool(k.get("publish_links", False)),
                 })
 
     def _save(self):
@@ -152,10 +153,11 @@ class KeyStore:
         etat = "révoquée" if k["revoked"] else "expirée" if (k["expires"] and k["expires"] <= now) else "active"
         return {"id": k["id"], "label": k["label"], "prefix": k["prefix"], "created": _iso(k["created"]), "expires": _iso(k["expires"]),
                 "revoked": k["revoked"], "etat": etat, "origins": list(k["origins"]), "profile": k["profile"], "limits": dict(k["limits"]),
-                "voice": k["voice"], "last_used": _iso(k["last_used"]), "retention_days": k.get("retention_days", 0)}
+                "voice": k["voice"], "last_used": _iso(k["last_used"]), "retention_days": k.get("retention_days", 0),
+                "publish_links": bool(k.get("publish_links", False))}
 
     # ------------------------------------------------------------------ gestion
-    def create(self, label, origins=(), profile="", limits=None, expires_days=0, voice=True, retention_days=0):
+    def create(self, label, origins=(), profile="", limits=None, expires_days=0, voice=True, retention_days=0, publish_links=False):
         """Crée une clé. Retourne (vue publique, clé EN CLAIR) : la clé en clair n'est plus jamais récupérable ensuite."""
         label = _clean_text(label, MAX_LABEL)
         if not label:
@@ -173,7 +175,7 @@ class KeyStore:
             rec = {"id": kid, "label": label, "prefix": key[:7], "hash": self._digest(key), "created": now,
                    "expires": now + days * 86400 if days > 0 else 0, "revoked": False, "origins": _clean_origins(origins),
                    "profile": _clean_text(profile, MAX_PROFILE), "limits": _clean_limits(limits), "voice": bool(voice), "last_used": 0,
-                   "retention_days": _clean_retention(retention_days)}
+                   "retention_days": _clean_retention(retention_days), "publish_links": bool(publish_links)}
             self.items.append(rec)
             self._save()
             return self.view(rec, now), key
@@ -189,7 +191,7 @@ class KeyStore:
             return self.view(k, self.clock()) if k else None
 
     def update(self, kid, **changes):
-        """label, origins, profile, limits, voice, retention_days, expires_days (0 = sans expiration, calculée depuis maintenant). Retourne la vue ou None."""
+        """label, origins, profile, limits, voice, retention_days, publish_links, expires_days (0 = sans expiration, calculée depuis maintenant). Retourne la vue ou None."""
         with self.lock:
             k = self._find(kid)
             if not k:
@@ -209,6 +211,8 @@ class KeyStore:
                 k["voice"] = bool(changes["voice"])
             if "retention_days" in changes:
                 k["retention_days"] = _clean_retention(changes["retention_days"])
+            if "publish_links" in changes:
+                k["publish_links"] = bool(changes["publish_links"])
             if "expires_days" in changes:
                 try:
                     days = float(changes["expires_days"] or 0)
