@@ -513,6 +513,114 @@ class MoteurPromptTests(unittest.TestCase):
             llm_mod.Llm = original
 
 
+class InterlocuteurCourantTests(ApiCase):
+    """L'interlocuteur courant d'une session est suivi (page d'administration) et porté par le journal d'audit (`who`), `src` gardant l'accès."""
+
+    def setUp(self):
+        super().setUp()
+        self.noms = {}                                                     # session -> nom renvoyé par l'outil caché de la mémoire
+        test = self
+
+        class FauxMcp:
+            on_tool_done = None
+
+            def __init__(self, sid):
+                self.sid = sid
+
+            def has_tool(self, name):
+                return name == "ui_interlocuteur"
+
+            async def ensure_connected(self):
+                return None
+
+            async def close(self):
+                return None
+
+            async def call_tool(self, name, args):
+                nom = test.noms.get(self.sid, "")
+                return json.dumps({"id": "p9" if nom else "", "nom": nom})
+
+        from components.llm import Llm
+
+        class MoteurJournalise(Llm):
+            """Le journal d'audit s'écrit dans `Llm.get_answer_web` : on garde ce vrai point d'écriture au-dessus du faux moteur."""
+            def __init__(self, engine):
+                self.engine, self.backend_type = engine, "anthropic"
+
+        def factory(prof, identity=None):
+            e = FakeEngine(prof["name"])
+            return MoteurJournalise(e), FauxMcp(identity[4] if identity and len(identity) > 4 else "")
+        self.sessions.factory = factory
+        self.vue, self.cle = self.keys.create("Robot", [ORIGIN], profile="portail", limits={"rate_per_min": 100, "daily_turns": 100}, publish_speaker=True)
+
+    def lignes_journal(self):
+        from components import echanges
+        return [l for _, p in echanges.files() for l in echanges.read_lines(p)]
+
+    def test_who_du_journal_est_la_personne_et_src_reste_l_acces(self):
+        from components import echanges
+        echanges.configure(self.tmp / "audit", enabled=True)
+        self.noms[f"{self.vue['id']}:sW"] = "Léa Dupont"
+        self.turn({"text": "bonjour", "session": "sW", "speaker": {"name": "Léa", "family": "Dupont"}}, headers=self.hdr(self.cle))
+        (ligne,) = self.lignes_journal()
+        self.assertEqual(ligne["who"], "Léa Dupont")
+        self.assertTrue(ligne["src"].startswith(self.vue["id"] + ":"))
+
+    def test_sans_interlocuteur_connu_who_est_inconnue(self):
+        from components import echanges
+        echanges.configure(self.tmp / "audit", enabled=True)
+        self.turn({"text": "bonjour", "session": "sX"}, headers=self.hdr(self.cle))
+        self.assertEqual(self.lignes_journal()[0]["who"], "Inconnue")
+
+    def test_une_cle_sans_le_droit_garde_le_nom_de_l_acces(self):
+        from components import echanges
+        echanges.configure(self.tmp / "audit", enabled=True)
+        self.turn({"text": "bonjour", "session": "sY"})
+        self.assertEqual(self.lignes_journal()[0]["who"], "Portail")
+
+    def test_la_page_d_administration_voit_l_interlocuteur_courant(self):
+        self.noms[f"{self.vue['id']}:sA"] = "Tiphaine Cousinier"
+        self.turn({"text": "bonjour", "session": "sA"}, headers=self.hdr(self.cle))
+        self.turn({"text": "bonjour", "session": "sN"})                                  # clé sans le droit
+        par = {s["id"]: s["speaker"] for s in self.sessions.stats()}
+        self.assertEqual(par[f"{self.vue['id']}:sA"], "Tiphaine Cousinier")
+        self.assertIsNone(par[next(i for i in par if i.endswith(":sN"))])                 # sans objet : None
+
+    def test_le_crochet_relit_l_interlocuteur_apres_identifier_interlocuteur_seulement(self):
+        self.turn({"text": "bonjour", "session": "sC"}, headers=self.hdr(self.cle))
+        sid = f"{self.vue['id']}:sC"
+        s = self.sessions.sessions[sid]
+        self.assertEqual(s.speaker["nom"], "")
+        self.noms[sid] = "Paul Martin"
+        self.client.portal.call(self.sessions._tool_done, s, "memoriser")                 # un autre outil ne relit rien
+        self.assertEqual(s.speaker["nom"], "")
+        self.client.portal.call(self.sessions._tool_done, s, "identifier_interlocuteur")
+        self.assertEqual(s.speaker["nom"], "Paul Martin")
+
+    def test_la_personne_de_l_echange_en_cours_est_mise_a_jour(self):
+        """Après `identifier_interlocuteur` dans un tour, la ligne du journal de CE tour porte déjà la nouvelle personne."""
+        from components import echanges
+        self.turn({"text": "bonjour", "session": "sE"}, headers=self.hdr(self.cle))
+        s = self.sessions.sessions[f"{self.vue['id']}:sE"]
+        self.noms[f"{self.vue['id']}:sE"] = "Paul Martin"
+
+        async def tour():
+            e = echanges.start("k:x", "Inconnue", "c")
+            await self.sessions._tool_done(s, "identifier_interlocuteur")
+            return e.who
+        self.assertEqual(self.client.portal.call(tour), "Paul Martin")
+
+    def test_une_panne_de_la_memoire_garde_l_ancienne_valeur(self):
+        self.turn({"text": "bonjour", "session": "sP"}, headers=self.hdr(self.cle))
+        s = self.sessions.sessions[f"{self.vue['id']}:sP"]
+        s.speaker = {"id": "p1", "nom": "Léa"}
+
+        async def casse(name, args):
+            raise RuntimeError("mémoire coupée")
+        s.mcp.call_tool = casse
+        self.assertEqual(self.client.portal.call(self.sessions.refresh_speaker, s)["nom"], "Léa")
+
+
 class InterlocuteurFourniTests(ApiCase):
     """Interlocuteur fourni par l'application (clé « publish_speaker ») : transmis au serveur de mémoire, fixé à la création de la session."""
 

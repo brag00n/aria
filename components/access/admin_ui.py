@@ -333,8 +333,9 @@ async function renderProfils(main){
 }
 async function renderSessions(main){
   const rows=await get('/api/sessions');
-  main.append(el('table',{},el('tr',{},...['Session','Clé','Profil','Inactive depuis'].map(h=>el('th',{},h))),
-    ...rows.map(s=>el('tr',{},el('td',{},s.id),el('td',{},s.key),el('td',{},s.profile),el('td',{className:'mut'},s.idle_s+' s')))));
+  main.append(el('table',{},el('tr',{},...['Session','Clé','Profil','Interlocuteur','Inactive depuis'].map(h=>el('th',{},h))),
+    ...rows.map(s=>el('tr',{},el('td',{},s.id),el('td',{},s.key),el('td',{},s.profile),
+      el('td',{className:s.speaker?'':'mut'},s.speaker===null?'–':(s.speaker||'inconnu')),el('td',{className:'mut'},s.idle_s+' s')))));
   if(!rows.length)main.append(el('p',{className:'mut'},'Aucune session ouverte.'));
 }
 async function renderJournal(main){

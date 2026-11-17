@@ -280,7 +280,9 @@ async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=Fa
             vu = ""                                   # texte déjà émis, pour n'envoyer que les changements
             outils = set()
             # Journal d'audit : source = identifiant interne de l'accès + son nom du moment ; l'échange est propre à CETTE tâche (tours concurrents sans mélange)
-            echanges.start(echanges.source_label(rec["id"], rec.get("label")), rec.get("label") or rec["id"], session.conv_id, voix=audio is not None, query=text)
+            # `who` : la personne qui parle (clé qui publie les informations de son interlocuteur), sinon le nom de l'accès ; `src` garde TOUJOURS l'accès
+            qui = ((session.speaker or {}).get("nom") or "Inconnue") if rec.get("publish_speaker") else (rec.get("label") or rec["id"])
+            echanges.start(echanges.source_label(rec["id"], rec.get("label")), qui, session.conv_id, voix=audio is not None, query=text)
             gen = session.engine.get_answer_web(tts, text, session.user)
             try:
                 async for full, wav, spoken in gen:

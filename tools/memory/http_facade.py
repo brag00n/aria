@@ -158,6 +158,14 @@ def make_app(store, service, secret):
             return text
         return _run_i(ctx, action)
 
+    @mcp_i.tool(name="ui_interlocuteur")
+    def ui_interlocuteur(ctx: Context = None) -> str:
+        """Réservé à Aria (non proposé au LLM : préfixe ui_). Renvoie en JSON l'interlocuteur courant de CETTE session : {"id", "nom"} (vides si inconnu)."""
+        def action(system, speaker, tr):
+            person = store.personnes.get(speaker) if speaker else None
+            return json.dumps({"id": speaker or "", "nom": store.personnes.full(person) if person else ""}, ensure_ascii=False)
+        return _run_i(ctx, action)
+
     @mcp_i.tool(name="memoriser")
     def memoriser_i(fait: str, type: str = "fait", tags: str = "", ctx: Context = None) -> str:
         """Retient une information durable de la personne qui te parle. type: fait, preference, tache, ephemere, ou foyer (concerne toute la maison). tags: mots séparés par des virgules."""

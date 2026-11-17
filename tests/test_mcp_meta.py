@@ -160,5 +160,64 @@ class SondageTests(unittest.TestCase):
         self.assertEqual(m.tool_registry, {})
 
 
+@unittest.skipUnless(HAVE, "dépendances d'Aria absentes de l'hôte (lancer dans le conteneur)")
+class CrochetTests(unittest.TestCase):
+    """`Mcp.on_tool_done` : appelé après un outil réussi ; une panne du crochet ne fait jamais échouer l'outil."""
+
+    def setUp(self):
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    def tearDown(self):
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    def mcp(self, reponse="OK"):
+        m = Mcp({"servers": {}})
+
+        class S:
+            async def call_tool(self, name, arguments=None, meta=None, **kw):
+                return Resultat(reponse)
+        m.tool_registry["memoriser"] = S()
+        return m
+
+    def test_appele_apres_un_outil_reussi_avec_son_nom(self):
+        m, vus = self.mcp(), []
+
+        async def crochet(nom):
+            vus.append(nom)
+        m.on_tool_done = crochet
+        self.assertEqual(asyncio.run(m.call_tool("memoriser", {})), "OK")
+        self.assertEqual(vus, ["memoriser"])
+
+    def test_une_panne_du_crochet_ne_change_pas_la_reponse(self):
+        m = self.mcp("OK m_1")
+
+        async def crochet(nom):
+            raise RuntimeError("boum")
+        m.on_tool_done = crochet
+        self.assertEqual(asyncio.run(m.call_tool("memoriser", {})), "OK m_1")
+
+    def test_aucun_crochet_par_defaut_et_pas_pour_un_outil_inconnu(self):
+        m, vus = self.mcp(), []
+        self.assertIsNone(m.on_tool_done)
+
+        async def crochet(nom):
+            vus.append(nom)
+        m.on_tool_done = crochet
+        asyncio.run(m.call_tool("inconnu", {}))
+        self.assertEqual(vus, [])
+
+    def test_les_outils_ui_ne_sont_pas_notes_comme_outils_du_llm(self):
+        from components import echanges
+        m = self.mcp()
+        m.tool_registry["ui_interlocuteur"] = m.tool_registry["memoriser"]
+
+        async def tour():
+            e = echanges.start("aria", "x", "c")
+            await m.call_tool("ui_interlocuteur", {})
+            await m.call_tool("memoriser", {})
+            return e.outils
+        self.assertEqual(asyncio.run(tour()), ["memoriser"])
+
+
 if __name__ == "__main__":
     unittest.main()

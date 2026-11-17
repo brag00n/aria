@@ -39,6 +39,7 @@ class Mcp:
         self.hosted_only = frozenset(hosted_only or ())          # serveurs démarrés pour les accès tiers : leurs outils ne sont PAS ceux de l'interface
         self.secret_for_servers = secret_for_servers          # secret du canal HTTP de la mémoire (processus d'Aria seulement ; vide pour les tiers)
         self.servers_conf = self.params.get("servers", {})
+        self.on_tool_done = None     # async (nom d'outil) appelé après un appel réussi : une session d'accès tiers y relit son interlocuteur courant
         self.tool_registry = {}  
         self.openai_tools = []   
         self.stack = AsyncExitStack()
@@ -157,7 +158,11 @@ class Mcp:
             # LOG : Sortie
             if not quiet:
                 utils.log_info("MCP", f"📥 RETOUR OUTIL : [{tool_name}] | Réponse : {response_text[:150]}...")
-            
+            if self.on_tool_done is not None:
+                try:
+                    await self.on_tool_done(tool_name)
+                except Exception as e:                          # un crochet ne doit jamais faire échouer l'outil
+                    utils.log_info("MCP", f"⚠️ Crochet après [{tool_name}] : {type(e).__name__}")
             return response_text
         except Exception as e:
             utils.log_info("MCP", f"❌ ERREUR OUTIL : [{tool_name}] | Message : {str(e)}")

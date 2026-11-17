@@ -132,8 +132,9 @@ def current_meta():
 
 
 def note_tool(name):
+    """Note un outil appelé par le LLM pendant l'échange (les outils `ui_*` sont appelés par Aria elle-même : ils n'y figurent pas)."""
     e = _current.get()
-    if e is not None and name and name not in e.outils:
+    if e is not None and name and not str(name).startswith("ui_") and name not in e.outils:
         e.outils.append(name)
 
 

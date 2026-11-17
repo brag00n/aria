@@ -5,9 +5,11 @@ asynchrones des clients MCP (anyio) exigent que les portées d'annulation soient
 une connexion paresseuse dans la requête (annulable) et une fermeture depuis une autre tâche.
 """
 import asyncio
+import json
 import time
 
 import components.utils as utils
+from components import echanges
 
 from .profile import REMOTE_BACKENDS, ProfileError, compose_system
 
@@ -24,6 +26,7 @@ class Session:
         self.sid, self.key_id, self.profile, self.engine, self.mcp = sid, key_id, profile, engine, mcp
         self.app_prompt = app_prompt          # consignes de l'application, fixées à la création de la session
         self.user = sid                       # clé de l'historique dans le moteur
+        self.speaker = None                   # interlocuteur courant {"id", "nom"} (clé qui publie les informations de son interlocuteur), relu auprès de la mémoire
         self.epoch = 1                        # change à chaque reset : deux conversations successives d'une même session ont deux identifiants
         self.lock = asyncio.Lock()            # un seul tour à la fois dans une session
         self.stop = asyncio.Event()           # « stop » demandé par le client
@@ -99,6 +102,9 @@ class SessionRegistry:
                 utils.log_info("ACCESS", f"❌ Session impossible pour la clé {key_rec['id']} : {type(e).__name__}: {str(e)[:200]}")
                 raise SessionError(500, "configuration du profil invalide")
             s = Session(sid, key_rec["id"], profile, engine, mcp, app_prompt)
+            s.watch_speaker = bool(key_rec.get("publish_speaker")) and mcp is not None
+            if s.watch_speaker:
+                mcp.on_tool_done = lambda name, s=s: self._tool_done(s, name)
             s.task = asyncio.create_task(self._own(s))
             self.sessions[sid] = s
         try:
@@ -117,6 +123,8 @@ class SessionRegistry:
                 except Exception as e:
                     s.error = f"{type(e).__name__}: {str(e)[:200]}"
                     utils.log_info("ACCESS", f"⚠️ Connexion MCP de la session {s.sid} : {s.error}")
+                if getattr(s, "watch_speaker", False) and not s.error:
+                    await self.refresh_speaker(s, exchange=False)          # interlocuteur fourni par l'application : connu dès le premier tour
             s.ready.set()
             await s.closed.wait()
         finally:
@@ -126,6 +134,30 @@ class SessionRegistry:
                     await s.mcp.close()
                 except Exception as e:
                     utils.log_info("ACCESS", f"Fermeture MCP de {s.sid} : {type(e).__name__}")
+
+    async def refresh_speaker(self, s, exchange=True):
+        """Relit auprès de la mémoire l'interlocuteur courant de la session (outil caché `ui_interlocuteur`). `exchange` : met aussi à jour la personne de
+        l'échange en cours (journal d'audit et trace des souvenirs suivants). Jamais d'exception : en cas d'échec, l'ancienne valeur reste."""
+        mcp = s.mcp
+        if mcp is None or not mcp.has_tool("ui_interlocuteur"):
+            return s.speaker
+        try:
+            obj = json.loads(await mcp.call_tool("ui_interlocuteur", {}))
+        except Exception:
+            return s.speaker
+        if not isinstance(obj, dict):
+            return s.speaker
+        nom = " ".join(str(obj.get("nom") or "").split())[:80]
+        s.speaker = {"id": str(obj.get("id") or "")[:40], "nom": nom}
+        e = echanges.current() if exchange else None
+        if e is not None and nom:
+            e.who = nom
+        return s.speaker
+
+    async def _tool_done(self, s, name):
+        """Crochet de la session : l'interlocuteur n'a pu changer que par un appel d'`identifier_interlocuteur`."""
+        if name == "identifier_interlocuteur":
+            await self.refresh_speaker(s)
 
     def _evict_expired_locked(self):
         now = self.clock()
@@ -190,7 +222,8 @@ class SessionRegistry:
         self._reaper = asyncio.create_task(loop())
 
     def stats(self):
-        return [{"id": s.sid, "key": s.key_id, "profile": s.profile["name"], "idle_s": int(self.clock() - s.last_used)}
+        return [{"id": s.sid, "key": s.key_id, "profile": s.profile["name"], "idle_s": int(self.clock() - s.last_used),
+                 "speaker": (s.speaker or {}).get("nom", "") if getattr(s, "watch_speaker", False) else None}
                 for s in self.sessions.values()]
 
 
