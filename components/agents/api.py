@@ -48,6 +48,7 @@ class Deps:
     rate_per_ip: int = 120           # requêtes par minute et par IP
     max_audio_s: float = 30.0
     static_dir: str = ""             # dossier `static/` d'Aria : aria-client.js et le modèle du VAD y sont servis (liste fermée)
+    reset_on_close: bool = True      # `memory.reset_on_close` : la clôture d'une conversation à mots-clés efface l'historique du moteur (sinon seule l'époque d'audit change)
     loop_holder: object = None       # bridge.LoopHolder : boucle de l'interface, où s'exécutent les tours de l'agent par défaut `aria` (moteur et MCP globaux)
     extra: dict = field(default_factory=dict)
 

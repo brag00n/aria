@@ -11,6 +11,7 @@ import io
 import threading
 
 import components.utils as utils
+from components import history
 
 from . import compat
 
@@ -56,7 +57,8 @@ def build(config, stt, tts, language=None, shared_engine=None, loop_holder=None)
         utils.log_info("AGENTS", f"{event} " + " ".join(f"{k}={v}" for k, v in fields.items()))
 
     deps = api.Deps(keys=store, sessions=registry, stt=stt, tts=tts, decode_audio=make_decoder(), on_audit=audit,
-                    static_dir=utils.aria_path("static"), loop_holder=loop_holder)
+                    static_dir=utils.aria_path("static"), loop_holder=loop_holder,
+                    reset_on_close=bool(history.settings((config or {}).get("memory"))["reset_on_close"]))
     return api.create_app(deps), deps, store, profiles
 
 

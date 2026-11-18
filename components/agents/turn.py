@@ -114,7 +114,11 @@ async def run_turn(deps, session, rec, text, audio, speak, audit, ignored=False,
                 await gen.aclose()
             if action == "close" and session.conv is not None:
                 session.conv.end()
-                deps.sessions.reset(session)                                # clôture : la conversation est oubliée (nouvelle époque pour le journal d'audit)
+                # clôture : la conversation est oubliée (nouvelle époque pour le journal d'audit), sauf si l'administrateur a réglé `memory.reset_on_close` à faux
+                if getattr(deps, "reset_on_close", True):
+                    deps.sessions.reset(session)
+                else:
+                    session.epoch += 1
                 yield "conversation", {"state": "closed"}
             yield "done", {"ms": int((time.perf_counter() - t0) * 1000)}
         except asyncio.CancelledError:                # client parti : on arrête proprement

@@ -71,6 +71,7 @@ DEBUG_SAVE_WAV = False
 _TMP_DIR = utils.aria_path("tmp", "tts")
 _CONFIG_FILE = "configs/default.json"
 from components.agents import bridge as agents_bridge
+chat_aria = None                                    # chat de l'interface via l'agent par défaut `aria` (components/agents/chat.py), créé au démarrage des agents
 _boucle_interface = agents_bridge.LoopHolder()      # boucle de l'interface (Gradio), lue par le pont de l'agent par défaut `aria`
 _boucle_mcp = {}          # boucle asyncio qui porte les sessions MCP (posée au démarrage de l'application)
 agents_srv = None          # serveur de l'API des agents (components/agents/server.py), None si la fonction est désactivée
@@ -418,6 +419,139 @@ def stop_aria():
     """Bouton « Stop » : coupe la génération en cours ; le navigateur coupe aussi la lecture (JS du bouton + ordre « stop »)."""
     conv.request_stop()
     return ctl_payload("stop")
+
+
+# =====================================================================================================================================
+# CHAT VIA L'AGENT PAR DÉFAUT « aria » (components/agents/chat.py) : même cœur de tour que l'API des agents, en interne (sans HTTP, sans clé).
+# Actif quand `agents.chat_via_agent` est vrai ; sinon l'ancien chemin ci-dessus reste en service (retour arrière sans revert).
+# =====================================================================================================================================
+def chat_via_agent():
+    """Le chat passe-t-il par l'agent `aria` ? (lu dans la config vivante : l'administrateur peut revenir en arrière sans toucher au code)"""
+    return bool(agents_compat.section(config).get("chat_via_agent", False)) and chat_aria is not None
+
+
+def _chat():
+    return chat_aria
+
+
+async def _agent_tour(history, texte=None, audio=None, interlocutor="", voix=False):
+    """Un tour du chat via l'agent : met à jour l'historique d'affichage et produit (historique, charge utile du pont audio) comme `_generer`."""
+    texte_affiche = texte
+    entame = False
+    async for nom, d in _chat().tour(texte=texte, audio=audio, interlocuteur_choisi=interlocutor, speak=True):
+        if nom == "user_text":
+            texte_affiche = d
+            history.append({"role": "user", "content": d})
+            history.append({"role": "assistant", "content": "..."})
+            entame = True
+            yield history, ""
+        elif nom == "ctl":
+            yield history, ctl_payload(d)
+        elif nom == "texte":
+            if not entame:
+                history.append({"role": "user", "content": texte_affiche})
+                history.append({"role": "assistant", "content": "..."})
+                entame = True
+            history[-1]["content"] = d
+            yield history, ""
+        elif nom == "audio":
+            path = d["path"]
+            if not (path and os.path.exists(path)):
+                continue
+            with open(path, "rb") as f:
+                raw_son = f.read()
+            unique_id = f"bloc_{time.time_ns()}"
+            b64_data = f"data:audio/wav;base64,{base64.encodebytes(raw_son).decode('utf-8')}"
+            utils.log_info("app", f"   TTS: > Bloc son généré: {unique_id} ({len(raw_son)} bytes) text: '{d.get('text', '')}'")
+            try: os.remove(path)
+            except OSError: pass
+            yield history, json.dumps([{"id": unique_id, "data": b64_data}])
+        elif nom == "erreur":
+            if not entame:
+                history.append({"role": "user", "content": texte_affiche})
+                history.append({"role": "assistant", "content": ""})
+                entame = True
+            history[-1]["content"] = f"Erreur : {d}"
+            yield history, ""
+    if entame and history and history[-1].get("content") == "...":
+        history[-1]["content"] = ""                                    # tour sans réponse (arrêt immédiat) : pas de « ... » qui reste affiché
+
+
+async def agent_process_streaming_binaire(b64_audio, history, interlocutor=""):
+    if not b64_audio:
+        yield history or [], ""
+        return
+    if history is None:
+        history = []
+    try:
+        async for update in _agent_tour(history, audio=b64_audio, interlocutor=interlocutor, voix=True):
+            yield update
+    except Exception as e:
+        utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
+        yield history, ""
+
+
+async def agent_process_texte(text, history, interlocutor=""):
+    text = (text or "").strip()
+    if not text:
+        yield history or [], "", ""
+        return
+    if history is None:
+        history = []
+    try:
+        async for hist, payload in _agent_tour(history, texte=text, interlocutor=interlocutor):
+            yield hist, payload, ""
+    except Exception as e:
+        utils.log_info("app", f"!!! ERREUR CRITIQUE : {str(e)}")
+        yield history, "", ""
+
+
+async def agent_new_conversation():
+    await _chat().nouvelle_conversation()
+    return [], ctl_payload("conv_close")
+
+
+def agent_stop():
+    _chat().arreter()
+    return ctl_payload("stop")
+
+
+async def agent_refresh_interlocutor():
+    etat, dispo = await _chat().rafraichir_interlocuteur()
+    return gr.update(choices=etat["choices"], value=etat["actif"], visible=dispo)
+
+
+async def agent_change_interlocutor(choice):
+    await _chat().changer_interlocuteur(choice)
+
+
+# --- Aiguillage : chaque évènement de l'interface appelle l'une de ces fonctions, qui choisit le chemin À CHAQUE appel ---
+async def route_process_streaming_binaire(b64_audio, history, interlocutor=""):
+    gen = agent_process_streaming_binaire(b64_audio, history, interlocutor) if chat_via_agent() else process_streaming_binaire(b64_audio, history, interlocutor)
+    async for update in gen:
+        yield update
+
+
+async def route_process_texte(text, history, interlocutor=""):
+    gen = agent_process_texte(text, history, interlocutor) if chat_via_agent() else process_texte(text, history, interlocutor)
+    async for update in gen:
+        yield update
+
+
+async def route_new_conversation():
+    return await (agent_new_conversation() if chat_via_agent() else new_conversation())
+
+
+def route_stop_aria():
+    return agent_stop() if chat_via_agent() else stop_aria()
+
+
+async def route_refresh_interlocutor():
+    return await (agent_refresh_interlocutor() if chat_via_agent() else refresh_interlocutor())
+
+
+async def route_change_interlocutor(choice):
+    return await (agent_change_interlocutor(choice) if chat_via_agent() else change_interlocutor(choice))
 
 
 def request_restart(confirmed=""):
@@ -847,21 +981,21 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
 
     ariaHmi.load(None, None, None, js=JS_ON_LOAD)
     # Au chargement de la page : liste à jour (ou masquée si le serveur de mémoire est absent)
-    ariaHmi.load(refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
+    ariaHmi.load(route_refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
 
     text_input.submit(
-        fn=process_texte,
+        fn=route_process_texte,
         inputs=[text_input, chatbot, interlocutor_dd],
         outputs=[chatbot, audio_url_bridge, text_input],
         show_progress="hidden",
         concurrency_limit=None
-    ).then(refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
+    ).then(route_refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
 
     # Changement à la main : le serveur de mémoire est prévenu (et l'historique effacé si on passe d'une personne à une autre)
-    interlocutor_dd.input(change_interlocutor, [interlocutor_dd], None, show_progress="hidden")
+    interlocutor_dd.input(route_change_interlocutor, [interlocutor_dd], None, show_progress="hidden")
 
     stop_btn.click(
-        fn=stop_aria,
+        fn=route_stop_aria,
         inputs=None,
         outputs=[audio_url_bridge],
         show_progress="hidden",
@@ -870,21 +1004,21 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
     )
 
     new_btn.click(
-        fn=new_conversation,
+        fn=route_new_conversation,
         inputs=None,
         outputs=[chatbot, audio_url_bridge],
         show_progress="hidden",
         concurrency_limit=None,
         js="() => { if (window.ariaStopAudio) window.ariaStopAudio(); }"
-    ).then(refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
+    ).then(route_refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
 
     trigger_btn.click(
-        fn=process_streaming_binaire,
+        fn=route_process_streaming_binaire,
         inputs=[audio_input, chatbot, interlocutor_dd],
         outputs=[chatbot, audio_url_bridge],
         show_progress="hidden",
         concurrency_limit=None
-    ).then(refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
+    ).then(route_refresh_interlocutor, None, [interlocutor_dd], show_progress="hidden")
 
 if __name__ == "__main__":
     import asyncio
@@ -933,6 +1067,8 @@ if __name__ == "__main__":
         # `shared_engine` : l'agent `aria` réutilise le Llm et le MCP globaux d'Aria (interlocuteur global, mémoire du foyer).
         agents_srv = agents_server.start(config, stt, tts, _https_args, language=language, effacer_traces=_effacer_traces_memoire,
                                          shared_engine=lambda: (llm, getattr(llm.engine, "mcp_manager", None)), loop_holder=_boucle_interface)
+        from components.agents import chat as agents_chat
+        chat_aria = agents_chat.ChatAria(agents_srv, config, mcp_manager, tts=tts)
     except Exception as e:                          # jamais empêcher Aria de démarrer à cause de cette option
         utils.log_info("AGENTS", f"❌ API des agents non démarrée : {type(e).__name__}: {e}")
     # Purge automatique du journal d'audit (au démarrage puis toutes les 6 h) : durée par défaut et durée de chaque accès relues à chaque passage
