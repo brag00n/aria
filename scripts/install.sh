@@ -183,7 +183,7 @@ fi
 
 # --- Fichier .env : créé vide, jamais lu --------------------------------------------------------------------------------
 if [ ! -f .env ]; then
-  log "Création de .env à partir de .env.example (renseignez-y ANTHROPIC_API_KEY si vous utilisez Claude)."
+  log "Création de .env à partir de .env.example (renseignez-y LLM_ANTHROPIC_DEFAULT_APIKEY si vous utilisez Claude)."
   if [ -f .env.example ]; then run cp .env.example .env; else run touch .env; fi
 fi
 
