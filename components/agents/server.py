@@ -43,13 +43,14 @@ def make_decoder():
     return decode
 
 
-def build(config, stt, tts, language=None, shared_engine=None, loop_holder=None):
+def build(config, stt, tts, language=None, shared_engine=None, loop_holder=None, persist=None):
     """Assemble les dépendances réelles. Retourne (app Starlette, deps, store de clés, profils).
-    `shared_engine` : `() -> (Llm, Mcp)` GLOBAUX d'Aria, utilisés par l'agent par défaut `aria` (sans lui, `aria` construit son moteur comme les autres agents)."""
+    `shared_engine` : `() -> (Llm, Mcp)` GLOBAUX d'Aria, utilisés par l'agent par défaut `aria` (sans lui, `aria` construit son moteur comme les autres agents).
+    `persist(profils)` : écrit la configuration dans son fichier quand la page d'administration crée, modifie ou supprime un profil (sans lui : en mémoire seulement)."""
     from . import api, compat, keys, profile, sessions
     s = settings(config)
     store = keys.KeyStore(compat.data_dir(utils.aria_path(), s["data_dir"]))
-    profiles = profile.ConfigProfiles(lambda: config)          # config VIVANTE : les profils modifiés dans l'onglet Paramètres valent tout de suite
+    profiles = profile.ConfigProfiles(lambda: config, persist)          # config VIVANTE : un profil modifié dans la page des agents vaut tout de suite pour les nouvelles sessions
     registry = sessions.SessionRegistry(profiles, lambda prof, identity=None: sessions.build_engine(prof, config, language, identity),
                                         max_sessions=s["max_sessions"], ttl_s=s["session_ttl_s"], shared_engine=shared_engine)
 
@@ -74,11 +75,11 @@ class Agents:
         return self.deps
 
 
-def start(config, stt, tts, https_args, language=None, effacer_traces=None, shared_engine=None, loop_holder=None):
+def start(config, stt, tts, https_args, language=None, effacer_traces=None, shared_engine=None, loop_holder=None, persist=None):
     """Assemble les agents (toujours) et ouvre leur API sur le port 7861 + la page d'administration si `agents.enabled`. Retourne un objet `Agents`.
     Sans `enabled`, rien n'est ouvert : seuls le registre et le magasin de clés existent (pour l'agent par défaut `aria`, utilisé en interne)."""
     s = settings(config)
-    app, deps, store, profiles = build(config, stt, tts, language, shared_engine=shared_engine, loop_holder=loop_holder)
+    app, deps, store, profiles = build(config, stt, tts, language, shared_engine=shared_engine, loop_holder=loop_holder, persist=persist)
     if not s["enabled"]:
         return Agents(deps, store, profiles, app)
     import uvicorn

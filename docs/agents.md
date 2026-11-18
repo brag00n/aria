@@ -15,7 +15,7 @@ un **profil** : ses propres serveurs MCP (outils), son message système et son L
    "agents": { "enabled": true, "port": 7861, "admin_port": 7871, "max_sessions": 8, "session_ttl_s": 900 }
    ```
 2. Publier les ports dans `docker-compose.yml` : `"7861:7861"` (API, réseau local) et `"127.0.0.1:7871:7871"` (administration, ce PC seulement).
-3. Redémarrer Aria, puis créer un profil dans l'onglet **⚙️ Paramètres**, section « 🤖 Agents : profils » (voir ci-dessous).
+3. Redémarrer Aria, puis créer un profil dans la page d'administration, onglet **Profils** (voir ci-dessous).
 4. Onglet **🤖 Agents** : créer un agent, choisir son profil et ses **domaines autorisés** (une origine exacte par ligne, par exemple
    `https://app.example.com`). Sa clé API n'est affichée **qu'une seule fois**.
 
@@ -23,11 +23,24 @@ un **profil** : ses propres serveurs MCP (outils), son message système et son L
 > après la mise à jour, l'ancien dossier `models/api_access/` est **renommé** et l'ancien `keys.json` lu puis conservé sous le nom `keys.json.migre` : rien n'est perdu et
 > les clés API déjà distribuées continuent de fonctionner.
 
-## Profils (onglet ⚙️ Paramètres)
+## Profils (page d'administration, onglet Profils)
 
-Un profil décide de ce qu'un agent peut utiliser. Les profils sont dans `configs/default.json`, section `agents.profiles`, et se modifient dans l'onglet
-**⚙️ Paramètres**, section « 🤖 Agents : profils » (puis « 💾 SAUVEGARDER »). Un profil **référence** des serveurs MCP déjà déclarés dans la section
-« Outils MCP » : il n'en redéclare aucun et ne copie aucun secret.
+Un profil décide de ce qu'un agent **est** : message système, voix, conversation par mots-clés, module LLM et serveurs MCP. Les profils sont dans
+`configs/default.json`, section `agents.profiles`, et se créent, modifient et suppriment dans la **page d'administration** (port 7871), onglet **Profils**.
+Chaque enregistrement écrit le fichier de configuration. L'onglet ⚙️ Paramètres d'Aria n'a plus de section « Agents : profils ».
+Un profil **référence** des serveurs MCP déjà déclarés dans la section « Outils MCP » : il n'en redéclare aucun et ne copie aucun secret.
+
+La fenêtre de création et de modification a quatre onglets :
+
+| Onglet | Réglages |
+|---|---|
+| **Général** | nom (non modifiable ensuite), description, message système, **voix** (micro et synthèse vocale) |
+| **LLM** | le module LLM de la configuration (la liste indique le modèle et signale les modules **locaux**) |
+| **Outils MCP** | les serveurs MCP utilisables (cases à cocher ; les serveurs privés ne sont jamais proposés) |
+| **Conversation** | conversations par mots-clés, avec leurs phrases d'ouverture, de clôture et d'arrêt (une par ligne ; vide = les phrases d'Aria) |
+
+Le **VAD**, le **STT** et le **TTS** restent des réglages globaux d'Aria (onglet ⚙️ Paramètres) : tous les agents partagent les mêmes. Le VAD tourne dans le
+navigateur de l'application cliente, pas sur le serveur.
 
 ```json
 "agents": {
@@ -60,14 +73,15 @@ Un profil décide de ce qu'un agent peut utiliser. Les profils sont dans `config
   À utiliser pour fermer un serveur sensible (par exemple la domotique) à tous les agents.
 - **Mémoire.** Le serveur `memoire` peut figurer dans un profil, à condition de déclarer son canal HTTP (`MEMORY_HTTP_PORT` dans son `env`, voir plus bas).
   Un serveur de mémoire sans canal HTTP est refusé : un agent ne lance jamais son propre processus de mémoire.
-- **Validation à la sauvegarde.** Noms de profil (lettres, chiffres, `-`, `_`), types, **clés inconnues** (une faute de frappe est signalée), serveurs inconnus
-  ou privés, LLM local. Les profils sont contrôlés contre les serveurs et LLM de la configuration **enregistrée avec la même sauvegarde** : retirer un serveur
-  encore utilisé par un profil est refusé. En cas d'erreur, rien n'est modifié, ni en mémoire ni dans le fichier.
-- **Appliqué sans redémarrage.** Les profils sont relus à chaque création de conversation : un profil modifié vaut pour les **nouvelles** conversations. Les
-  conversations déjà ouvertes gardent l'ancien profil jusqu'à leur expiration ; la case « Fermer les conversations ouvertes des agents dont le profil change »
-  les ferme tout de suite (elles repartent avec le profil à jour au prochain échange). Les autres sections de l'onglet exigent toujours « 🔄 Redémarrer ».
-- **Profil supprimé ou renommé.** Un agent qui l'utilise reçoit une erreur à la création de sa prochaine conversation. La sauvegarde affiche un avertissement
-  qui liste ces agents : changer leur profil dans l'onglet « 🤖 Agents ».
+- **Validation à l'enregistrement.** Nom de profil (lettres, chiffres, `-`, `_`), types, **clés inconnues** (une faute de frappe est signalée), serveurs inconnus
+  ou privés, module LLM inconnu, longueurs (description 200 caractères, message système 12 000). Un module LLM **local** est accepté : le droit « LLM local »
+  est contrôlé quand l'agent ouvre une session. En cas d'erreur, rien n'est modifié, ni en mémoire ni dans le fichier ; si l'écriture du fichier échoue,
+  la mémoire revient à l'état d'avant (jamais un profil actif qui disparaîtrait au redémarrage).
+- **Les Paramètres protègent les profils.** Sauvegarder l'onglet ⚙️ Paramètres est refusé si la nouvelle configuration invalide un profil existant (par exemple en
+  retirant un serveur MCP qu'un profil utilise). Les profils eux-mêmes ne s'y modifient plus.
+- **Appliqué sans redémarrage.** Les profils sont relus à chaque création de conversation. Enregistrer un profil **ferme les conversations ouvertes** des agents
+  qui l'utilisent : elles repartent avec la version à jour au prochain échange. Les autres sections des Paramètres exigent toujours « 🔄 Redémarrer ».
+- **Profil supprimé.** La suppression est **refusée tant qu'un agent utilise le profil** (la page cite les agents) : changer d'abord leur profil dans l'onglet Agents.
 - **Secrets.** Ils restent dans la déclaration du serveur (`env`, `headers`, tags `<NOM>` résolus depuis le `.env`). L'administration n'affiche des profils que
   le nom et le type (HTTP ou local) des serveurs.
 - **Granularité.** On choisit des **serveurs**, pas des outils : un serveur qui expose seize outils les donne tous. Pour n'exposer qu'une partie, déclarer un

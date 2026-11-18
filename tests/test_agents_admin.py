@@ -47,7 +47,9 @@ class AdminCase(unittest.TestCase):
         self.config = {"mcp": {"params": {"servers": {"web": {"url": "http://x/mcp", "headers": {"Authorization": "Bearer <Jeton>"}}}}},
                        "access": {"profiles": {"portail": {"description": "Portail", "servers": ["web"]}}}}
         self.store = keys.KeyStore(self.tmp / "data")
-        self.profiles = profile.ConfigProfiles(lambda: self.config)
+        self.persistes = []                                   # chaque appel de persist() : une copie des profils écrits
+        self.persist_echoue = False
+        self.profiles = profile.ConfigProfiles(lambda: self.config, self._persist)
         self.sessions = FakeSessions()
         self.audit = []
         self.effaces = []                                   # appels de l'effacement des traces (simulé : la mémoire n'est pas démarrée ici)
@@ -56,6 +58,11 @@ class AdminCase(unittest.TestCase):
         self.httpd, self.token = admin_ui.start(self.store, self.profiles, self.sessions, self.port,
                                                 audit=lambda ev, **kw: self.audit.append((ev, kw)),
                                                 effacer_traces=self._effacer)
+
+    def _persist(self, profils):
+        if self.persist_echoue:
+            raise OSError("disque plein")
+        self.persistes.append(json.loads(json.dumps(profils)))
 
     def _effacer(self, qui, ids):
         if getattr(self, "panne_memoire", False):
@@ -245,10 +252,142 @@ class ProfilsTests(AdminCase):
 
     def test_la_page_ne_parle_plus_de_fichiers_de_profil(self):
         self.assertNotIn("configs/mcp", admin_ui.PAGE)
-        self.assertIn("Paramètres", admin_ui.PAGE)
+        self.assertNotIn("Paramètres d", admin_ui.PAGE)                                    # les profils ne se gèrent plus dans les Paramètres d'Aria
+
+    def test_l_onglet_s_appelle_profils(self):
+        self.assertIn('data-t="prof">Profils</button>', admin_ui.PAGE)
+        self.assertNotIn("Profils MCP", admin_ui.PAGE)
+        for mot in ("Nouveau profil", "/api/profils/save", "/api/profils/delete", "tabsOf", "Conversation", "Outils MCP", "Message système"):
+            self.assertIn(mot, admin_ui.PAGE)
 
     def test_sessions(self):
         self.assertEqual(self.call("GET", "/api/sessions")[1][0]["key"], "k_1")
+
+
+class EditionProfilsTests(AdminCase):
+    """Création, modification et suppression des profils depuis la page : validés, écrits dans la config, sessions rafraîchies."""
+
+    def sauver(self, name, profil, create=True):
+        return self.call("POST", "/api/profils/save", {"name": name, "create": create, "profile": profil})[1]
+
+    def test_creation_ecrit_dans_la_config_et_dans_le_fichier(self):
+        r = self.sauver("neuf", {"description": "Neuf", "system_message": "Tu es neuf.", "voice": False, "servers": ["web"],
+                                 "conversation": {"enabled": True, "open_phrases": ["salut robot"]}})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self.config["agents"]["profiles"]["neuf"]["conversation"]["open_phrases"], ["salut robot"])
+        self.assertEqual(self.persistes[-1]["neuf"]["voice"], False)
+        self.assertIn("portail", self.persistes[-1])                                       # les autres profils sont conservés
+        self.assertIn("neuf", [x["name"] for x in self.call("GET", "/api/profils")[1]])
+
+    def test_creation_d_un_profil_existant_refusee(self):
+        r = self.sauver("portail", {"servers": []})
+        self.assertFalse(r["ok"])
+        self.assertIn("existe déjà", r["erreur"])
+        self.assertEqual(self.persistes, [])
+
+    def test_modification_d_un_profil_inconnu_refusee(self):
+        r = self.sauver("fantome", {"servers": []}, create=False)
+        self.assertIn("introuvable", r["erreur"])
+
+    def test_modification_conserve_les_autres_cles_de_la_section(self):
+        self.config["access"]["enabled"] = True
+        self.sauver("portail", {"description": "Changé", "servers": ["web"]}, create=False)
+        self.assertEqual((self.config["agents"]["enabled"], self.config["agents"]["profiles"]["portail"]["description"]), (True, "Changé"))
+        self.assertNotIn("access", self.config)                                           # écrit sous le nouveau nom
+
+    def test_profil_invalide_refuse_sans_rien_modifier(self):
+        avant = json.loads(json.dumps(self.config))
+        for name, data, mot in [("a", {"servers": ["fantome"]}, "fantome"), ("b", {"voix": True}, "voix"), ("c", {"llm": "Inconnu"}, "Inconnu"),
+                                ("d", {"conversation": {"enabled": "oui"}}, "enabled"), ("e", {"voice": "oui"}, "voice"), ("x" * 61, {}, "nom")]:
+            r = self.sauver(name, data)
+            self.assertFalse(r["ok"], (name, r))
+            self.assertIn(mot, r["erreur"])
+        self.assertEqual(self.config, avant)
+        self.assertEqual(self.persistes, [])
+
+    def test_nom_invalide(self):
+        for nom in ("", "a b", "../x", "é"):
+            self.assertFalse(self.sauver(nom, {})["ok"], nom)
+
+    def test_un_llm_local_est_accepte_a_l_enregistrement(self):
+        self.config["llm"] = {"Llm_Local": {"params": {"backend_type": "local"}}}
+        self.assertTrue(self.sauver("loc", {"llm": "Llm_Local"})["ok"])
+
+    def test_echec_d_ecriture_laisse_la_memoire_intacte(self):
+        avant = json.loads(json.dumps(self.config))
+        self.persist_echoue = True
+        r = self.sauver("neuf", {"servers": []})
+        self.assertFalse(r["ok"])
+        self.assertIn("écriture", r["erreur"])
+        self.assertEqual(self.config, avant)                                              # jamais un profil actif en mémoire mais perdu au redémarrage
+        self.assertNotIn("neuf", self.profiles.names())
+
+    def test_echec_d_ecriture_a_la_suppression(self):
+        self.persist_echoue = True
+        self.assertFalse(self.call("POST", "/api/profils/delete", {"name": "portail"})[1]["ok"])
+        self.assertIn("portail", self.profiles.names())
+
+    def test_modification_ferme_les_sessions_des_agents_du_profil_seulement(self):
+        k1 = self.create(profile="portail")["key"]["id"]
+        self.sauver("autre", {"servers": []})
+        k2 = self.create(label="B", profile="autre")["key"]["id"]
+        r = self.sauver("portail", {"description": "v2", "servers": ["web"]}, create=False)
+        self.assertEqual(r["agents"], 1)
+        self.assertEqual(self.sessions.closed, [k1])
+        self.assertNotIn(k2, self.sessions.closed)
+
+    def test_suppression(self):
+        self.sauver("jetable", {"servers": []})
+        r = self.call("POST", "/api/profils/delete", {"name": "jetable"})[1]
+        self.assertTrue(r["ok"])
+        self.assertNotIn("jetable", self.config["agents"]["profiles"])
+        self.assertNotIn("jetable", self.persistes[-1])
+        self.assertIn("portail", self.config["agents"]["profiles"])                         # les autres profils restent
+        self.assertIn("portail", self.persistes[-1])
+
+    def test_suppression_refusee_si_un_agent_l_utilise(self):
+        self.create(profile="portail")
+        r = self.call("POST", "/api/profils/delete", {"name": "portail"})[1]
+        self.assertFalse(r["ok"])
+        self.assertIn("Portail", r["erreur"])
+        self.assertIn("portail", self.profiles.names())
+
+    def test_suppression_d_un_profil_inconnu(self):
+        self.assertIn("introuvable", self.call("POST", "/api/profils/delete", {"name": "fantome"})[1]["erreur"])
+
+    def test_corps_non_objet_refuse(self):
+        for data in (None, [], "texte", 3):
+            self.assertFalse(self.sauver("z", data)["ok"], data)
+
+    def test_textes_trop_longs_refuses(self):
+        self.assertFalse(self.sauver("z", {"description": "x" * 201})["ok"])
+        self.assertFalse(self.sauver("z", {"system_message": "x" * 12001})["ok"])
+        self.assertTrue(self.sauver("z", {"system_message": "x" * 12000})["ok"])
+
+    def test_les_routes_d_ecriture_exigent_jeton_et_origine(self):
+        corps = {"name": "z", "create": True, "profile": {}}
+        self.assertEqual(self.call("POST", "/api/profils/save", corps, token=None)[0], 401)
+        self.assertEqual(self.call("POST", "/api/profils/save", corps, origin="https://evil.example.com")[0], 403)
+        self.assertEqual(self.call("POST", "/api/profils/delete", {"name": "portail"}, token=None)[0], 401)
+        self.assertNotIn("z", self.profiles.names())
+
+    def test_options_pour_l_editeur_sans_secrets(self):
+        self.config["llm"] = {"Llm_A": {"params": {"backend_type": "anthropic", "model_name": "m1", "apikey": "SECRET-CLE", "base_url": "http://x"}},
+                              "Llm_L": {"params": {"backend_type": "local", "model_name": "m2"}}}
+        o = self.call("GET", "/api/profils/options")[1]
+        self.assertEqual({m["name"]: m["local"] for m in o["llm"]}, {"Llm_A": False, "Llm_L": True})
+        self.config["access"]["private_servers"] = ["prive"]
+        self.config["mcp"]["params"]["servers"]["prive"] = {"url": "http://prive/mcp"}
+        o = self.call("GET", "/api/profils/options")[1]
+        self.assertEqual(o["servers"], [{"name": "web", "type": "http"}])                   # un serveur privé n'est jamais proposé
+        self.assertIn("open_phrases", o["conversation"])
+        self.assertNotIn("SECRET-CLE", json.dumps(o))
+        self.assertNotIn("Bearer", json.dumps(o))
+
+    def test_la_liste_expose_le_profil_a_modifier(self):
+        p = {x["name"]: x for x in self.call("GET", "/api/profils")[1]}["portail"]
+        self.assertEqual(p["raw"]["servers"], ["web"])
+        self.assertEqual(p["conversation"], None)
 
 
 class JournalTests(AdminCase):

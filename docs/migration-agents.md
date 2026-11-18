@@ -96,6 +96,8 @@ Un essai sur une **copie** de votre configuration et de vos données réelles a 
 - **Droits par agent** (LLM local, tous les serveurs MCP, interlocuteur global, sans quota) : **aucun agent existant n'en reçoit**. Un agent d'avant la migration garde exactement ses capacités.
 - **Conversation à mots-clés** : option de profil désactivée par défaut.
 - **Chat de l'interface via l'agent** : drapeau `agents.chat_via_agent`, **désactivé** par défaut.
+- **Profils gérés dans la page des agents** : l'onglet « Profils MCP » devient **Profils** et permet de créer, modifier et supprimer les profils (message système, voix,
+  conversation par mots-clés, LLM, serveurs MCP). La section « Agents : profils » de l'onglet ⚙️ Paramètres **disparaît** ; les profils existants de `default.json` sont conservés tels quels.
 - Rien ne change pour les intégrateurs : mêmes routes `/v1/*`, mêmes événements ; les nouveaux (`conversation`, `done {ignored}`) n'apparaissent que si l'administrateur active l'option.
 
 ### Retour en arrière

@@ -11,8 +11,10 @@ secret (`env`, `headers` et leurs tags `<NOM>` restent dans la déclaration du s
 (`MEMORY_HTTP_PORT`) : la session tierce s'y connecte avec l'identité de son accès (une personne système, voir tools/memory) et ne lance jamais
 son propre processus. Sans profil, une clé n'a AUCUN outil (jamais ceux d'Aria).
 """
+import copy
 import json
 import re
+import threading
 import unicodedata
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,59}$")
@@ -270,8 +272,10 @@ class ConfigProfiles:
     """Profils lus dans la config VIVANTE (`get_config()` à chaque appel) : une modification faite dans l'onglet Paramètres vaut pour les
     sessions créées ensuite, sans redémarrage. Même interface que l'ancienne lecture de fichiers : names, load, describe."""
 
-    def __init__(self, get_config):
+    def __init__(self, get_config, persist=None):
         self.get_config = get_config
+        self.persist = persist                       # persist(profils: dict) écrit les profils dans le fichier de config ; None = en mémoire seulement
+        self._lock = threading.Lock()
 
     def _profiles(self):
         access = compat.section(self.get_config())
@@ -280,6 +284,72 @@ class ConfigProfiles:
 
     def names(self):
         return sorted(n for n in self._profiles() if valid_name(n))
+
+    def raw(self, name):
+        """Profil tel qu'il est écrit dans la config (None s'il n'existe pas). Aucun secret : des noms de serveurs et de modules, des textes."""
+        value = self._profiles().get(name)
+        return copy.deepcopy(value) if isinstance(value, dict) else None
+
+    def options(self):
+        """Ce que l'éditeur de profils propose : modules LLM (avec leur type), serveurs MCP utilisables et valeurs par défaut de la conversation."""
+        config = self.get_config() or {}
+        llm = []
+        for n, m in (config.get("llm") or {}).items():
+            if isinstance(m, dict):
+                p = m.get("params") or {}
+                llm.append({"name": n, "local": p.get("backend_type", "local") not in REMOTE_BACKENDS, "model": str(p.get("model_name", ""))})
+        declared = declared_servers(config)
+        servers = [{"name": n, "type": "http" if declared[n].get("url") else "stdio"} for n in exposable_servers(config)]
+        try:
+            from components.conversation import DEFAULTS
+            conversation = {k: list(DEFAULTS[k]) for k in ("open_phrases", "close_phrases", "stop_phrases")}
+        except Exception:
+            conversation = {"open_phrases": [], "close_phrases": [], "stop_phrases": []}
+        return {"llm": llm, "active_llm": (config.get("active_modules") or {}).get("llm", ""), "servers": servers, "conversation": conversation}
+
+    def _swap(self, config, access, new):
+        """Remplace les profils (UNE affectation de la section : le thread de l'API voit l'ancien ou le nouvel ensemble) puis les écrit dans le fichier.
+        Si l'écriture échoue, la mémoire revient à l'état d'avant : jamais un profil actif en mémoire mais perdu au redémarrage."""
+        before = {k: config[k] for k in (compat.NEW_KEY, compat.OLD_KEY) if k in config}
+        compat.write_section(config, {**access, "profiles": new})
+        if self.persist:
+            try:
+                self.persist(new)
+            except Exception as e:
+                for k in (compat.NEW_KEY, compat.OLD_KEY):
+                    config.pop(k, None)
+                config.update(before)
+                return [f"écriture de la configuration impossible : {type(e).__name__}: {e}"]
+        return []
+
+    def save(self, name, data, create):
+        """Crée (`create`) ou modifie un profil, valide puis écrit dans le fichier de config. Retourne la liste des erreurs (vide = enregistré).
+        `data` est validé tel quel (clé inconnue = erreur). Un LLM local est accepté : le droit appartient à l'AGENT, contrôlé au démarrage de sa session."""
+        if not isinstance(data, dict):
+            return ["un objet est attendu"]
+        for k, limite in (("description", 200), ("system_message", 12000)):
+            if isinstance(data.get(k), str) and len(data[k]) > limite:
+                return [f"{k} : {limite} caractères au plus"]
+        with self._lock:
+            config = self.get_config()
+            access = compat.section(config)
+            old = access.get("profiles") if isinstance(access.get("profiles"), dict) else {}
+            if create and name in old:
+                return [f"le profil « {name} » existe déjà"]
+            if not create and name not in old:
+                return [f"profil « {name} » introuvable"]
+            errors = validate_profiles({name: data}, config, allow_local=True)
+            return errors or self._swap(config, access, {**old, name: data})
+
+    def delete(self, name):
+        """Supprime un profil (le contrôle « utilisé par un agent » est fait par l'appelant). Retourne la liste des erreurs."""
+        with self._lock:
+            config = self.get_config()
+            access = compat.section(config)
+            old = access.get("profiles") if isinstance(access.get("profiles"), dict) else {}
+            if name not in old:
+                return [f"profil « {name} » introuvable"]
+            return self._swap(config, access, {n: p for n, p in old.items() if n != name})
 
     def aria_profile(self, config):
         """Profil de l'agent par défaut `aria` quand l'administrateur n'en a pas écrit : il suit la configuration d'Aria (LLM actif, conversation à mots-clés) et
@@ -316,5 +386,6 @@ class ConfigProfiles:
         p = self.load(name, allow_local=True)             # l'aperçu ne juge pas le droit « LLM local » : il appartient à l'agent (voir `llm_local`)
         module = ((self.get_config() or {}).get("llm") or {}).get(p["llm"] or (self.get_config() or {}).get("active_modules", {}).get("llm", "")) or {}
         local = (module.get("params") or {}).get("backend_type", "local") not in REMOTE_BACKENDS
-        return {"name": name, "description": p["description"], "llm": p["llm"], "llm_local": local, "voice": p["voice"],
+        return {"name": name, "raw": self.raw(name), "description": p["description"], "llm": p["llm"], "llm_local": local, "voice": p["voice"],
+                "conversation": p["conversation"],
                 "servers": [{"name": n, "type": "http" if c.get("url") else "stdio"} for n, c in p["mcp"]["servers"].items()]}

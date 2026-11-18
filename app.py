@@ -139,30 +139,26 @@ def get_current_params(category, module_name):
     except Exception as e:
         return "{}"
 
+def _enregistrer_profils(profils):
+    """Écrit la config (avec les profils d'agent déjà posés en mémoire par la page des agents) dans configs/default.json, de façon atomique."""
+    settings_mod.write_config(config, _CONFIG_FILE)
+
+
 def update_config_ui(global_json, vad_choix, vad_json, conv_json, memory_json, stt_choix, stt_json, llm_choix, llm_json, tts_choix, tts_json, mcp_json,
-                     profiles_json="", close_open=False, audit_json=""):
+                     audit_json=""):
     """Sauvegarde globale de la configuration modulaire. Tout est analysé et validé AVANT la moindre modification de `config` (components/settings.py) :
     une erreur dans n'importe quel champ ne laisse ni la mémoire ni le fichier à moitié modifiés."""
     try:
-        fields = {"global": global_json, "conversation": conv_json, "memory": memory_json, "mcp": mcp_json, "profiles": profiles_json, "audit": audit_json,
+        fields = {"global": global_json, "conversation": conv_json, "memory": memory_json, "mcp": mcp_json, "audit": audit_json,
                   "vad": vad_json, "stt": stt_json, "llm": llm_json, "tts": tts_json,
                   "vad_choice": vad_choix, "stt_choice": stt_choix, "llm_choice": llm_choix, "tts_choice": tts_choix}
-        parsed, changed = settings_mod.apply_settings(config, fields)
+        parsed = settings_mod.apply_settings(config, fields)
         settings_mod.write_config(config, _CONFIG_FILE)
         if parsed["audit"] is not None:                 # activer, durée et texte/empreinte valent tout de suite ; le dossier au prochain démarrage
             a = config["audit"]
             echanges.configure(echanges.directory(), enabled=a.get("enabled", True), log_text=a.get("log_text", True),
                                retention_days=a.get("retention_days", echanges.DEFAULT_RETENTION_DAYS))
-        closed, warnings = 0, []
-        if changed and agents_srv is not None:
-            from components.agents import server as agents_server
-            used = agents_server.keys_using_profiles(agents_srv, changed)
-            if used:
-                warnings.append("Des clés utilisent un profil modifié ou supprimé : " + ", ".join(used)
-                                + ". Un profil supprimé donne une erreur à ces clés ; cochez « Fermer les conversations ouvertes » pour appliquer le changement tout de suite.")
-            if close_open:
-                closed = agents_server.close_sessions_for_profiles(agents_srv, changed)
-        return settings_mod.save_message(changed, closed, warnings)
+        return settings_mod.save_message([])
     except json.JSONDecodeError as e:
         return f"❌ Erreur de syntaxe JSON dans l'un des blocs : {str(e)}"
     except ValueError as e:
@@ -869,20 +865,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     lines=12
                 )
 
-            # --- BLOC 6 : AGENTS (profils des clés API) ---
-            with gr.Group():
-                gr.Markdown("#### 🤖 Agents : profils")
-                profiles_help_md = gr.Markdown(settings_mod.profiles_help(config))
-                profiles_code = gr.Code(
-                    value=json.dumps(agents_compat.section(config).get("profiles", {}), indent=2, ensure_ascii=False),
-                    language="json",
-                    label="Profils des agents (chaque agent en choisit un)",
-                    lines=12
-                )
-                close_open_cb = gr.Checkbox(label="Fermer les conversations ouvertes des clés dont le profil change (sinon, elles gardent l'ancien jusqu'à leur expiration)",
-                                            value=False)
-
-            # --- BLOC 7 : AUDIT (journal des échanges) ---
+            # --- BLOC 6 : AUDIT (journal des échanges) ---
             with gr.Group():
                 gr.Markdown("#### 🧾 Audit des échanges")
                 gr.Markdown("<small>Journal de chaque échange (question, réponse, source, interlocuteur) dans <code>models/audit/</code>, hors git. "
@@ -910,7 +893,7 @@ with gr.Blocks(css=CSS, title="Aria Voice") as ariaHmi:
                     llm_dd, llm_code,
                     tts_dd, tts_code,
                     mcp_code,
-                    profiles_code, close_open_cb, audit_code
+                    audit_code
                 ],
                 outputs=[status_msg]
             )
@@ -1066,6 +1049,7 @@ if __name__ == "__main__":
         # Les agents sont TOUJOURS assemblés (l'agent par défaut `aria` sert le chat) ; le port 7861 n'est ouvert que si `agents.enabled`.
         # `shared_engine` : l'agent `aria` réutilise le Llm et le MCP globaux d'Aria (interlocuteur global, mémoire du foyer).
         agents_srv = agents_server.start(config, stt, tts, _https_args, language=language, effacer_traces=_effacer_traces_memoire,
+                                         persist=_enregistrer_profils,
                                          shared_engine=lambda: (llm, getattr(llm.engine, "mcp_manager", None)), loop_holder=_boucle_interface)
         from components.agents import chat as agents_chat
         chat_aria = agents_chat.ChatAria(agents_srv, config, mcp_manager, tts=tts)

@@ -20,7 +20,7 @@ def _object(text, label):
 
 def parse_settings(config, fields):
     """Analyse et valide tous les champs sans toucher à `config`. `fields` : dict de textes JSON (global, vad, conversation, memory, stt, llm,
-    tts, mcp, profiles) et de choix de modules (vad_choice, stt_choice, llm_choice, tts_choice). Retourne le dict des valeurs analysées ;
+    tts, mcp, audit) et de choix de modules (vad_choice, stt_choice, llm_choice, tts_choice). Retourne le dict des valeurs analysées ;
     lève ValueError (message prêt à afficher) ou json.JSONDecodeError."""
     out = {}
     out["global"] = _object(fields["global"], "globale")
@@ -52,14 +52,11 @@ def parse_settings(config, fields):
     futur = {**config, "mcp": {**(config.get("mcp") or {}), "params": out["mcp"]},
              "llm": {**(config.get("llm") or {}), fields["llm_choice"]: {**(config["llm"].get(fields["llm_choice"]) or {}), "params": out["llm"]}},
              "agents": compat.section(config)}
-    profiles, err = agents_profile.parse_profiles(fields.get("profiles", ""))
-    if err:
-        raise ValueError("❌ " + err[0].upper() + err[1:])
-    # Un profil peut nommer un LLM local : le droit « LLM local » appartient à l'AGENT, contrôlé au démarrage de sa session (profile.load), pas ici
-    errors = agents_profile.validate_profiles(profiles, futur, allow_local=True) + agents_profile.validate_hosted(futur)
+    # Les profils ne se modifient plus ici (page des agents, onglet Profils) : on vérifie seulement que la nouvelle config les laisse valides
+    # (un serveur MCP ou un module LLM retiré ne doit pas casser un profil existant sans prévenir)
+    errors = agents_profile.validate_profiles(compat.section(config).get("profiles") or {}, futur, allow_local=True) + agents_profile.validate_hosted(futur)
     if errors:
-        raise ValueError("❌ Profils d'accès refusés : " + " ; ".join(errors))
-    out["profiles"] = profiles
+        raise ValueError("❌ Cette configuration invaliderait un profil d'agent : " + " ; ".join(errors))
     out["audit"] = parse_audit(fields.get("audit"))
     return out
 
@@ -86,11 +83,9 @@ def parse_audit(text):
 
 
 def apply_settings(config, fields):
-    """Valide (parse_settings) puis applique à `config` d'un bloc. Retourne (parsed, changed) : `parsed` les valeurs appliquées et `changed` les
-    noms de profils d'accès ajoutés, retirés ou modifiés. Lève ValueError / json.JSONDecodeError sans avoir rien modifié."""
+    """Valide (parse_settings) puis applique à `config` d'un bloc. Retourne `parsed`, les valeurs appliquées.
+    Lève ValueError / json.JSONDecodeError sans avoir rien modifié."""
     parsed = parse_settings(config, fields)
-    access = compat.section(config)
-    changed = agents_profile.changed_profiles(access.get("profiles"), parsed["profiles"])
     config["global"] = parsed["global"]
     config["conversation"] = parsed["conversation"]
     config["memory"] = parsed["memory"]
@@ -100,8 +95,7 @@ def apply_settings(config, fields):
     config["mcp"]["params"] = parsed["mcp"]
     if parsed["audit"] is not None:
         config["audit"] = parsed["audit"]
-    compat.write_section(config, {**access, "profiles": parsed["profiles"]})        # UNE affectation : le thread de l'API ne voit jamais un état intermédiaire
-    return parsed, changed
+    return parsed
 
 
 def write_config(config, path):
@@ -123,28 +117,8 @@ def write_config(config, path):
         raise
 
 
-def profiles_help(config):
-    """Aide affichée sous l'éditeur de profils : serveurs MCP utilisables et serveurs privés exclus."""
-    exposable = agents_profile.exposable_servers(config)
-    private = sorted(agents_profile.private_servers(config) & set(agents_profile.declared_servers(config)))
-    modules = ", ".join(f"{n} ({'distant' if (m.get('params') or {}).get('backend_type', 'local') in agents_profile.REMOTE_BACKENDS else 'local'})"
-                        for n, m in (config.get("llm") or {}).items() if isinstance(m, dict))
-    return ("<small>Un profil choisit ce qu'une clé API d'application peut utiliser. Clés d'un profil : "
-            "<code>description</code>, <code>system_message</code>, <code>llm</code> (nom d'un module LLM, vide = module actif ; "
-            "un module <b>local</b> exige le droit « LLM local » sur l'agent), "
-            "<code>voice</code> et <code>servers</code> (noms de serveurs MCP). "
-            f"<br>Modules LLM : <b>{modules or 'aucun'}</b>"
-            f"<br>Serveurs utilisables : <b>{', '.join(exposable) or 'aucun'}</b>"
-            + (f" · jamais exposés : {', '.join(private)}" if private else "")
-            + ". Les profils sont appliqués sans redémarrage aux nouvelles conversations.</small>")
-
-
-def save_message(changed, closed, warnings):
+def save_message(warnings):
     """Message de fin de sauvegarde."""
     parts = ["✅ Configuration sauvegardée ! Cliquez sur « Redémarrer » pour appliquer les changements des autres sections."]
-    if changed:
-        parts.append(f"Profils d'accès appliqués sans redémarrage : {', '.join(changed)}.")
-    if closed:
-        parts.append(f"{closed} conversation(s) ouverte(s) fermée(s).")
     parts.extend("⚠️ " + w for w in warnings)
     return "\n\n".join(parts)

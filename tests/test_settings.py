@@ -35,7 +35,7 @@ def base_config():
 
 def fields_of(cfg, **override):
     f = {"global": json.dumps(cfg["global"]), "conversation": json.dumps(cfg["conversation"]), "memory": json.dumps(cfg["memory"]),
-         "mcp": json.dumps(cfg["mcp"]["params"]), "profiles": json.dumps(cfg["agents"].get("profiles", {})),
+         "mcp": json.dumps(cfg["mcp"]["params"]),
          "vad_choice": cfg["active_modules"]["vad"], "stt_choice": cfg["active_modules"]["stt"],
          "llm_choice": cfg["active_modules"]["llm"], "tts_choice": cfg["active_modules"]["tts"]}
     for cat in ("vad", "stt", "llm", "tts"):
@@ -51,10 +51,9 @@ class AncienneSectionTests(unittest.TestCase):
         cfg = base_config()
         cfg["access"] = cfg.pop("agents")
         cfg["access"]["private_servers"] = ["secret"]
-        parsed, changed = settings.apply_settings(cfg, fields_of({**cfg, "agents": cfg["access"]}, profiles=json.dumps({"neuf": {"servers": ["web"]}})))
-        self.assertNotIn("access", cfg)
-        self.assertEqual(list(cfg["agents"]["profiles"]), ["neuf"])
-        self.assertEqual((cfg["agents"]["enabled"], cfg["agents"]["private_servers"]), (True, ["secret"]))     # les autres clés sont conservées
+        settings.apply_settings(cfg, fields_of({**cfg, "agents": cfg["access"]}))
+        self.assertEqual(list(cfg["access"]["profiles"]), ["demo"])                       # les Paramètres ne touchent plus aux profils ni à leur section
+        self.assertEqual(cfg["access"]["private_servers"], ["secret"])
 
 
 class AuditTests(unittest.TestCase):
@@ -106,8 +105,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_sauvegarde_sans_changement(self):
         avant = copy.deepcopy(self.cfg)
-        parsed, changed = self.apply()
-        self.assertEqual(changed, [])
+        self.apply()
         self.assertEqual(self.cfg, avant)
 
     def test_aucune_modification_quand_un_champ_est_invalide(self):
@@ -117,8 +115,7 @@ class ValidationTests(unittest.TestCase):
             {"conversation": json.dumps({"open_phrases": "bonjour"})}, {"memory": json.dumps({"max_exchanges": -1})},
             {"memory": json.dumps({"max_chars": True})},
             {"vad": "{x"}, {"stt": "[]"}, {"llm": "pas du json"}, {"tts": "3"}, {"mcp": "{x"}, {"mcp": "[]"},
-            {"profiles": "{x"}, {"profiles": "[1]"}, {"profiles": json.dumps({"a": {"servers": ["memoire_seule"]}})},
-            {"profiles": json.dumps({"a": {"servers": ["inconnu"]}})}, {"stt_choice": "Stt_Inconnu"},
+            {"stt_choice": "Stt_Inconnu"},
         ]
         for champ in invalides:
             with self.assertRaises((ValueError, json.JSONDecodeError), msg=str(champ)):
@@ -140,68 +137,52 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(self.cfg["stt"]["Stt_B"]["params"], {"model_name": "large"})
 
     def test_les_autres_cles_de_access_sont_conservees(self):
-        self.apply(profiles=json.dumps({"neuf": {"servers": ["web"]}}))
+        self.apply()
         self.assertEqual((self.cfg["agents"]["enabled"], self.cfg["agents"]["port"]), (True, 7861))
-        self.assertEqual(list(self.cfg["agents"]["profiles"]), ["neuf"])
+        self.assertEqual(list(self.cfg["agents"]["profiles"]), ["demo"])
 
 
 class ProfilsTests(unittest.TestCase):
+    """Les profils ne se modifient plus dans les Paramètres : la sauvegarde les laisse intacts et refuse une config qui en invaliderait un."""
+
     def setUp(self):
         self.cfg = base_config()
 
-    def apply(self, profiles):
-        return settings.apply_settings(self.cfg, fields_of(self.cfg, profiles=json.dumps(profiles)))
+    def apply(self, **override):
+        return settings.apply_settings(self.cfg, fields_of(self.cfg, **override))
 
-    def test_noms_des_profils_modifies(self):
-        _, changed = self.apply({"demo": {"description": "Démo", "servers": ["meteo"]}, "autre": {"servers": ["web"]}})
-        self.assertEqual(changed, ["autre"])
-        _, changed = self.apply({"autre": {"servers": ["web", "meteo"]}})
-        self.assertEqual(changed, ["autre", "demo"])                                       # modifié et supprimé
+    def test_les_profils_sont_conserves_tels_quels(self):
+        avant = copy.deepcopy(self.cfg["agents"]["profiles"])
+        self.apply()
+        self.assertEqual(self.cfg["agents"]["profiles"], avant)
 
-    def test_un_profil_peut_utiliser_un_serveur_ajoute_dans_la_meme_sauvegarde(self):
+    def test_un_champ_profiles_est_ignore(self):
+        self.apply(profiles=json.dumps({"intrus": {"servers": ["web"]}}))
+        self.assertEqual(list(self.cfg["agents"]["profiles"]), ["demo"])
+
+    def test_retirer_un_serveur_utilise_par_un_profil_est_refuse(self):
         mcp = copy.deepcopy(self.cfg["mcp"]["params"])
-        mcp["servers"]["nouveau"] = {"url": "http://n/mcp"}
-        parsed, changed = settings.apply_settings(self.cfg, fields_of(self.cfg, mcp=json.dumps(mcp), profiles=json.dumps({"p": {"servers": ["nouveau"]}})))
-        self.assertEqual(list(self.cfg["agents"]["profiles"]["p"]["servers"]), ["nouveau"])
-
-    def test_un_serveur_retire_dans_la_meme_sauvegarde_invalide_le_profil(self):
-        mcp = copy.deepcopy(self.cfg["mcp"]["params"])
-        del mcp["servers"]["meteo"]                                                         # « demo » le référence encore
+        del mcp["servers"]["meteo"]
         avant = copy.deepcopy(self.cfg)
         with self.assertRaises(ValueError) as cm:
-            settings.apply_settings(self.cfg, fields_of(self.cfg, mcp=json.dumps(mcp)))
+            self.apply(mcp=json.dumps(mcp))
         self.assertIn("meteo", str(cm.exception))
+        self.assertIn("profil", str(cm.exception))
         self.assertEqual(self.cfg, avant)
 
-    def test_llm_local_accepte_dans_un_profil_le_droit_est_controle_a_la_session(self):
-        self.apply({"a": {"llm": "Llm_Local"}})                              # sauvegarde acceptée : le droit appartient à l'agent
+    def test_un_llm_local_reste_valide_dans_un_profil(self):
+        self.cfg["agents"]["profiles"]["loc"] = {"llm": "Llm_Local"}
+        self.apply()                                                       # le droit « LLM local » appartient à l'agent, pas à la sauvegarde
         from components.agents import profile as P
-        cfg = {**self.cfg, "agents": {"profiles": {"a": {"llm": "Llm_Local"}}}}
-        pr = P.ConfigProfiles(lambda: cfg)
+        pr = P.ConfigProfiles(lambda: self.cfg)
         with self.assertRaises(P.ProfileError):
-            pr.load("a")                                                     # un agent sans le droit « LLM local » est refusé au démarrage de sa session
-        self.assertEqual(pr.load("a", allow_local=True)["llm"], "Llm_Local")
-        self.assertTrue(pr.describe("a")["llm_local"])
-
-    def test_l_aide_liste_les_modules_llm_avec_leur_type(self):
-        aide = settings.profiles_help(self.cfg)
-        self.assertIn("Llm_Local (local)", aide)
-        self.assertIn("Llm_Anthropic (distant)", aide)
-
-    def test_message_d_erreur_lisible_et_complet(self):
-        with self.assertRaises(ValueError) as cm:
-            self.apply({"a": {"servers": ["memoire_seule", "fantome"], "voix": True}})
-        msg = str(cm.exception)
-        self.assertTrue(msg.startswith("❌"))
-        for mot in ("canal HTTP", "fantome", "voix"):
-            self.assertIn(mot, msg)
-
-    def test_texte_vide_supprime_les_profils(self):
-        parsed, changed = settings.apply_settings(self.cfg, fields_of(self.cfg, profiles=""))
-        self.assertEqual((self.cfg["agents"]["profiles"], changed), ({}, ["demo"]))
+            pr.load("loc")                                                 # un agent sans le droit est refusé au démarrage de sa session
+        self.assertEqual(pr.load("loc", allow_local=True)["llm"], "Llm_Local")
+        self.assertTrue(pr.describe("loc")["llm_local"])
 
     def test_les_secrets_des_serveurs_ne_sont_pas_touches(self):
-        self.apply({"p": {"servers": ["meteo", "web"]}})
+        self.cfg["agents"]["profiles"]["p"] = {"servers": ["meteo", "web"]}
+        self.apply()
         servers = self.cfg["mcp"]["params"]["servers"]
         self.assertEqual(servers["meteo"]["env"], {"API_KEY": "<CleMeteo>"})                # tags conservés, jamais remplacés par des valeurs
         self.assertEqual(servers["web"]["headers"], {"Authorization": "Bearer <Jeton>"})
@@ -237,23 +218,12 @@ class EcritureTests(unittest.TestCase):
         self.assertEqual([p.name for p in self.tmp.iterdir()], ["default.json"])             # le fichier temporaire est supprimé
 
 
-class AideEtMessagesTests(unittest.TestCase):
-    def test_aide_liste_serveurs_utilisables_et_prives(self):
-        aide = settings.profiles_help(base_config())
-        self.assertIn("memoire, meteo, web", aide)                                          # memoire_seule : pas de canal HTTP, pas proposé
-        self.assertNotIn("memoire_seule", aide)
-        self.assertNotIn("jamais exposés", aide)                                           # aucun serveur privé par défaut
-
-    def test_aide_sans_serveur(self):
-        self.assertIn("aucun", settings.profiles_help({}))
-
+class MessagesTests(unittest.TestCase):
     def test_message_de_sauvegarde(self):
-        simple = settings.save_message([], 0, [])
+        simple = settings.save_message([])
         self.assertIn("sauvegardée", simple)
-        self.assertNotIn("Profils d'accès", simple)
-        complet = settings.save_message(["a", "b"], 2, ["clé X utilise le profil a"])
-        for mot in ("a, b", "2 conversation(s)", "⚠️ clé X"):
-            self.assertIn(mot, complet)
+        self.assertNotIn("Profils", simple)
+        self.assertIn("⚠️ clé X", settings.save_message(["clé X invalide"]))
 
 
 if __name__ == "__main__":
