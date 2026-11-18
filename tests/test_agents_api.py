@@ -237,6 +237,17 @@ class TourTexteTests(ApiCase):
         self.assertEqual(audio[0]["format"], "wav")
         self.assertEqual([p for p in self.tmp.glob("t_*.wav")], [])
 
+    def test_un_wav_introuvable_n_emet_aucun_evenement_audio_et_le_tour_continue(self):
+        """Le cœur renvoie un chemin ; si le fichier a disparu (nettoyage, disque), le flux SSE n'émet rien pour ce bloc mais le tour va jusqu'à `done`."""
+        orig = self.tts.run_tts_to_file
+        self.tts.run_tts_to_file = lambda text, user_id="x": str(self.tmp / "inexistant.wav")
+        try:
+            ev = self.events(self.turn({"text": "salut"}))
+        finally:
+            self.tts.run_tts_to_file = orig
+        self.assertNotIn("audio", [n for n, _ in ev])
+        self.assertEqual(ev[-1][0], "done")
+
     def test_voix_coupee_pour_la_cle(self):
         v, k = self.keys.create("Muet", [ORIGIN], profile="portail", voice=False)
         ev = self.events(self.turn({"text": "salut"}, headers=self.hdr(k)))

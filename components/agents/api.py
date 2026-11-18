@@ -24,7 +24,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from . import security
-from . import rights
+from . import rights, turn
 from .profile import AppPromptError, clean_app_prompt, clean_speaker
 
 # Fichiers publics : nom d'URL -> (chemin relatif à static/, type MIME). Rien d'autre n'est jamais servi.
@@ -33,7 +33,7 @@ PUBLIC_FILES = {
     "silero_vad.onnx": (("silero_v6.2", "silero_vad.onnx"), "application/octet-stream"),
 }
 
-TOOL_NOTICE_RE = re.compile(r"\n\n> 🛠️ Outil utilisé : `([^`]+)`\n\n")
+TOOL_NOTICE_RE = turn.TOOL_NOTICE_RE
 
 
 @dataclass
@@ -247,107 +247,21 @@ def create_app(deps):
 
 
 async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=False):
-    """Flux SSE d'un tour. Un seul tour à la fois par session ; « stop » coupe la réponse en cours."""
-    if session.lock.locked():
-        yield _sse("error", {"code": "busy", "message": "un tour est déjà en cours dans cette session"})
-        return
-    async with session.lock:
-        session.stop.clear()
-        session.touch()
-        t0 = time.perf_counter()
-        try:
-            yield _sse("state", {"state": "thinking"})
-            if ignored:
-                yield _sse("warning", {"code": "system_ignored", "message": "la session existe déjà : ses consignes sont fixées à sa création "
-                                                                          "(utilisez une autre session pour changer de consignes)"})
-            if audio is not None:
-                try:
-                    raw = base64.b64decode(audio.split(",", 1)[1], validate=False)
-                    samples = await asyncio.get_running_loop().run_in_executor(None, _decode_and_transcribe, deps, raw)
-                except _AudioTooLong:
-                    yield _sse("error", {"code": "audio_too_long", "message": f"audio limité à {deps.max_audio_s:.0f} s"})
-                    return
-                except Exception as e:
-                    yield _sse("error", {"code": "bad_audio", "message": "audio illisible"})
-                    utils.log_info("AGENTS", f"audio illisible ({rec['id']}) : {type(e).__name__}")
-                    return
-                text = samples
-                if not re.search(r"\w", text or ""):
-                    yield _sse("done", {"empty": True})
-                    return
-                yield _sse("user_text", {"text": text})
-            action = "say"
-            if session.conv is not None:
-                # Option « conversation » du profil : mots d'arrêt, d'ouverture et de clôture (components/conversation.py). Absente = jamais ce bloc, flux inchangé.
-                action = session.conv.classify(text, from_voice=audio is not None)
-                if action == "stop":
-                    session.stop.set()
-                    yield _sse("done", {"stopped": True, "reason": "keyword"})
-                    return
-                if action == "ignore":
-                    yield _sse("done", {"ignored": True})                  # hors conversation : ni LLM, ni historique, ni audit d'échange
-                    return
-                if action == "open":
-                    session.conv.begin()
-                    yield _sse("conversation", {"state": "open"})
-            audit("turn", key=rec["id"], session=session.sid, voice=audio is not None)
-            tts = deps.tts if speak else None
-            vu = ""                                   # texte déjà émis, pour n'envoyer que les changements
-            outils = set()
-            # Journal d'audit : source = identifiant interne de l'accès + son nom du moment ; l'échange est propre à CETTE tâche (tours concurrents sans mélange)
-            # `who` : la personne qui parle (clé qui publie les informations de son interlocuteur), sinon le nom de l'accès ; `src` garde TOUJOURS l'accès
-            qui = ((session.speaker or {}).get("nom") or "Inconnue") if rec.get("publish_speaker") else (rec.get("label") or rec["id"])
-            echanges.start(echanges.source_label(rec["id"], rec.get("label")), qui, session.conv_id, voix=audio is not None, query=text)
-            gen = session.engine.get_answer_web(tts, text, session.user)
-            try:
-                async for full, wav, spoken in gen:
-                    if session.stop.is_set():
-                        yield _sse("done", {"stopped": True})
-                        return
-                    propre = TOOL_NOTICE_RE.sub("", full or "")
-                    for name in TOOL_NOTICE_RE.findall(full or ""):
-                        if name not in outils:
-                            outils.add(name)
-                            yield _sse("tool", {"name": name})
-                    if full and full.startswith("Erreur LLM:"):
-                        yield _sse("error", {"code": "llm", "message": "le modèle n'a pas pu répondre"})
-                        utils.log_info("AGENTS", f"{rec['id']} : {full[:200]}")
-                        return
-                    if propre != vu:
-                        vu = propre
-                        yield _sse("text", {"text": propre})
-                    if wav:
-                        data = await asyncio.get_running_loop().run_in_executor(None, _read_and_remove, wav)
-                        if data:
-                            yield _sse("state", {"state": "speaking"})
-                            yield _sse("audio", {"id": f"a_{int(time.time_ns())}", "format": "wav", "data": data, "text": spoken or ""})
-            finally:
-                await gen.aclose()
-            if action == "close" and session.conv is not None:
-                session.conv.end()
-                deps.sessions.reset(session)                                # clôture : la conversation est oubliée (nouvelle époque pour le journal d'audit)
-                yield _sse("conversation", {"state": "closed"})
-            yield _sse("done", {"ms": int((time.perf_counter() - t0) * 1000)})
-        except asyncio.CancelledError:                # client parti : on arrête proprement
-            raise
-        except Exception as e:
-            utils.log_info("AGENTS", f"❌ tour ({rec['id']}) : {type(e).__name__}: {str(e)[:200]}")
-            yield _sse("error", {"code": "internal", "message": "erreur interne"})
+    """Flux SSE d'un tour : formate les événements de `turn.run_turn` (le cœur du tour, partagé avec le chat de l'interface d'Aria).
+    Seul l'événement `audio` change : son fichier wav est lu, encodé en base64 et supprimé ici (le chat de l'interface lit le fichier lui-même)."""
+    async for nom, donnees in turn.run_turn(deps, session, rec, text, audio, speak, audit, ignored):
+        if nom == "audio":
+            data = await asyncio.get_running_loop().run_in_executor(None, _read_and_remove, donnees["path"])
+            if not data:
+                continue
+            donnees = {"id": f"a_{int(time.time_ns())}", "format": "wav", "data": data, "text": donnees.get("text", "")}
+        yield _sse(nom, donnees)
 
 
-class _AudioTooLong(Exception):
-    pass
+_AudioTooLong = turn.AudioTooLong
 
 
-def _decode_and_transcribe(deps, raw):
-    """Décodage puis STT, dans un thread : ni l'un ni l'autre ne doit bloquer la boucle asynchrone."""
-    samples = deps.decode_audio(raw)
-    if len(samples) / 16000.0 > deps.max_audio_s:
-        raise _AudioTooLong()
-    if deps.stt_lock:
-        with deps.stt_lock:
-            return deps.stt.transcribe_translate(samples)
-    return deps.stt.transcribe_translate(samples)
+_decode_and_transcribe = turn.decode_and_transcribe
 
 
 def _read_and_remove(path):
