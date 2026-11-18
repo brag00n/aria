@@ -7,13 +7,21 @@ from . import history as history_mod
 
 MAX_TOOL_ROUNDS = 5
 
+LOCAL_SERVERS = frozenset(("llm_studio", "ollama"))          # serveurs du réseau local qui n'ont pas d'authentification
+
+
 class LlmConnectOpenai:
     def __init__(self, params, all_config=None):
         self.params = params or {}
         self.backend_type=self.params.get("backend_type", "local")
         self.base_url = utils.expand_url(self.params.get("base_url"), f"LLM {self.backend_type}") or "http://localhost:1234/v1"
         self.model_name = self.params.get("model_name", "local-model")
-        self.apikey = utils.expand_secrets(self.params.get("apikey") or "", f"LLM {self.backend_type}") or self.backend_type
+        self.apikey = utils.expand_apikey(self.params.get("apikey"), f"LLM {self.backend_type}")      # jamais de repli sur une clé d'environnement
+        if not self.apikey:
+            if self.backend_type in LOCAL_SERVERS:
+                self.apikey = self.backend_type                  # serveur local sans authentification (LM Studio, Ollama) : valeur factice, pas un secret
+            else:
+                raise ValueError(f"Clé API manquante pour le module LLM {self.backend_type} : renseigner params.apikey (une balise <NOM> dont la variable est définie dans .env)")
         self.system_message = self.params.get("system_message", "")
         self.verbose = self.params.get("verbose", False)
         self.memory = (all_config or {}).get("memory")        # plafonds de l'historique (components/history.py)

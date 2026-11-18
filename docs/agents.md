@@ -145,7 +145,7 @@ Chaque profil nomme son module LLM, et chaque module porte **sa propre** clé, s
 }}
 ```
 
-- `apikey`, `base_url` : écrire une balise `<NOM>` dont la valeur est dans `.env` (jamais la clé en clair). Une balise sans variable reste littérale et le moteur le signale dans les logs ; `apikey` vide = variable `LLM_ANTHROPIC_DEFAULT_APIKEY` (Anthropic seulement).
+- `apikey`, `base_url` : écrire une balise `<NOM>` dont la valeur est dans `.env` (jamais la clé en clair). **La clé API vient uniquement de `params.apikey` du module** : il n'y a aucun repli sur une variable d'environnement, pour qu'un agent mal configuré n'utilise jamais la clé d'un autre module. Sans clé (vide, absente, ou balise dont la variable n'est pas définie dans `.env`), le module refuse de démarrer avec une erreur claire. Seuls LM Studio et Ollama (`backend_type` `llm_studio` ou `ollama`, serveurs du réseau local) fonctionnent sans clé.
 - `model_name` : celui du module, sans repli sur un autre module.
 - **Module local** (`Llm_Llama_local`…) : le profil peut le nommer, mais seul un **agent qui a le droit « LLM local »** peut ouvrir une session avec. La sauvegarde du profil l'accepte ; sans le droit, la session est refusée avec le message « seuls les LLM distants sont autorisés pour un agent ». Dans l'onglet **Profils** de la page des agents, la colonne LLM affiche `local` et signale en rouge un agent du profil qui n'a pas le droit.
 - Un modèle local occupe la mémoire (GPU) : deux agents avec deux modèles locaux différents chargent chacun le leur.

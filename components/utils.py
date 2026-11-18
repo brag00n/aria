@@ -317,6 +317,13 @@ def expand_secrets(value, where=""):
     return value
 
 
+def expand_apikey(value, where=""):
+    """Clé API d'un module LLM : balises <NOM> résolues depuis le .env ; chaîne vide si la clé est absente OU si une balise reste sans variable.
+    Aucun repli sur une autre clé : une clé qui ne vient pas de la configuration du module est une erreur, jamais le jeton d'un autre module."""
+    out = expand_secrets(value or "", where)
+    return "" if (not isinstance(out, str) or SECRET_TAG.search(out)) else out.strip()
+
+
 def expand_url(value, where=""):
     """URL de la config : balises <NOM> résolues depuis le .env ; chaîne vide si une balise reste sans variable (jamais une URL contenant « <NOM> »)."""
     out = expand_secrets(value or "", where)
