@@ -24,6 +24,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from . import security
+from . import rights
 from .profile import AppPromptError, clean_app_prompt, clean_speaker
 
 # Fichiers publics : nom d'URL -> (chemin relatif à static/, type MIME). Rien d'autre n'est jamais servi.
@@ -93,7 +94,7 @@ def create_app(deps):
             return None, {}, error(http, "forbidden" if status == "origin" else "unauthorized", msg)
         fail_lock.success(ip)
         cors = security.cors_headers(origin, rec["origins"])
-        if not key_window.allow(rec["id"], rec["limits"]["rate_per_min"]):
+        if not rights.has(rec, "no_limits") and not key_window.allow(rec["id"], rec["limits"]["rate_per_min"]):
             return None, cors, error(429, "rate_limited", "limite de débit de la clé atteinte",
                                      {**cors, "Retry-After": str(key_window.retry_after(rec["id"]))})
         return rec, cors, None
@@ -173,7 +174,7 @@ def create_app(deps):
         session, err = await get_session(rec, body, cors, app_prompt, speaker)
         if err:
             return err
-        if not quota.take(rec["id"], rec["limits"]["daily_turns"]):
+        if not rights.has(rec, "no_limits") and not quota.take(rec["id"], rec["limits"]["daily_turns"]):
             audit("quota", key=rec["id"])
             return error(429, "quota", "quota quotidien atteint", cors)
         speak = bool(body.get("speak", True)) and bool(deps.tts) and rec["voice"]

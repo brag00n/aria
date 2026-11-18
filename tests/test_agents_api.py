@@ -17,7 +17,7 @@ try:
 except ImportError:
     HAVE_STARLETTE = False
 
-from components.agents import api, keys, profile, sessions  # noqa: E402
+from components.agents import api, keys, profile, rights, sessions  # noqa: E402
 
 ORIGIN = "https://app.example.com"
 
@@ -731,6 +731,130 @@ class InterlocuteurFourniTests(ApiCase):
         self.assertLessEqual(len(n["n"]), 60)
         self.assertNotIn("\x00", n["n"])
         self.assertEqual(n["c"], "Du pont")
+
+
+class DroitsAppliquesTests(ApiCase):
+    """Chaque droit d'un agent est appliqué par le code serveur : sans le droit = comportement d'avant ; avec = capacité accordée. Jamais par le profil seul."""
+
+    CFG = {
+        "active_modules": {"llm": "Llm_Anthropic"},
+        "llm": {"Llm_Anthropic": {"params": {"backend_type": "anthropic", "system_message": "M"}},
+                "Llm_Local": {"params": {"backend_type": "local", "system_message": "L"}}},
+        "mcp": {"params": {"servers": {"web": {"url": "http://x/mcp"}, "prive": {"url": "http://p/mcp"}, "autre": {"url": "http://a/mcp"}}}},
+        "agents": {"private_servers": ["prive"], "profiles": {"local": {"llm": "Llm_Local", "servers": ["web"]}, "normal": {"servers": ["web"]},
+                                                              "avec_prive": {"servers": ["web", "prive"]}}},
+    }
+
+    def setUp(self):
+        super().setUp()
+        import copy
+        self.config.clear()
+        self.config.update(copy.deepcopy(self.CFG))
+        self.profils = profile.ConfigProfiles(lambda: self.config)
+
+    def agent(self, droits=None, profil="normal", **kw):
+        vue, cle = self.keys.create("Robot", [ORIGIN], profile=profil, limits={"rate_per_min": 1, "daily_turns": 1}, rights_=droits or {}, **kw)
+        return vue, cle
+
+    def charge(self, vue, **kw):
+        return self.profils.load(vue["profile"], **kw)
+
+    # ---- LLM local
+    def test_un_profil_a_llm_local_est_refuse_sans_le_droit(self):
+        vue, _ = self.agent(profil="local")
+        with self.assertRaises(profile.ProfileError):
+            self.sessions._load_profile(self.keys.record(vue["id"]))
+
+    def test_un_profil_a_llm_local_est_accepte_avec_le_droit(self):
+        vue, _ = self.agent({"local_llm": True}, profil="local")
+        prof = self.sessions._load_profile(self.keys.record(vue["id"]))
+        self.assertEqual(prof["llm"], "Llm_Local")
+
+    def test_le_droit_ne_donne_pas_un_llm_local_a_un_profil_qui_n_en_a_pas(self):
+        vue, _ = self.agent({"local_llm": True}, profil="normal")
+        self.assertEqual(self.sessions._load_profile(self.keys.record(vue["id"]))["llm"], "")
+
+    def test_build_engine_refuse_un_moteur_local_sans_le_droit(self):
+        cfg = {"active_modules": {"llm": "Llm_Local"}, "llm": {"Llm_Local": {"params": {"backend_type": "local"}}}}
+        prof = {"name": "p", "system_message": "", "llm": "", "mcp": {"servers": {}}, "app_prompt": ""}
+        with self.assertRaises(profile.ProfileError):
+            sessions.build_engine(prof, cfg, None, ("k_1", "R"))
+        with self.assertRaises(profile.ProfileError):
+            sessions.build_engine({**prof, "rights": {"local_llm": False}}, cfg, None, ("k_1", "R"))
+
+    def test_l_editeur_de_profils_refuse_toujours_un_llm_local(self):
+        """Le profil seul n'accorde rien : la sauvegarde des Paramètres (sans droit d'agent) refuse un LLM local, comme avant."""
+        erreurs = profile.validate_profiles({"x": {"llm": "Llm_Local"}}, self.config)
+        self.assertTrue(erreurs and "local" in erreurs[0])
+        self.assertEqual(profile.validate_profiles({"x": {"llm": "Llm_Local"}}, self.config, allow_local=True), [])
+
+    # ---- tous les serveurs MCP
+    def test_sans_le_droit_un_agent_n_a_que_les_serveurs_de_son_profil(self):
+        vue, _ = self.agent(profil="normal")
+        self.assertEqual(sorted(self.sessions._load_profile(self.keys.record(vue["id"]))["mcp"]["servers"]), ["web"])
+
+    def test_un_profil_ne_peut_pas_donner_un_serveur_prive_a_un_agent_sans_le_droit(self):
+        vue, _ = self.agent(profil="avec_prive")
+        with self.assertRaises(profile.ProfileError):
+            self.sessions._load_profile(self.keys.record(vue["id"]))
+
+    def test_avec_le_droit_l_agent_a_tous_les_serveurs_prives_compris(self):
+        vue, _ = self.agent({"all_mcp": True}, profil="normal")
+        self.assertEqual(sorted(self.sessions._load_profile(self.keys.record(vue["id"]))["mcp"]["servers"]), ["autre", "prive", "web"])
+
+    def test_avec_le_droit_un_profil_vide_donne_aussi_tous_les_serveurs(self):
+        self.config["agents"]["profiles"]["vide"] = {}
+        vue, _ = self.agent({"all_mcp": True}, profil="vide")
+        self.assertEqual(len(self.sessions._load_profile(self.keys.record(vue["id"]))["mcp"]["servers"]), 3)
+
+    def test_les_secrets_des_serveurs_ne_sortent_pas_par_la_description_du_profil(self):
+        self.assertNotIn("http://p/mcp", json.dumps(self.profils.describe("normal")))
+
+    # ---- agent par défaut
+    def test_l_agent_aria_a_tout(self):
+        self.config["agents"]["profiles"]["aria"] = {"llm": "Llm_Local", "servers": ["web"]}
+        rec = self.keys.record("aria")
+        prof = self.sessions._load_profile(rec)
+        self.assertEqual(prof["llm"], "Llm_Local")
+        self.assertEqual(sorted(prof["mcp"]["servers"]), ["autre", "prive", "web"])
+        self.assertTrue(all(rights.effective(rec).values()))
+
+    def test_les_droits_effectifs_sont_transmis_au_moteur_de_la_session(self):
+        """`SessionRegistry.get` joint les droits effectifs au profil : c'est là que build_engine les lit (jamais dans le profil de la config)."""
+        vus = []
+        self.sessions.factory = lambda prof, identity=None: (vus.append(prof) or FakeLlm(FakeEngine(prof["name"])), None)
+        vue, cle = self.agent({"local_llm": True}, profil="normal")
+        self.turn({"text": "a", "session": "d1"}, headers=self.hdr(cle))
+        self.assertEqual([n for n, v in vus[-1]["rights"].items() if v], ["local_llm"])
+        self.config["agents"]["profiles"]["aria"] = {"servers": ["web"]}                          # profil de l'agent par défaut
+        n = len(vus)
+        r = self.turn({"text": "a", "session": "d2"}, headers=self.hdr(self.keys.system_key, origin=None))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(vus), n + 1)
+        self.assertTrue(all(vus[-1]["rights"].values()))
+
+    # ---- débit et quota
+    def test_un_agent_sans_le_droit_est_limite(self):
+        vue, cle = self.agent(profil="normal")                          # 1 requête par minute, 1 tour par jour
+        self.assertEqual(self.turn({"text": "a"}, headers=self.hdr(cle)).status_code, 200)
+        self.assertEqual(self.turn({"text": "b"}, headers=self.hdr(cle)).status_code, 429)
+
+    def test_un_agent_avec_le_droit_n_est_pas_limite(self):
+        vue, cle = self.agent({"no_limits": True}, profil="normal")
+        for i in range(6):
+            r = self.turn({"text": f"m{i}"}, headers=self.hdr(cle))
+            self.assertEqual(r.status_code, 200, i)
+
+    def test_le_droit_ne_desactive_pas_l_authentification(self):
+        vue, cle = self.agent({"no_limits": True}, profil="normal")
+        self.assertEqual(self.turn({"text": "a"}, headers=self.hdr("ak_faux")).status_code, 401)
+        self.assertEqual(self.turn({"text": "a"}, headers=self.hdr(cle, origin="https://autre.example.com")).status_code, 403)
+
+    def test_l_agent_aria_n_est_pas_limite_par_les_compteurs(self):
+        self.config["agents"]["profiles"]["aria"] = {"servers": ["web"]}
+        cle = self.keys.system_key
+        for i in range(8):
+            self.assertEqual(self.turn({"text": f"m{i}"}, headers=self.hdr(cle, origin=None)).status_code, 200, i)
 
 
 class ProfilsEnDirectTests(ApiCase):

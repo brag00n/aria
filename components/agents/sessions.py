@@ -11,6 +11,7 @@ import time
 import components.utils as utils
 from components import echanges
 
+from . import rights
 from .profile import REMOTE_BACKENDS, ProfileError, compose_system
 
 
@@ -88,10 +89,10 @@ class SessionRegistry:
             if not key_rec.get("profile"):
                 raise SessionError(403, "cette clé n'a pas de profil")
             try:
-                profile = self.profiles.load(key_rec["profile"])
+                profile = self._load_profile(key_rec)
             except ProfileError as e:
                 raise SessionError(500, str(e))
-            profile = dict(profile, app_prompt=app_prompt)
+            profile = dict(profile, app_prompt=app_prompt, rights=rights.effective(key_rec))
             try:
                 if key_rec.get("publish_speaker"):
                     identity = (key_rec["id"], key_rec.get("label", ""), bool(key_rec.get("publish_links")), dict(speaker or {}), sid)
@@ -200,6 +201,15 @@ class SessionRegistry:
         if loop is not None and loop.is_running():
             asyncio.run_coroutine_threadsafe(self.close_key(key_id), loop)
 
+    def _load_profile(self, key_rec):
+        """Profil de l'agent, résolu avec SES droits : un agent sans le droit « LLM local » n'obtient jamais un profil à LLM local, un agent sans « tous les
+        serveurs MCP » n'obtient que ceux de son profil. Les profils fournis par les tests (sans `rights`) se chargent comme avant."""
+        eff = rights.effective(key_rec)
+        try:
+            return self.profiles.load(key_rec["profile"], allow_local=eff["local_llm"], allow_private=eff["all_mcp"], all_servers=eff["all_mcp"])
+        except TypeError:                                           # profils injectés (tests) dont `load(name)` ne prend pas d'options
+            return self.profiles.load(key_rec["profile"])
+
     def request_close_session(self, sid):
         """Ferme UNE session (identifiant complet « clé:session ») depuis un AUTRE thread (page d'administration). Retourne True si elle existait au moment
         de la demande ; la fermeture elle-même est planifiée dans la boucle de l'API. Ne crée jamais de session et n'en touche aucune autre."""
@@ -247,7 +257,7 @@ def build_engine(profile, base_config, language=None, identity=None):
     llm_conf = base_config.get("llm", {})
     name = profile.get("llm") or base_config.get("active_modules", {}).get("llm", "")
     params = dict((llm_conf.get(name) or {}).get("params") or {})
-    if params.get("backend_type", "local") not in REMOTE_BACKENDS:
+    if params.get("backend_type", "local") not in REMOTE_BACKENDS and not (profile.get("rights") or {}).get("local_llm"):
         raise ProfileError("seuls les LLM distants sont autorisés pour un agent")
     # Message système : celui du profil (sinon celui du module LLM), puis les consignes de l'application, qui le complètent
     base = profile.get("system_message") or params.get("system_message", "")
