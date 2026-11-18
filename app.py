@@ -288,7 +288,7 @@ async def _generer(text_user, history, timer, start_total, interlocutor="", voix
             utils.log_info("CONV", "⏹️ Réponse interrompue")
             yield history, ctl_payload("stop")
             return
-        history[-1]["content"] = text_update
+        history[-1]["content"] = utils.NO_ANSWER if text_update == utils.NO_ANSWER_ERROR else text_update      # réponse vide du modèle : pas de détail technique dans le chat
         if text_update and not first_text:
             first_text = True
             timer.mark("premier_texte_llm")

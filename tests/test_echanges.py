@@ -247,6 +247,64 @@ class PointDEcritureTests(Base):
         self.lancer(FauxMoteur(["Erreur LLM: quota dépassé"]))
         self.assertEqual(self.lignes()[0]["st"], "erreur")
 
+    def test_reponse_vide_du_modele_est_une_erreur_et_pas_un_silence(self):
+        for morceaux in ([], [""], ["   "], ["\n\n> 🛠️ Outil utilisé : `diagnostics`\n\n"]):          # aucun texte, ou seulement la ligne « outil utilisé »
+            with self.subTest(morceaux=morceaux):
+                for f in list(self.tmp.rglob("*.jsonl")):
+                    f.unlink()
+                self.lancer(FauxMoteur(morceaux))
+                (l,) = self.lignes()
+                self.assertEqual(l["st"], "erreur")
+                self.assertTrue(l["r"].startswith("Erreur LLM:"))
+                self.assertEqual(l["r"], "Erreur LLM: (pas de réponse)")                   # aucun détail technique dans ce que reçoit le client ni dans l'audit
+
+    def test_la_reponse_vide_est_signalee_dans_les_logs_avec_le_modele(self):
+        import components.utils as utils
+        vus = []
+        original = utils.log_info
+        utils.log_info = lambda tag, msg, *a, **k: vus.append((tag, msg))
+        try:
+            m = FauxMoteur([])
+            m.model_name = "petit-modele"
+            self.lancer(m)
+        finally:
+            utils.log_info = original
+        avert = [msg for tag, msg in vus if "Réponse vide" in msg]
+        self.assertEqual(len(avert), 1)
+        self.assertIn("petit-modele", avert[0])
+        self.assertIn("message système", avert[0])
+
+    def test_la_reponse_vide_est_aussi_transmise_a_l_appelant_pas_seulement_au_journal(self):
+        llm = faux_llm(FauxMoteur([]))
+        if llm is None:
+            self.skipTest("anthropic/openai absents de l'hôte")
+        echanges.start("aria", "Olivier", "c1")
+        vus = []
+
+        async def tour():
+            async for values in llm.get_answer_web(None, "q", "u"):
+                vus.append(values[0])
+        asyncio.run(tour())
+        self.assertEqual(len(vus), 1)
+        self.assertTrue(vus[0].startswith("Erreur LLM:"))                               # le tour d'agent la transforme en événement `error` (turn.py)
+
+    def test_une_erreur_du_moteur_apres_du_texte_n_ajoute_pas_de_reponse_vide(self):
+        self.lancer(FauxMoteur(["Partiel", "Partiel suite"], erreur=RuntimeError("boum")))
+        (l,) = self.lignes()
+        self.assertEqual((l["st"], l["r"]), ("erreur", "Partiel"))                      # la réponse partielle reste telle quelle
+
+    def test_une_reponse_normale_ou_courte_n_est_pas_une_erreur(self):
+        for texte in ("Ok", "?", "Oui."):
+            with self.subTest(texte=texte):
+                for f in list(self.tmp.rglob("*.jsonl")):
+                    f.unlink()
+                self.lancer(FauxMoteur([texte]))
+                self.assertEqual(self.lignes()[0]["st"], "ok")
+
+    def test_un_arret_sans_texte_reste_interrompu_pas_une_erreur_de_reponse_vide(self):
+        self.lancer(FauxMoteur(["", "x"]), interrompre=True)
+        self.assertEqual(self.lignes()[0]["st"], "interrompu")
+
     def test_hors_echange_aucune_ecriture(self):
         llm = faux_llm(FauxMoteur(["x"]))
         if llm is None:

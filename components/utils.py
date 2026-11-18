@@ -58,6 +58,11 @@ CHUNK_SAFETY_MAX = 200         # filet de sécurité seulement : sans AUCUNE pon
                                # c'est la consigne de style donnée au LLM (SPEECH_STYLE_PROMPT) qui garde les phrases courtes.
 
 # Consigne ajoutée au message système de tous les moteurs LLM (voir components/llm.py)
+# Ce que voit le client quand le modèle ne répond rien : aucun détail technique (modèle, moteur, passerelle), qui reste dans les logs d'Aria
+NO_ANSWER = "(pas de réponse)"
+NO_ANSWER_ERROR = "Erreur LLM: " + NO_ANSWER
+
+
 SPEECH_STYLE_PROMPT = (
     "CONSIGNES DE STYLE (tes réponses sont lues à voix haute, phrase par phrase) : "
     "écris des phrases courtes, de 15 mots au maximum, chacune terminée par un point, un point d'exclamation "

@@ -42,6 +42,15 @@ class Llm:
                 text_for_tts = values[2] if len(values) > 2 else ""
 
                 yield response, audio_path, text_for_tts
+            if statut == "ok" and not echanges.clean_answer(response):
+                # Le modèle a terminé son tour (finish_reason=stop) sans écrire un mot : l'utilisateur resterait devant un silence, et le journal noterait « ok ».
+                # C'est le cas d'un petit modèle qui s'embrouille dans un long message système ou une longue liste d'outils.
+                modele = getattr(self.engine, "model_name", "?")
+                utils.log_info("LLM", f"⚠️ Réponse vide du modèle {modele} ({self.backend_type}) : aucun texte"
+                                      f"{', outils appelés : ' + ', '.join(echange.outils) if echange is not None and echange.outils else ''}. "
+                                      "Raccourcir le message système ou la liste d'outils du profil, ou changer de modèle.")
+                response = utils.NO_ANSWER_ERROR                      # le client ne voit AUCUN détail technique : tout est dans la ligne de log ci-dessus
+                yield response, None, ""
         except GeneratorExit:
             statut = "interrompu"
             raise

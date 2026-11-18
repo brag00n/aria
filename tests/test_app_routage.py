@@ -222,6 +222,11 @@ class TourAgentTests(Base):
         ordres = [json.loads(p)[0]["ctl"] for _, p in sortie if p and "ctl" in p]
         self.assertEqual(ordres, ["conv_open", "conv_close"])
 
+    def test_erreur_sans_detail_technique(self):
+        self.actif([("erreur", "(pas de réponse)")])
+        sortie = self.collecter(self.espace["route_process_texte"]("x", []))
+        self.assertEqual(sortie[-1][0][-1]["content"], "Erreur : (pas de réponse)")
+
     def test_une_erreur_s_affiche_dans_le_chat(self):
         self.actif([("erreur", "le modèle n'a pas pu répondre")])
         sortie = self.collecter(self.espace["route_process_texte"]("x", []))
@@ -273,6 +278,10 @@ class CablageTests(unittest.TestCase):
         for nom in ("route_process_texte", "route_process_streaming_binaire", "route_new_conversation", "route_stop_aria", "route_refresh_interlocutor",
                     "route_change_interlocutor"):
             self.assertIn(nom, src)
+
+    def test_l_ancien_chemin_masque_le_detail_d_une_reponse_vide(self):
+        src = (ROOT / "app.py").read_text("utf-8")
+        self.assertIn("utils.NO_ANSWER if text_update == utils.NO_ANSWER_ERROR else text_update", src)      # chat historique : jamais le détail technique
 
     def test_l_ancien_chemin_est_conserve(self):
         src = (ROOT / "app.py").read_text("utf-8")

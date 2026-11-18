@@ -148,6 +148,15 @@ class CoeurTests(unittest.TestCase):
         self.assertEqual(ev[-1], ("error", {"code": "llm", "message": "le modèle n'a pas pu répondre"}))
         self.assertNotIn("done", self.noms(ev))
 
+    def test_reponse_vide_du_modele_le_client_ne_voit_que_pas_de_reponse(self):
+        import components.utils as u
+        ev = lancer(collecter(Deps(), Session(Moteur([u.NO_ANSWER_ERROR]))))
+        self.assertEqual(ev[-1], ("error", {"code": "llm", "message": "(pas de réponse)"}))
+        texte = json.dumps(ev)
+        for mot in ("modèle", "Erreur LLM", "passerelle", "finish_reason", "message système"):
+            self.assertNotIn(mot, texte)                                                              # aucun détail technique (rétro-ingénierie, préparation d'une attaque)
+        self.assertNotIn("done", self.noms(ev))
+
     def test_exception_dans_le_moteur(self):
         ev = lancer(collecter(Deps(), Session(Moteur(["a", "b"], erreur=RuntimeError("boum")))))
         self.assertEqual(ev[-1], ("error", {"code": "internal", "message": "erreur interne"}))
