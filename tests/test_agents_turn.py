@@ -157,6 +157,15 @@ class CoeurTests(unittest.TestCase):
             self.assertNotIn(mot, texte)                                                              # aucun détail technique (rétro-ingénierie, préparation d'une attaque)
         self.assertNotIn("done", self.noms(ev))
 
+    def test_aucun_detail_technique_d_une_erreur_brute_du_moteur(self):
+        brut = ("Erreur LLM: Error code: 401 - {'error': {'message': 'Authentication Error, Invalid proxy server token passed. "
+                "Received API Key = sk-...fd9f, Key Hash (Token) =86c4f0492ef7308b0d64be61d255d030bcffb5ebcfad0fd5bd23267e516b0c3b', 'type': 'token_not_found_in_db'}}")
+        ev = lancer(collecter(Deps(), Session(Moteur([brut]))))
+        self.assertEqual(ev[-1], ("error", {"code": "llm", "message": "le modèle n'a pas pu répondre"}))
+        texte = json.dumps(ev)
+        for mot in ("401", "sk-", "Key Hash", "proxy", "token", "86c4f0"):
+            self.assertNotIn(mot, texte)
+
     def test_exception_dans_le_moteur(self):
         ev = lancer(collecter(Deps(), Session(Moteur(["a", "b"], erreur=RuntimeError("boum")))))
         self.assertEqual(ev[-1], ("error", {"code": "internal", "message": "erreur interne"}))

@@ -222,6 +222,17 @@ class TourAgentTests(Base):
         ordres = [json.loads(p)[0]["ctl"] for _, p in sortie if p and "ctl" in p]
         self.assertEqual(ordres, ["conv_open", "conv_close"])
 
+    def test_l_ancien_chemin_masque_toute_erreur_brute_du_moteur(self):
+        import components.utils as u
+        for brut, attendu in (("Erreur LLM: Error code: 401 - Key Hash 86c4f0 sk-...fd9f", "le modèle n'a pas pu répondre"),
+                              (u.NO_ANSWER_ERROR, u.NO_ANSWER)):
+            self.assertEqual(u.client_text(brut), attendu)
+        self.assertIsNone(u.client_text("Bonjour, ça va ?"))                                   # un texte normal n'est jamais touché
+        self.assertIsNone(u.client_text("Voici le texte « Erreur LLM: » cité au milieu d'une phrase"))      # seul un début de texte est une erreur du moteur
+        self.assertIsNone(u.client_text(None))
+        src = (ROOT / "app.py").read_text("utf-8")
+        self.assertIn('utils.client_text(text_update) or text_update', src)
+
     def test_erreur_sans_detail_technique(self):
         self.actif([("erreur", "(pas de réponse)")])
         sortie = self.collecter(self.espace["route_process_texte"]("x", []))
@@ -281,7 +292,7 @@ class CablageTests(unittest.TestCase):
 
     def test_l_ancien_chemin_masque_le_detail_d_une_reponse_vide(self):
         src = (ROOT / "app.py").read_text("utf-8")
-        self.assertIn("utils.NO_ANSWER if text_update == utils.NO_ANSWER_ERROR else text_update", src)      # chat historique : jamais le détail technique
+        self.assertIn("utils.client_text(text_update)", src)                                                # chat historique : jamais le détail technique
 
     def test_l_ancien_chemin_est_conserve(self):
         src = (ROOT / "app.py").read_text("utf-8")

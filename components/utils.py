@@ -61,6 +61,16 @@ CHUNK_SAFETY_MAX = 200         # filet de sécurité seulement : sans AUCUNE pon
 # Ce que voit le client quand le modèle ne répond rien : aucun détail technique (modèle, moteur, passerelle), qui reste dans les logs d'Aria
 NO_ANSWER = "(pas de réponse)"
 NO_ANSWER_ERROR = "Erreur LLM: " + NO_ANSWER
+LLM_FAILED = "le modèle n'a pas pu répondre"          # texte déjà reçu par les intégrateurs : inchangé. Toute autre erreur du moteur : clé refusée, quota, réseau, passerelle…
+
+
+def client_text(texte):
+    """Texte à montrer à un CLIENT (chat de l'interface, application tierce) à la place de `texte` si c'est une erreur du moteur (« Erreur LLM: … »), sinon None.
+    Une erreur brute contient des détails techniques (adresse de la passerelle, empreinte de clé, nom du modèle, trace) qui aident la rétro-ingénierie ou
+    la préparation d'une attaque : le client ne voit qu'un libellé neutre, le détail est dans les logs d'Aria (chaque moteur le journalise)."""
+    if not isinstance(texte, str) or not texte.startswith("Erreur LLM:"):
+        return None
+    return NO_ANSWER if texte == NO_ANSWER_ERROR else LLM_FAILED
 
 
 SPEECH_STYLE_PROMPT = (

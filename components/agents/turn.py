@@ -102,7 +102,7 @@ async def run_turn(deps, session, rec, text, audio, speak, audit, ignored=False,
                             yield "tool", {"name": name}
                     if full and full.startswith("Erreur LLM:"):
                         # Jamais de détail technique pour le client (modèle, passerelle, clé) : seule la log d'Aria le porte
-                        yield "error", {"code": "llm", "message": utils.NO_ANSWER if full == utils.NO_ANSWER_ERROR else "le modèle n'a pas pu répondre"}
+                        yield "error", {"code": "llm", "message": utils.client_text(full)}
                         utils.log_info("AGENTS", f"{rec['id']} : {full[:200]}")
                         return
                     if propre != vu:
