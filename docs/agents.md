@@ -49,7 +49,7 @@ Un profil décide de ce qu'un agent peut utiliser. Les profils sont dans `config
 |---|---|
 | `servers` | liste de **noms de serveurs MCP** déclarés dans `mcp.params.servers` : tous leurs outils sont disponibles pour la clé. Vide ou absent : aucun outil |
 | `system_message` | règles de base de l'assistant pour cette clé (les consignes `systemPrompt` de l'application s'y ajoutent, sans les remplacer) |
-| `llm` | module LLM **distant** de la config (Anthropic, LM Studio, OpenAI) ; vide = le module actif d'Aria. Le LLM local est refusé |
+| `llm` | **nom d'un module** de la section `llm` de la config (`Llm_Anthropic`, `Llm_Ministral_ollama`…) ; vide = le module actif d'Aria. Le LLM local est refusé sans le droit « LLM local ». Voir « Un LLM par agent » |
 | `voice` | `false` : les clés de ce profil n'ont pas la voix |
 | `description` | texte affiché dans l'administration |
 | `conversation` | mots d'ouverture, de clôture et d'arrêt (voir « Conversation à mots-clés »). Absent = désactivé : l'agent répond à tout |
@@ -115,6 +115,25 @@ Il est piloté par un drapeau de la configuration, **désactivé par défaut** :
 - Pour l'essayer : passer le drapeau à `true`, puis suivre la **liste de vérification** ci-dessous.
 
 **Liste de vérification (aucun test automatique de l'interface Gradio n'existe)** : texte saisi ; voix (micro, VAD) ; arrêt par le bouton et par un mot ; ouverture et clôture par mots-clés ; changement d'interlocuteur dans la liste ; souvenir écrit au nom de l'interlocuteur choisi ; voix qui se lit en continu ; « Nouvelle conversation » ; ligne d'audit (`src`, `who`, `conv`) ; `podman restart aria` puis nouvelle conversation.
+
+## Un LLM par agent
+
+Chaque profil nomme son module LLM, et chaque module porte **sa propre** clé, son modèle et son URL. Deux modules du même type avec des réglages différents donnent donc deux agents qui ne partagent rien :
+
+```json
+"llm": {
+  "Llm_Anthropic":      {"params": {"backend_type": "anthropic", "apikey": "<CLE_ANTHROPIC_A>", "model_name": "claude-haiku-5-5"}},
+  "Llm_Anthropic_Pro":  {"params": {"backend_type": "anthropic", "apikey": "<CLE_ANTHROPIC_B>", "model_name": "claude-opus-5-5", "base_url": "<URL_B>"}}
+},
+"agents": {"profiles": {
+  "rapide": {"llm": "Llm_Anthropic"},
+  "expert": {"llm": "Llm_Anthropic_Pro"}
+}}
+```
+
+- `apikey`, `base_url` : écrire une balise `<NOM>` dont la valeur est dans `.env` (jamais la clé en clair). Une balise sans variable reste littérale et le moteur le signale dans les logs ; `apikey` vide = variable `LLM_ANTHROPIC_DEFAULT_APIKEY` (Anthropic seulement).
+- `model_name` : celui du module, sans repli sur un autre module.
+- Un module inconnu est refusé à la sauvegarde du profil (« LLM … inconnu »).
 
 ## Mémoire des agents
 
