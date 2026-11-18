@@ -11,7 +11,9 @@
  *     aria.interrupt();  aria.stop();  aria.destroy();
  *   </script>
  *
- * Événements : state, text, user_text, tool, audio-start, audio-end, done, error({code, message}), warning({code, message}), level({source, value}).
+ * Événements : state, text, user_text, tool, audio-start, audio-end, done, error({code, message}), warning({code, message}), level({source, value}),
+ *   conversation({state: "open"|"closed"})  seulement si l'administrateur a activé les mots d'ouverture/clôture pour cet agent (option « conversation » de son profil).
+ *   `done` porte alors {ignored: true} (phrase hors conversation, ignorée) ou {stopped: true, reason: "keyword"} (mot d'arrêt).
  * Aucune interface n'est imposée : la page tierce dessine ses propres boutons et sa propre visualisation (voir docs/agents.md) :
  *   aria.on("level", ({source, value}) => …)   niveau sonore 0..1 de "mic" (votre voix) ou "voice" (celle d'Aria), une mesure toutes les 50 ms
  *   aria.analyser("voice" | "mic")             AnalyserNode Web Audio pour un spectre ou une forme d'onde personnalisés
@@ -265,6 +267,7 @@
       else if (ev.event === 'tool') emit('tool', d.name);
       else if (ev.event === 'audio') enqueue(d);
       else if (ev.event === 'done') emit('done', d);
+      else if (ev.event === 'conversation') emit('conversation', { state: d.state === 'closed' ? 'closed' : 'open' });
       else if (ev.event === 'error') fail(d.code || 'error', d.message || 'erreur');
       else if (ev.event === 'warning') emit('warning', { code: d.code || 'warning', message: d.message || '' });
       else if (ev.event === 'state' && d.state === 'thinking' && !playing) setState('thinking');

@@ -67,10 +67,11 @@ class FakeTts:
 class FakeStt:
     def __init__(self):
         self.calls = 0
+        self.text = "quelle heure est-il"
 
     def transcribe_translate(self, samples):
         self.calls += 1
-        return "quelle heure est-il"
+        return self.text
 
 
 def _decode(raw):
@@ -855,6 +856,172 @@ class DroitsAppliquesTests(ApiCase):
         cle = self.keys.system_key
         for i in range(8):
             self.assertEqual(self.turn({"text": f"m{i}"}, headers=self.hdr(cle, origin=None)).status_code, 200, i)
+
+
+class ConversationMotsClesTests(ApiCase):
+    """Option `conversation` d'un profil : mots d'ouverture, de clôture et d'arrêt côté serveur, désactivée par défaut (le flux des clients actuels est inchangé)."""
+
+    CONV = {"enabled": True, "open_phrases": ["bonjour aria"], "close_phrases": ["merci aria"], "stop_phrases": ["stop", "tais toi"]}
+
+    def setUp(self):
+        super().setUp()
+        self.config["agents"]["profiles"]["avec"] = {"description": "A", "conversation": dict(self.CONV)}
+        self.config["agents"]["profiles"]["sans"] = {"description": "S"}
+        self.vue, self.cle = self.keys.create("Conv", [ORIGIN], profile="avec", limits={"rate_per_min": 100, "daily_turns": 100})
+
+    def tour(self, texte, session="c1", **kw):
+        r = self.turn({"text": texte, "session": session, **kw}, headers=self.hdr(self.cle))
+        return r, self.events(r)
+
+    def noms(self, ev):
+        return [n for n, _ in ev]
+
+    # ---- sans l'option : rien ne change
+    def test_sans_l_option_aucun_evenement_conversation_et_tout_est_repondu(self):
+        vue, cle = self.keys.create("Sans", [ORIGIN], profile="sans", limits={"rate_per_min": 100, "daily_turns": 100})
+        for phrase in ("bonjour", "stop", "merci aria", "bonjour aria"):
+            ev = self.events(self.turn({"text": phrase, "session": "x"}, headers=self.hdr(cle)))
+            self.assertNotIn("conversation", self.noms(ev), phrase)
+            self.assertIn("text", self.noms(ev), phrase)                       # toujours répondu, même « stop »
+            self.assertEqual(ev[-1][1].get("stopped"), None, phrase)
+
+    def test_une_option_desactivee_et_sans_mots_d_arret_ne_change_rien(self):
+        self.config["agents"]["profiles"]["off"] = {"conversation": {"enabled": False}}
+        vue, cle = self.keys.create("Off", [ORIGIN], profile="off", limits={"rate_per_min": 100, "daily_turns": 100})
+        ev = self.events(self.turn({"text": "stop", "session": "x"}, headers=self.hdr(cle)))
+        self.assertIn("text", self.noms(ev))
+
+    # ---- hors conversation (texte et voix)
+    def test_le_texte_saisi_ouvre_pas_mais_part_toujours(self):
+        r, ev = self.tour("une question")
+        self.assertIn("text", self.noms(ev))                                   # le texte part toujours, sans ouvrir de conversation
+        self.assertNotIn("conversation", self.noms(ev))
+
+    def test_une_phrase_dite_hors_conversation_est_ignoree_sans_llm(self):
+        self.stt.text = "une phrase sans mot d'ouverture"
+        r = self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v1"}, headers=self.hdr(self.cle))
+        ev = self.events(r)
+        self.assertEqual(ev[-1], ("done", {"ignored": True}))
+        self.assertNotIn("text", self.noms(ev))
+        self.assertEqual([c for e in self.engines for c in e.calls], [])                      # le moteur n'a jamais été appelé
+
+    # ---- ouverture, clôture
+    def test_une_phrase_dite_avec_un_mot_d_ouverture_ouvre_et_repond(self):
+        self.stt.text = "bonjour aria quelle heure est-il"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v2"}, headers=self.hdr(self.cle)))
+        self.assertEqual(self.noms(ev)[:3], ["state", "user_text", "conversation"])
+        self.assertEqual(ev[2][1], {"state": "open"})
+        self.assertIn("text", self.noms(ev))
+        self.assertEqual(ev[-1][0], "done")
+
+    def test_ensuite_les_phrases_suivantes_sont_repondues_puis_la_cloture_ferme(self):
+        self.stt.text = "bonjour aria"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v3"}, headers=self.hdr(self.cle)))
+        self.stt.text = "et la météo"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v3"}, headers=self.hdr(self.cle)))
+        self.assertIn("text", self.noms(ev))
+        self.assertNotIn("conversation", self.noms(ev))
+        self.stt.text = "merci aria"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v3"}, headers=self.hdr(self.cle)))
+        self.assertIn("text", self.noms(ev))                                   # la clôture est répondue...
+        self.assertEqual([d for n, d in ev if n == "conversation"], [{"state": "closed"}])
+        self.assertEqual(ev[-1][0], "done")                                    # ... et `done` arrive APRÈS l'événement de clôture
+        self.assertLess(self.noms(ev).index("conversation"), self.noms(ev).index("done"))
+        self.stt.text = "encore une phrase"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v3"}, headers=self.hdr(self.cle)))
+        self.assertEqual(ev[-1], ("done", {"ignored": True}))                  # conversation fermée : on est de nouveau hors conversation
+
+    def test_la_cloture_efface_l_historique_et_change_d_epoque(self):
+        self.stt.text = "bonjour aria"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v4"}, headers=self.hdr(self.cle)))
+        s = self.sessions.sessions[f"{self.vue['id']}:v4"]
+        epoque = s.epoch
+        self.stt.text = "merci aria"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v4"}, headers=self.hdr(self.cle)))
+        self.assertEqual(s.epoch, epoque + 1)
+
+    # ---- arrêt par mot
+    def test_un_mot_d_arret_coupe_sans_appeler_le_llm_texte_comme_voix(self):
+        r, ev = self.tour("stop")
+        self.assertEqual(ev[-1], ("done", {"stopped": True, "reason": "keyword"}))
+        self.assertNotIn("text", self.noms(ev))
+        self.stt.text = "tais-toi"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v5"}, headers=self.hdr(self.cle)))
+        self.assertEqual(ev[-1], ("done", {"stopped": True, "reason": "keyword"}))
+
+    def test_une_phrase_longue_contenant_stop_n_est_pas_un_arret(self):
+        r, ev = self.tour("il ne faut pas s arreter de chercher, stop ou pas")
+        self.assertIn("text", self.noms(ev))
+
+    def test_le_mot_d_arret_pose_session_stop(self):
+        self.tour("stop", session="c9")
+        self.assertTrue(self.sessions.sessions[f"{self.vue['id']}:c9"].stop.is_set())
+
+    # ---- isolement
+    def test_deux_sessions_ont_chacune_leur_conversation(self):
+        self.stt.text = "bonjour aria"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "a"}, headers=self.hdr(self.cle)))
+        self.stt.text = "une phrase"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "b"}, headers=self.hdr(self.cle)))
+        self.assertEqual(ev[-1], ("done", {"ignored": True}))                  # la session b n'a pas été ouverte par a
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "a"}, headers=self.hdr(self.cle)))
+        self.assertIn("text", self.noms(ev))
+
+    def test_deux_agents_n_ont_pas_les_memes_mots(self):
+        self.config["agents"]["profiles"]["autre"] = {"conversation": {"enabled": True, "open_phrases": ["salut robot"], "stop_phrases": []}}
+        vue, cle = self.keys.create("Autre", [ORIGIN], profile="autre", limits={"rate_per_min": 100, "daily_turns": 100})
+        self.stt.text = "bonjour aria"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "z"}, headers=self.hdr(cle)))
+        self.assertEqual(ev[-1], ("done", {"ignored": True}))
+        self.stt.text = "salut robot"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "z"}, headers=self.hdr(cle)))
+        self.assertIn("conversation", self.noms(ev))
+
+    def test_un_tour_ignore_ou_arrete_ne_laisse_pas_de_verrou(self):
+        self.tour("stop", session="l")
+        r, ev = self.tour("une vraie question", session="l")
+        self.assertNotIn("busy", json.dumps(ev))
+        self.assertIn("text", self.noms(ev))
+
+    # ---- audit et quota
+    def test_un_tour_ignore_n_ecrit_rien_dans_le_journal_d_audit(self):
+        from components import echanges
+        echanges.configure(self.tmp / "audit", enabled=True)
+        self.stt.text = "pas de mot d'ouverture"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "j"}, headers=self.hdr(self.cle)))
+        self.assertEqual([l for _, p in echanges.files() for l in echanges.read_lines(p)], [])
+
+
+class ValidationConversationTests(unittest.TestCase):
+    def check(self, conversation):
+        return profile.validate_profiles({"a": {"conversation": conversation}}, conf())
+
+    def test_valide(self):
+        for ok in (None, {}, {"enabled": True}, {"enabled": False, "open_phrases": ["bonjour"], "close_phrases": [], "stop_phrases": ["stop"]}):
+            self.assertEqual(self.check(ok), [], ok)
+
+    def test_refus(self):
+        for mauvais in ("oui", [], 3, {"enabled": "oui"}, {"enabled": 1}, {"open_phrases": "bonjour"}, {"open_phrases": [1]}, {"open_phrases": [""]},
+                        {"open_phrases": ["  "]}, {"stop_phrases": ["x" * 61]}, {"close_phrases": ["a"] * 41}, {"inconnue": True}, {"stop_phrases": None}):
+            self.assertTrue(self.check(mauvais), repr(mauvais))
+
+    def test_la_cle_est_connue_des_profils(self):
+        self.assertIn("conversation", profile.PROFILE_KEYS)
+
+    def test_le_profil_charge_garde_l_option(self):
+        cfg = conf({"a": {"conversation": {"enabled": True, "open_phrases": ["x y"]}}, "b": {}})
+        cfg["agents"]["profiles"]["c"] = {"conversation": "oui"}
+        p = profile.ConfigProfiles(lambda: cfg)
+        self.assertEqual(p.load("a")["conversation"], {"enabled": True, "open_phrases": ["x y"]})
+        self.assertIsNone(p.load("b")["conversation"])
+        with self.assertRaises(profile.ProfileError):
+            p.load("c")
+
+    def test_make_conversation(self):
+        for rien in (None, {}, "x", [], {"enabled": False}, {"open_phrases": ["a"]}):
+            self.assertIsNone(sessions.make_conversation(rien), repr(rien))
+        self.assertIsNotNone(sessions.make_conversation({"enabled": True}))
+        self.assertIsNotNone(sessions.make_conversation({"stop_phrases": ["stop"]}))                        # mots d'arrêt seuls : actifs sans ouverture/clôture
 
 
 class ProfilsEnDirectTests(ApiCase):

@@ -28,6 +28,7 @@ class Session:
         self.app_prompt = app_prompt          # consignes de l'application, fixées à la création de la session
         self.user = sid                       # clé de l'historique dans le moteur
         self.speaker = None                   # interlocuteur courant {"id", "nom"} (clé qui publie les informations de son interlocuteur), relu auprès de la mémoire
+        self.conv = None                      # mots d'ouverture / clôture / arrêt de CETTE session (option `conversation` du profil), None = désactivé
         self.epoch = 1                        # change à chaque reset : deux conversations successives d'une même session ont deux identifiants
         self.lock = asyncio.Lock()            # un seul tour à la fois dans une session
         self.stop = asyncio.Event()           # « stop » demandé par le client
@@ -44,6 +45,17 @@ class Session:
 
     def touch(self):
         self.last_used = time.monotonic()
+
+
+def make_conversation(options):
+    """`Conversation` d'une session d'après l'option `conversation` du profil, ou None si elle est absente ou désactivée. Les mots d'arrêt sont alors actifs même
+    sans sessions de conversation (comme dans l'interface d'Aria) : on ne crée donc l'objet que si l'administrateur a écrit l'option, avec `enabled` vrai OU des mots d'arrêt."""
+    if not isinstance(options, dict) or not options:
+        return None
+    from components.conversation import Conversation
+    if not options.get("enabled") and not options.get("stop_phrases"):
+        return None
+    return Conversation({k: v for k, v in options.items() if k in ("enabled", "open_phrases", "close_phrases", "stop_phrases")})
 
 
 class SessionRegistry:
@@ -103,6 +115,7 @@ class SessionRegistry:
                 utils.log_info("AGENTS", f"❌ Session impossible pour la clé {key_rec['id']} : {type(e).__name__}: {str(e)[:200]}")
                 raise SessionError(500, "configuration du profil invalide")
             s = Session(sid, key_rec["id"], profile, engine, mcp, app_prompt)
+            s.conv = make_conversation(profile.get("conversation"))
             s.watch_speaker = bool(key_rec.get("publish_speaker")) and mcp is not None
             if s.watch_speaker:
                 mcp.on_tool_done = lambda name, s=s: self._tool_done(s, name)

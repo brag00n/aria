@@ -83,7 +83,7 @@ def compose_system(base, app_prompt):
 
 from . import compat  # noqa: E402
 
-PROFILE_KEYS = frozenset(("description", "system_message", "llm", "voice", "servers"))
+PROFILE_KEYS = frozenset(("description", "system_message", "llm", "voice", "servers", "conversation"))
 DEFAULT_PRIVATE = ()
 
 
@@ -159,6 +159,27 @@ def _has_http(conf):
     return http_port(conf) is not None
 
 
+CONVERSATION_KEYS = frozenset(("enabled", "open_phrases", "close_phrases", "stop_phrases"))
+MAX_PHRASES = 40
+MAX_PHRASE = 60
+
+
+def validate_conversation(value):
+    """Erreurs de l'option `conversation` d'un profil : {enabled, open_phrases, close_phrases, stop_phrases}. Absente = désactivée (comportement d'avant)."""
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return ["conversation doit être un objet {enabled, open_phrases, close_phrases, stop_phrases}"]
+    errors = [f"conversation : clé inconnue « {k} » (attendu : {', '.join(sorted(CONVERSATION_KEYS))})" for k in value if k not in CONVERSATION_KEYS]
+    if "enabled" in value and not isinstance(value["enabled"], bool):
+        errors.append("conversation.enabled doit être true ou false")
+    for k in ("open_phrases", "close_phrases", "stop_phrases"):
+        v = value.get(k)
+        if k in value and not (isinstance(v, list) and len(v) <= MAX_PHRASES and all(isinstance(x, str) and 0 < len(x.strip()) <= MAX_PHRASE for x in v)):
+            errors.append(f"conversation.{k} doit être une liste d'au plus {MAX_PHRASES} textes non vides de {MAX_PHRASE} caractères au plus")
+    return errors
+
+
 def validate_profiles(profiles, config, allow_local=False, allow_private=False):
     """Contrôle un dictionnaire de profils {nom: profil} contre la config. Retourne la liste des erreurs (vide = valide), en texte lisible.
     Contrôle : noms de profil, types, clés inconnues (faute de frappe), serveurs inconnus ou privés, LLM distant.
@@ -191,6 +212,7 @@ def validate_profiles(profiles, config, allow_local=False, allow_private=False):
                 errors.append(f"profil « {name} » : LLM « {llm} » inconnu")
             elif (module.get("params") or {}).get("backend_type", "local") not in REMOTE_BACKENDS and not allow_local:
                 errors.append(f"profil « {name} » : LLM « {llm} » local, seuls les LLM distants sont autorisés pour un agent")
+        errors.extend(f"profil « {name} » : {e}" for e in validate_conversation(prof.get("conversation")))
         servers = prof.get("servers", [])
         if not isinstance(servers, list) or not all(isinstance(x, str) for x in servers):
             errors.append(f"profil « {name} » : servers doit être une liste de noms de serveurs MCP")
@@ -278,7 +300,8 @@ class ConfigProfiles:
         else:
             servers = {n: declared[n] for n in raw.get("servers", [])}
         return {"name": name, "description": str(raw.get("description", ""))[:200], "system_message": str(raw.get("system_message", "")),
-                "llm": str(raw.get("llm", "")), "voice": bool(raw.get("voice", True)), "mcp": {"servers": servers}}
+                "llm": str(raw.get("llm", "")), "voice": bool(raw.get("voice", True)), "mcp": {"servers": servers},
+                "conversation": raw.get("conversation") if isinstance(raw.get("conversation"), dict) else None}
 
     def describe(self, name):
         """Aperçu pour la page d'administration : jamais de secrets (url, headers et env ne sont pas renvoyés), seulement nom et type."""

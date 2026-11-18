@@ -276,6 +276,20 @@ async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=Fa
                     yield _sse("done", {"empty": True})
                     return
                 yield _sse("user_text", {"text": text})
+            action = "say"
+            if session.conv is not None:
+                # Option « conversation » du profil : mots d'arrêt, d'ouverture et de clôture (components/conversation.py). Absente = jamais ce bloc, flux inchangé.
+                action = session.conv.classify(text, from_voice=audio is not None)
+                if action == "stop":
+                    session.stop.set()
+                    yield _sse("done", {"stopped": True, "reason": "keyword"})
+                    return
+                if action == "ignore":
+                    yield _sse("done", {"ignored": True})                  # hors conversation : ni LLM, ni historique, ni audit d'échange
+                    return
+                if action == "open":
+                    session.conv.begin()
+                    yield _sse("conversation", {"state": "open"})
             audit("turn", key=rec["id"], session=session.sid, voice=audio is not None)
             tts = deps.tts if speak else None
             vu = ""                                   # texte déjà émis, pour n'envoyer que les changements
@@ -309,6 +323,10 @@ async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=Fa
                             yield _sse("audio", {"id": f"a_{int(time.time_ns())}", "format": "wav", "data": data, "text": spoken or ""})
             finally:
                 await gen.aclose()
+            if action == "close" and session.conv is not None:
+                session.conv.end()
+                deps.sessions.reset(session)                                # clôture : la conversation est oubliée (nouvelle époque pour le journal d'audit)
+                yield _sse("conversation", {"state": "closed"})
             yield _sse("done", {"ms": int((time.perf_counter() - t0) * 1000)})
         except asyncio.CancelledError:                # client parti : on arrête proprement
             raise

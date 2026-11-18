@@ -52,6 +52,7 @@ Un profil décide de ce qu'un agent peut utiliser. Les profils sont dans `config
 | `llm` | module LLM **distant** de la config (Anthropic, LM Studio, OpenAI) ; vide = le module actif d'Aria. Le LLM local est refusé |
 | `voice` | `false` : les clés de ce profil n'ont pas la voix |
 | `description` | texte affiché dans l'administration |
+| `conversation` | mots d'ouverture, de clôture et d'arrêt (voir « Conversation à mots-clés »). Absent = désactivé : l'agent répond à tout |
 
 - **Clé API de l'agent.** « 🔄 Régénérer » (page d'administration) donne une nouvelle clé API au **même agent** : l'identifiant interne, les réglages, les domaines et la
   mémoire sont conservés, l'ancienne clé cesse de fonctionner immédiatement et ses conversations ouvertes sont fermées. À utiliser en cas de fuite de la clé.
@@ -189,12 +190,38 @@ jamais en `innerHTML` : le texte vient d'un modèle de langage.
 | `audio-start` | `{id, text, element}` | début d'un bloc de voix : `text` est la phrase dite, `element` le `<audio>` qui la joue |
 | `audio-end` | rien | fin de la voix de la réponse |
 | `level` | `{source: "mic" ou "voice", value: 0 à 1}` | niveau sonore toutes les 50 ms (voir plus bas) |
-| `done` | `{ms}`, `{stopped:true}` ou `{empty:true}` | fin du tour |
+| `done` | `{ms}`, `{stopped:true}`, `{empty:true}`, `{ignored:true}` ou `{stopped:true, reason:"keyword"}` | fin du tour |
+| `conversation` | `{state: "open" ou "closed"}` | seulement si l'option `conversation` est active : une conversation vient de s'ouvrir ou de se fermer |
 | `warning` | `{code, message}` | avertissement sans gravité, par exemple `system_ignored` (voir « Prompt système de l'application ») |
 | `error` | `{code, message}` | erreur réseau, quota, clé refusée, modèle… (codes dans la section API) |
 
 Signification des états : `idle` (rien), `listening` (micro ouvert, silence), `hearing` (l'utilisateur parle), `thinking` (Aria réfléchit),
 `speaking` (Aria parle). Parler pendant qu'Aria parle baisse sa voix, puis la coupe quand la phrase est terminée et envoyée.
+
+### Conversation à mots-clés (option du profil)
+
+Comme l'interface d'Aria, un agent peut ne répondre qu'à l'intérieur d'une **conversation** ouverte par un mot, et se couper sur un mot d'arrêt. C'est une option du **profil**,
+**désactivée par défaut** : sans elle, l'agent répond à toute phrase et `/v1/turn` est exactement celui d'avant.
+
+```json
+"profiles": { "robot": { "servers": ["memoire"], "conversation": {
+    "enabled": true,
+    "open_phrases":  ["bonjour bamboo", "ok bamboo"],
+    "close_phrases": ["merci bamboo", "bonne nuit"],
+    "stop_phrases":  ["stop", "tais toi", "silence"] } } }
+```
+
+| Phrase | Effet |
+|---|---|
+| **dite** (voix) avec un mot d'ouverture **au début** | ouvre la conversation (événement `conversation {state:"open"}`) et répond ; la suite de la phrase est la question |
+| **dite** hors conversation, sans mot d'ouverture | **ignorée en silence** : ni modèle, ni historique, ni journal d'audit ; `done {ignored:true}` |
+| **saisie** (texte) | part toujours : le texte ne peut pas ouvrir de conversation, mais peut la fermer |
+| avec un mot de **clôture**, pendant la conversation | est répondue, puis la conversation se ferme (`conversation {state:"closed"}`), l'historique est effacé et le journal d'audit change de conversation |
+| **courte** et contenant un mot d'**arrêt**, à tout moment | coupe la réponse, sans appeler le modèle : `done {stopped:true, reason:"keyword"}` (l'arrêt marche même si `enabled` est faux, dès que `stop_phrases` est renseigné) |
+
+- L'état est **propre à chaque session** (`session`) : deux utilisateurs d'un même agent ne s'ouvrent pas mutuellement.
+- Un tour **audio** compte toujours dans le quota quotidien, même ignoré (la transcription précède la décision).
+- Limites : 40 phrases par liste, 60 caractères par phrase ; comparaison sans accents ni majuscules ni ponctuation. Une faute dans l'option refuse la sauvegarde du profil.
 
 ### Prompt système de l'application
 

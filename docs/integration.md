@@ -90,7 +90,8 @@ Un exemple complet (halo animé, forme d'onde, boutons) est fourni dans `agents-
 | `audio-start` | `{id, text, element}` | début d'un bloc de voix : `text` est la phrase dite, `element` l'élément `<audio>` |
 | `audio-end` | rien | fin de la voix de la réponse |
 | `level` | `{source: "mic" ou "voice", value: 0 à 1}` | niveau sonore, toutes les 50 ms |
-| `done` | `{ms}`, `{stopped:true}` ou `{empty:true}` | fin d'un tour |
+| `done` | `{ms}`, `{stopped:true}`, `{empty:true}`, `{ignored:true}` ou `{stopped:true, reason:"keyword"}` | fin d'un tour |
+| `conversation` | `{state: "open" ou "closed"}` | **seulement si l'administrateur a activé les mots d'ouverture/clôture pour votre agent** : une conversation vient de s'ouvrir ou de se fermer |
 | `warning` | `{code, message}` | avertissement sans gravité (par exemple `system_ignored`) |
 | `error` | `{code, message}` | erreur (voir « Gérer les erreurs ») |
 

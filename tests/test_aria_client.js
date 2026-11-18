@@ -196,6 +196,37 @@ test('start : charge ort puis vad, crée le VAD avec le modèle d’Aria, envoie
 });
 
 // ---------------------------------------------------------------- prompt système de l'application
+test('conversation : l’événement serveur est relayé, avec un état normalisé', async () => {
+  const flux = sse([['conversation', { state: 'open' }], ['text', { text: 'Bonjour' }], ['conversation', { state: 'closed' }], ['conversation', { state: 'n importe quoi' }], ['done', {}]]);
+  const { c } = client({ '/v1/turn': () => ({ ok: true, status: 200, body: streamOf(flux) }) });
+  const etats = [];
+  c.on('conversation', e => etats.push(e.state));
+  await c.say('bonjour aria');
+  assert.deepStrictEqual(etats, ['open', 'closed', 'open']);
+});
+
+test('conversation : sans l\u2019événement, rien n\u2019est émis et le tour se déroule comme avant', async () => {
+  const { c } = client({ '/v1/turn': () => ({ ok: true, status: 200, body: streamOf(sse([['text', { text: 'Salut' }], ['done', { ms: 5 }]])) }) });
+  const vus = [], textes = [];
+  c.on('conversation', e => vus.push(e));
+  c.on('text', t => textes.push(t));
+  await c.say('x');
+  assert.deepStrictEqual(vus, []);
+  assert.deepStrictEqual(textes, ['Salut']);
+});
+
+test('conversation : un tour ignoré ou arrêté par mot arrive dans done sans erreur', async () => {
+  for (const d of [{ ignored: true }, { stopped: true, reason: 'keyword' }]) {
+    const { c } = client({ '/v1/turn': () => ({ ok: true, status: 200, body: streamOf(sse([['done', d]])) }) });
+    const faits = [], erreurs = [];
+    c.on('done', x => faits.push(x));
+    c.on('error', x => erreurs.push(x));
+    await c.say('x');
+    assert.deepStrictEqual(faits, [d]);
+    assert.deepStrictEqual(erreurs, []);
+  }
+});
+
 test('speaker : envoyé à chaque tour, nettoyé ; absent => pas de champ', async () => {
   const turn = { '/v1/turn': () => ({ ok: true, status: 200, body: streamOf(sse([['done', {}]])) }) };
   const { c, log } = client(turn, { speaker: { name: '  Léa ', family: ' Dupont ' } });
