@@ -77,7 +77,7 @@ class CreationTests(StoreCase):
 
     def test_fichier_corrompu_ne_plante_pas(self):
         (self.tmp / "agents.json").write_text("{pas du json", "utf-8")
-        self.assertEqual(keys.KeyStore(self.tmp).list(), [])
+        self.assertEqual([k["id"] for k in keys.KeyStore(self.tmp).list()], ["aria"])           # seul l'agent par défaut, recréé
 
 
 class AuthentificationTests(StoreCase):
@@ -200,9 +200,10 @@ class GestionTests(StoreCase):
         threads = [threading.Thread(target=creer, args=(i,)) for i in range(20)]
         [t.start() for t in threads]
         [t.join() for t in threads]
-        self.assertEqual(len(self.store.list()), 20)
-        self.assertEqual(len(keys.KeyStore(self.tmp).list()), 20)
-        self.assertEqual(len({k["id"] for k in self.store.list()}), 20)
+        autres = lambda s: [k for k in s.list() if not k["system"]]
+        self.assertEqual(len(autres(self.store)), 20)
+        self.assertEqual(len(autres(keys.KeyStore(self.tmp))), 20)
+        self.assertEqual(len({k["id"] for k in self.store.list()}), 21)                         # + l'agent par défaut
 
     def test_aucun_fichier_temporaire_ne_reste(self):
         self.new()

@@ -115,7 +115,7 @@ class GardeTests(AdminCase):
         corps = {"label": "x", "origins": [ORIGIN]}
         self.assertEqual(self.call("POST", "/api/keys/create", corps, origin=None)[0], 403)         # absente : refusée
         self.assertEqual(self.call("POST", "/api/keys/create", corps, origin="http://evil.example.com")[0], 403)
-        self.assertEqual(self.store.list(), [])
+        self.assertEqual([k["id"] for k in self.store.list()], ["aria"])
         self.assertEqual(self.call("POST", "/api/keys/create", corps)[0], 200)
 
     def test_json_obligatoire_et_corps_borne(self):
@@ -142,7 +142,7 @@ class ClesTests(AdminCase):
         r = self.create()
         self.assertTrue(r["ok"] and r["secret"].startswith("ak_"))
         liste = self.call("GET", "/api/keys")[1]
-        self.assertEqual(len(liste), 1)
+        self.assertEqual([a["id"] for a in liste if a["id"] != "aria"], [r["key"]["id"]])
         self.assertNotIn(r["secret"], json.dumps(liste))
         self.assertNotIn("hash", json.dumps(liste))
         self.assertEqual(self.store.authenticate(r["secret"], ORIGIN)[0], "ok")                    # la clé fonctionne vraiment
@@ -151,7 +151,7 @@ class ClesTests(AdminCase):
     def test_creation_refusee(self):
         self.assertFalse(self.create(label="  ")["ok"])
         self.assertEqual(self.create(profile="inexistant")["erreur"], "profil inconnu")
-        self.assertEqual(self.store.list(), [])
+        self.assertEqual([k["id"] for k in self.store.list()], ["aria"])                          # rien de créé, hors l'agent par défaut
 
     def test_sans_profil_la_cle_n_a_aucun_outil(self):
         r = self.create(profile="")
@@ -340,7 +340,7 @@ class JournalTests(AdminCase):
         self.call("POST", "/api/keys/update", {"id": vue["id"], "retention_days": 30})
         self.assertEqual(self.store.retention_of(vue["id"]), 30)
         j = self.call("GET", "/api/journal")[1]
-        self.assertEqual([a["retention_days"] for a in j["acces"]], [30])
+        self.assertEqual([a["retention_days"] for a in j["acces"] if a["id"] != "aria"], [30])
 
     def test_option_publier_ses_liens_creation_modification_et_page(self):
         vue = self.create(label="Robot", publish_links=True)["key"]
@@ -392,6 +392,58 @@ class JournalTests(AdminCase):
     def test_la_page_a_le_bouton_de_fermeture_sans_innerhtml(self):
         self.assertIn("/api/sessions/close", admin_ui.PAGE)
         self.assertIn("confirm(", admin_ui.PAGE)
+        self.assertNotIn("innerHTML", admin_ui.PAGE)
+
+    def test_droits_a_la_creation_et_a_la_modification(self):
+        vue = self.create(label="Robot", rights={"local_llm": True, "no_limits": True, "inconnu": True})["key"]
+        self.assertEqual([n for n, v in vue["rights"].items() if v], ["local_llm", "no_limits"])
+        self.call("POST", "/api/keys/update", {"id": vue["id"], "rights": {"all_mcp": True}})
+        self.assertEqual([n for n, v in self.store.get(vue["id"])["rights"].items() if v], ["all_mcp"])
+        self.assertIn(vue["id"], self.sessions.closed)                                         # les sessions ouvertes repartent avec les nouveaux droits
+
+    def test_droits_absurdes_ne_donnent_rien(self):
+        vue = self.create(label="Robot", rights="tout")["key"]
+        self.assertFalse(any(vue["rights"].values()))
+        for absurde in ({"local_llm": "true"}, {"local_llm": 1}, [1], 5, None):
+            self.call("POST", "/api/keys/update", {"id": vue["id"], "rights": absurde})
+            self.assertFalse(any(self.store.get(vue["id"])["rights"].values()), repr(absurde))
+
+    def test_l_agent_par_defaut_est_visible_et_verrouille_dans_la_liste(self):
+        liste = self.call("GET", "/api/keys")[1]
+        aria = next(a for a in liste if a["id"] == "aria")
+        self.assertTrue(aria["system"] and all(aria["rights"].values()))
+        self.assertNotIn("hash", json.dumps(aria))
+
+    def test_l_agent_par_defaut_ne_se_supprime_ni_ne_se_revoque_par_la_page(self):
+        r = self.call("POST", "/api/keys/delete", {"id": "aria"})[1]
+        self.assertFalse(r["ok"])
+        self.assertIn("par défaut", r["erreur"])
+        r = self.call("POST", "/api/keys/revoke", {"id": "aria", "revoked": True})[1]
+        self.assertFalse(r["ok"])
+        self.assertIsNotNone(self.store.get("aria"))
+        self.assertFalse(self.store.get("aria")["revoked"])
+
+    def test_les_droits_de_l_agent_par_defaut_ne_se_modifient_pas_par_la_page(self):
+        self.call("POST", "/api/keys/update", {"id": "aria", "rights": {}, "publish_links": False, "publish_speaker": False, "profile": "portail"})
+        aria = self.store.get("aria")
+        self.assertTrue(all(aria["rights"].values()))
+        self.assertEqual(aria["profile"], "aria")
+
+    def test_on_peut_regenerer_la_cle_de_l_agent_par_defaut(self):
+        r = self.call("POST", "/api/keys/regenerate", {"id": "aria"})[1]
+        self.assertTrue(r["ok"] and r["secret"].startswith("ak_"))
+        self.assertEqual(self.store.authenticate(r["secret"])[0], "ok")
+
+    def test_la_page_grise_les_droits_de_l_agent_par_defaut(self):
+        # chaque case de droit (les quatre nouveaux et les deux historiques) est cochée ET désactivée pour l'agent système, pas pour les autres
+        for ligne in ("const publish=", "const speaker=", "R[n]=el('input'"):
+            ext = next(l for l in admin_ui.PAGE.splitlines() if ligne in l)
+            self.assertIn("checked:sys||", ext, ligne)
+            self.assertIn("disabled:sys", ext, ligne)
+            self.assertNotIn("disabled:false", ext, ligne)
+        self.assertIn("agent par défaut", admin_ui.PAGE)
+        for n in ("local_llm", "all_mcp", "global_speaker", "no_limits"):
+            self.assertIn(n, admin_ui.PAGE)
         self.assertNotIn("innerHTML", admin_ui.PAGE)
 
     def test_la_page_a_son_onglet_sans_innerhtml(self):

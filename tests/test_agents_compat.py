@@ -131,9 +131,9 @@ class FichierTests(unittest.TestCase):
         (self.tmp / "keys.json").write_text(json.dumps({"keys": [{"id": "k_old", "hash": "x", "label": "Ancien"}]}), "utf-8")
         store = keys.KeyStore(self.tmp)
         store.create("Neuf")
-        self.assertEqual(sorted(a["label"] for a in store.list()), ["Ancien", "Neuf"])
+        self.assertEqual(sorted(a["label"] for a in store.list()), ["Ancien", "Aria", "Neuf"])
         rouvert = keys.KeyStore(self.tmp)
-        self.assertEqual(sorted(a["label"] for a in rouvert.list()), ["Ancien", "Neuf"])
+        self.assertEqual(sorted(a["label"] for a in rouvert.list()), ["Ancien", "Aria", "Neuf"])
 
     def test_une_sauvegarde_migre_existante_n_est_jamais_ecrasee(self):
         """Si keys.json réapparaît (restauration d'une vieille sauvegarde) alors que keys.json.migre existe déjà, aucun des deux n'est perdu."""
@@ -147,7 +147,7 @@ class FichierTests(unittest.TestCase):
     def test_fichier_corrompu_ou_vide_ne_plante_pas(self):
         for contenu in ("", "{", "[]", '{"agents": "x"}', '{"keys": 3}'):
             (self.tmp / "agents.json").write_text(contenu, "utf-8")
-            self.assertEqual(keys.KeyStore(self.tmp).list(), [], contenu)
+            self.assertEqual([k["id"] for k in keys.KeyStore(self.tmp).list()], ["aria"], contenu)
 
     def test_le_secret_et_les_cles_survivent_au_changement_de_dossier(self):
         ancien = self.tmp / "models" / "api_access"

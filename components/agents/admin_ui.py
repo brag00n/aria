@@ -127,21 +127,23 @@ def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=(), e
                     return self._json({"ok": False, "erreur": "profil inconnu"})
                 vue, cle = store.create(body.get("label", ""), body.get("origins") or [], profil, body.get("limits"),
                                         body.get("expires_days", 0), body.get("voice", True), body.get("retention_days", 0),
-                                        body.get("publish_links", False), body.get("publish_speaker", False))
+                                        body.get("publish_links", False), body.get("publish_speaker", False), body.get("rights"))
                 if not vue:
                     return self._json({"ok": False, "erreur": "un nom est obligatoire"})
                 log("key_created", id=vue["id"], profile=profil)
                 return self._json({"ok": True, "key": vue, "secret": cle})       # la seule fois où la clé en clair est renvoyée
             if path == "/api/keys/update":
-                fields = {k: body[k] for k in ("label", "origins", "profile", "limits", "voice", "retention_days", "publish_links", "publish_speaker", "expires_days") if k in body}
+                fields = {k: body[k] for k in ("label", "origins", "profile", "limits", "voice", "retention_days", "publish_links", "publish_speaker", "rights", "expires_days") if k in body}
                 if fields.get("profile") and fields["profile"] not in profiles.names():
                     return self._json({"ok": False, "erreur": "profil inconnu"})
                 vue = store.update(kid, **fields)
-                if vue and ("profile" in fields or "origins" in fields or "voice" in fields or "publish_links" in fields or "publish_speaker" in fields):
+                if vue and ("profile" in fields or "origins" in fields or "voice" in fields or "publish_links" in fields or "publish_speaker" in fields or "rights" in fields):
                     self._close_sessions(kid)
                 log("key_updated", id=kid, fields=",".join(sorted(fields)))
                 return self._json({"ok": bool(vue), "key": vue})
             if path == "/api/keys/revoke":
+                if body.get("revoked", True) and (store.get(kid) or {}).get("system"):
+                    return self._json({"ok": False, "erreur": "l'agent par défaut ne se révoque pas"})
                 ok = store.revoke(kid, bool(body.get("revoked", True)))
                 if ok and body.get("revoked", True):
                     self._close_sessions(kid)
@@ -155,6 +157,8 @@ def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=(), e
                 log("key_regenerated", id=kid)
                 return self._json({"ok": True, "key": vue, "secret": cle})        # la seule fois où la nouvelle clé en clair est renvoyée
             if path == "/api/keys/delete":
+                if (store.get(kid) or {}).get("system"):
+                    return self._json({"ok": False, "erreur": "l'agent par défaut ne se supprime pas"})
                 ok = store.delete(kid)
                 if ok:
                     self._close_sessions(kid)
@@ -295,8 +299,12 @@ function editKey(k){
   const day=el('input',{type:'number',min:1,value:k?k.limits.daily_turns:500});
   const exp=el('input',{type:'number',min:0,value:'0',title:'0 = sans expiration'});
   const voice=el('input',{type:'checkbox',checked:k?k.voice:true});
-  const publish=el('input',{type:'checkbox',checked:k?!!k.publish_links:false});
-  const speaker=el('input',{type:'checkbox',checked:k?!!k.publish_speaker:false});
+  const sys=!!(k&&k.system);                                   // agent par défaut : tous les droits, verrouillés (cases cochées et grisées)
+  const droit=n=>k&&k.rights?!!k.rights[n]:false;
+  const publish=el('input',{type:'checkbox',checked:sys||droit('publish_links'),disabled:sys});
+  const speaker=el('input',{type:'checkbox',checked:sys||droit('publish_speaker'),disabled:sys});
+  const R={};
+  for(const n of ['local_llm','all_mcp','global_speaker','no_limits'])R[n]=el('input',{type:'checkbox',checked:sys||droit(n),disabled:sys});
   const reten=el('input',{type:'number',min:0,max:3650,value:k?(k.retention_days||0):0,title:'0 = durée par défaut du journal'});
   openModal(neuf?'Nouvel agent':'Modifier l\\u2019agent',[
     field('Nom',label),field('Domaines autorisés (une origine exacte par ligne)',origins),field('Profil MCP (outils de cette application)',prof),
@@ -305,9 +313,14 @@ function editKey(k){
     el('label',{className:'chk'},voice,' Voix autorisée (micro et synthèse vocale)'),
     el('label',{className:'chk'},publish,' Peut publier ses propres liens : « moi est l\u2019ami de Marion » devient visible de tous (les fiches nouvelles sont à valider ; jamais de lien entre d\u2019autres personnes)'),
     el('label',{className:'chk'},speaker,' Peut publier les informations de son interlocuteur : l\u2019accès a les droits d\u2019Aria pour la personne qui lui parle (souvenirs à son nom, liens entre n\u2019importe quelles personnes). Cette personne n\u2019est PAS authentifiée : réservé aux applications de confiance'),
+    el('label',{className:'chk'},R.local_llm,' LLM local : moteur de langage local (llama-cpp), en plus des LLM distants'),
+    el('label',{className:'chk'},R.all_mcp,' Tous les serveurs MCP, y compris privés (au lieu de ceux de son profil)'),
+    el('label',{className:'chk'},R.global_speaker,' Interlocuteur global et mémoire d\u2019Aria : parle comme Aria (liste d\u2019interlocuteurs, souvenirs du foyer, fiches sans validation)'),
+    el('label',{className:'chk'},R.no_limits,' Sans limite de débit ni de quota'),
+    sys?el('p',{className:'mut'},'Agent par défaut : tous ses droits sont activés et verrouillés. Il ne peut être ni supprimé ni révoqué.'):'',
     field('Conservation des échanges dans le journal d\u2019audit (jours, 0 = durée par défaut)',reten),
   ],k?('Identifiant '+k.id+' \\u00b7 préfixe '+k.prefix+' \\u00b7 '+k.etat):'La clé ne sera affichée qu\\u2019une seule fois, à la création.',async()=>{
-    const corps={label:label.value,origins:lignes(origins.value),profile:prof.value,limits:{rate_per_min:+rate.value,daily_turns:+day.value},voice:voice.checked,publish_links:publish.checked,publish_speaker:speaker.checked,retention_days:+reten.value||0};
+    const corps={label:label.value,origins:lignes(origins.value),profile:prof.value,limits:{rate_per_min:+rate.value,daily_turns:+day.value},voice:voice.checked,publish_links:publish.checked,publish_speaker:speaker.checked,rights:Object.fromEntries(Object.entries(R).map(([n,c])=>[n,c.checked])),retention_days:+reten.value||0};
     if(neuf){corps.expires_days=+exp.value;const r=await post('/api/keys/create',corps);if(!r.ok)return r.erreur;closeModal();secretModal('Agent créé : sa clé API',r.secret);return 'keep'}
     corps.id=k.id;if(+exp.value>0||exp.value==='0'&&k.expires)corps.expires_days=+exp.value;
     const r=await post('/api/keys/update',corps);return r.ok?true:'Impossible';
@@ -318,7 +331,7 @@ async function renderKeys(main){
   main.append(el('div',{className:'bar'},el('button',{onclick:()=>editKey(null)},'+ Nouvel agent'),
     el('span',{className:'mut'},'Chaque agent appelle l\\u2019API avec sa clé API (Authorization: Bearer ak_…).')),
     el('table',{},el('tr',{},...['Agent','Clé API','État','Profil','Domaines','Limites','Dernier usage',''].map(h=>el('th',{},h))),
-      ...rows.map(k=>el('tr',{},el('td',{},k.label,el('div',{className:'mut'},k.id)),el('td',{},el('code',{},k.prefix+'…')),
+      ...rows.map(k=>el('tr',{},el('td',{},k.label+(k.system?' ★':''),el('div',{className:'mut'},k.id+(k.system?' · agent par défaut':''))),el('td',{},el('code',{},k.prefix+'…')),
         el('td',{className:k.etat==='active'?'ok':'ko'},k.etat+(k.expires?' (expire '+k.expires.slice(0,10)+')':'')),
         el('td',{},k.profile||el('span',{className:'ko'},'aucun')),
         el('td',{},...(k.origins.length?k.origins.map(o=>el('span',{className:'tag'},o)):[el('span',{className:'ko'},'aucun navigateur')])),
@@ -326,8 +339,8 @@ async function renderKeys(main){
         el('td',{className:'mut'},k.last_used?k.last_used.replace('T',' ').slice(0,16):'jamais'),
         el('td',{},el('button',{title:'Modifier',onclick:()=>editKey(k)},'✎'),' ',
           el('button',{title:'Régénérer la clé API (la mémoire et les réglages de l\\u2019agent sont conservés ; l\\u2019ancienne clé cesse de fonctionner)',onclick:async()=>{if(confirm('Régénérer la clé de « '+k.label+' » ? L\\u2019ancienne clé cessera de fonctionner immédiatement. La mémoire de l\\u2019accès est conservée.')){const r=await post('/api/keys/regenerate',{id:k.id});if(r.ok)secretModal('Nouvelle clé de « '+k.label+' »',r.secret);else say(r.erreur||'Impossible')}}},'🔄'),' ',
-          el('button',{title:k.revoked?'Réactiver':'Révoquer',onclick:async()=>{await post('/api/keys/revoke',{id:k.id,revoked:!k.revoked});render()}},k.revoked?'↺':'⛔'),' ',
-          el('button',{title:'Supprimer',onclick:async()=>{if(confirm('Supprimer définitivement l\\u2019agent « '+k.label+' » et sa clé API ?')){await post('/api/keys/delete',{id:k.id});render()}}},'🗑'))))));
+          k.system?'':el('button',{title:k.revoked?'Réactiver':'Révoquer',onclick:async()=>{await post('/api/keys/revoke',{id:k.id,revoked:!k.revoked});render()}},k.revoked?'↺':'⛔'),' ',
+          k.system?'':el('button',{title:'Supprimer',onclick:async()=>{if(confirm('Supprimer définitivement l\\u2019agent « '+k.label+' » et sa clé API ?')){await post('/api/keys/delete',{id:k.id});render()}}},'🗑'))))));
 }
 async function renderProfils(main){
   main.append(el('p',{className:'mut'},'Un profil choisit les serveurs MCP, le message système et le LLM d\\u2019une application. Il se gère dans l\\u2019onglet Paramètres d\\u2019Aria (section « Agents : profils ») et accède à la mémoire d\\u2019Aria sous l\\u2019identité de son accès (une personne système aux souvenirs privés).'),
