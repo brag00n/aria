@@ -11,8 +11,8 @@ class LlmConnectAnthropic:
         self.params = params or {}
         self.backend_type = "anthropic"
         self.model_name = self.params.get("model_name", "claude-haiku-5-5")
-        self.base_url = self.params.get("base_url") or None
-        self.apikey = utils.expand_secrets(self.params.get("apikey") or "") or os.environ.get("ANTHROPIC_API_KEY")
+        self.base_url = utils.expand_url(self.params.get("base_url"), "LLM anthropic") or None
+        self.apikey = utils.expand_secrets(self.params.get("apikey") or "") or os.environ.get("LLM_ANTHROPIC_DEFAULT_APIKEY")
         self.system_message = self.params.get("system_message", "")
         self.max_tokens = self.params.get("max_tokens", 2048)
         self.verbose = self.params.get("verbose", False)
@@ -25,7 +25,7 @@ class LlmConnectAnthropic:
             raise
 
         if not self.apikey:
-            raise ValueError("Clé API Anthropic manquante (params.apikey ou variable ANTHROPIC_API_KEY)")
+            raise ValueError("Clé API Anthropic manquante (params.apikey ou variable LLM_ANTHROPIC_DEFAULT_APIKEY)")
 
         self.client = AsyncAnthropic(api_key=self.apikey, base_url=self.base_url, timeout=60.0)
         self.user_aware_messages = {}
