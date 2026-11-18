@@ -13,7 +13,7 @@ class LlmConnectOpenai:
         self.backend_type=self.params.get("backend_type", "local")
         self.base_url = utils.expand_url(self.params.get("base_url"), f"LLM {self.backend_type}") or "http://localhost:1234/v1"
         self.model_name = self.params.get("model_name", "local-model")
-        self.apikey = self.params.get("apikey", f"{self.backend_type}")
+        self.apikey = utils.expand_secrets(self.params.get("apikey") or "", f"LLM {self.backend_type}") or self.backend_type
         self.system_message = self.params.get("system_message", "")
         self.verbose = self.params.get("verbose", False)
         self.memory = (all_config or {}).get("memory")        # plafonds de l'historique (components/history.py)
