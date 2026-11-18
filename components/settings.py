@@ -55,7 +55,8 @@ def parse_settings(config, fields):
     profiles, err = agents_profile.parse_profiles(fields.get("profiles", ""))
     if err:
         raise ValueError("❌ " + err[0].upper() + err[1:])
-    errors = agents_profile.validate_profiles(profiles, futur) + agents_profile.validate_hosted(futur)
+    # Un profil peut nommer un LLM local : le droit « LLM local » appartient à l'AGENT, contrôlé au démarrage de sa session (profile.load), pas ici
+    errors = agents_profile.validate_profiles(profiles, futur, allow_local=True) + agents_profile.validate_hosted(futur)
     if errors:
         raise ValueError("❌ Profils d'accès refusés : " + " ; ".join(errors))
     out["profiles"] = profiles
@@ -126,9 +127,13 @@ def profiles_help(config):
     """Aide affichée sous l'éditeur de profils : serveurs MCP utilisables et serveurs privés exclus."""
     exposable = agents_profile.exposable_servers(config)
     private = sorted(agents_profile.private_servers(config) & set(agents_profile.declared_servers(config)))
+    modules = ", ".join(f"{n} ({'distant' if (m.get('params') or {}).get('backend_type', 'local') in agents_profile.REMOTE_BACKENDS else 'local'})"
+                        for n, m in (config.get("llm") or {}).items() if isinstance(m, dict))
     return ("<small>Un profil choisit ce qu'une clé API d'application peut utiliser. Clés d'un profil : "
-            "<code>description</code>, <code>system_message</code>, <code>llm</code> (module LLM distant, vide = module actif), "
+            "<code>description</code>, <code>system_message</code>, <code>llm</code> (nom d'un module LLM, vide = module actif ; "
+            "un module <b>local</b> exige le droit « LLM local » sur l'agent), "
             "<code>voice</code> et <code>servers</code> (noms de serveurs MCP). "
+            f"<br>Modules LLM : <b>{modules or 'aucun'}</b>"
             f"<br>Serveurs utilisables : <b>{', '.join(exposable) or 'aucun'}</b>"
             + (f" · jamais exposés : {', '.join(private)}" if private else "")
             + ". Les profils sont appliqués sans redémarrage aux nouvelles conversations.</small>")

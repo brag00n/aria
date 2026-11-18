@@ -313,6 +313,8 @@ class ConfigProfiles:
 
     def describe(self, name):
         """Aperçu pour la page d'administration : jamais de secrets (url, headers et env ne sont pas renvoyés), seulement nom et type."""
-        p = self.load(name)
-        return {"name": name, "description": p["description"], "llm": p["llm"], "voice": p["voice"],
+        p = self.load(name, allow_local=True)             # l'aperçu ne juge pas le droit « LLM local » : il appartient à l'agent (voir `llm_local`)
+        module = ((self.get_config() or {}).get("llm") or {}).get(p["llm"] or (self.get_config() or {}).get("active_modules", {}).get("llm", "")) or {}
+        local = (module.get("params") or {}).get("backend_type", "local") not in REMOTE_BACKENDS
+        return {"name": name, "description": p["description"], "llm": p["llm"], "llm_local": local, "voice": p["voice"],
                 "servers": [{"name": n, "type": "http" if c.get("url") else "stdio"} for n, c in p["mcp"]["servers"].items()]}

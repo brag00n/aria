@@ -253,7 +253,7 @@ const hdr=()=>({'Content-Type':'application/json','X-Token':TOKEN});
 const get=async u=>(await fetch(u,{headers:hdr()})).json();
 const post=async(u,b)=>(await fetch(u,{method:'POST',headers:hdr(),body:JSON.stringify(b)})).json();
 const say=t=>{$('#msg').textContent=t;setTimeout(()=>{$('#msg').textContent=''},4000)};
-let tab='keys',PROFILS=[];
+let tab='keys',PROFILS=[],KEYS=[];
 const field=(label,node)=>el('div',{},el('label',{},label),node);
 function closeModal(){const m=$('#modal');if(m)m.remove()}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
@@ -343,9 +343,10 @@ async function renderKeys(main){
           k.system?'':el('button',{title:'Supprimer',onclick:async()=>{if(confirm('Supprimer définitivement l\\u2019agent « '+k.label+' » et sa clé API ?')){await post('/api/keys/delete',{id:k.id});render()}}},'🗑'))))));
 }
 async function renderProfils(main){
+  KEYS=await get('/api/keys');
   main.append(el('p',{className:'mut'},'Un profil choisit les serveurs MCP, le message système et le LLM d\\u2019une application. Il se gère dans l\\u2019onglet Paramètres d\\u2019Aria (section « Agents : profils ») et accède à la mémoire d\\u2019Aria sous l\\u2019identité de son accès (une personne système aux souvenirs privés).'),
     el('table',{},el('tr',{},...['Profil','Description','LLM','Serveurs MCP','Voix'].map(h=>el('th',{},h))),
-      ...PROFILS.map(p=>el('tr',{},el('td',{},p.name),el('td',{},p.erreur?el('span',{className:'ko'},p.erreur):p.description||''),el('td',{className:'mut'},p.llm||'(module actif)'),
+      ...PROFILS.map(p=>el('tr',{},el('td',{},p.name),el('td',{},p.erreur?el('span',{className:'ko'},p.erreur):p.description||''),el('td',{className:'mut'},p.llm||'(module actif)',p.llm_local?el('span',{className:'tag',title:'LLM local : l\u2019agent doit avoir le droit « LLM local »'},'local'):'',...KEYS.filter(k=>k.profile===p.name&&p.llm_local&&!(k.rights||{}).local_llm).map(k=>el('div',{className:'ko'},'⚠ '+k.label+' : droit « LLM local » manquant'))),
         el('td',{},...p.servers.map(s=>el('span',{className:'tag'},s.name+' · '+s.type))),el('td',{},p.voice===false?'non':'oui')))));
   if(!PROFILS.length)main.append(el('p',{className:'ko'},'Aucun profil. Créez-en un dans l\\u2019onglet Paramètres, section « Agents : profils ».'));
 }

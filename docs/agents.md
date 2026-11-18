@@ -49,7 +49,7 @@ Un profil décide de ce qu'un agent peut utiliser. Les profils sont dans `config
 |---|---|
 | `servers` | liste de **noms de serveurs MCP** déclarés dans `mcp.params.servers` : tous leurs outils sont disponibles pour la clé. Vide ou absent : aucun outil |
 | `system_message` | règles de base de l'assistant pour cette clé (les consignes `systemPrompt` de l'application s'y ajoutent, sans les remplacer) |
-| `llm` | **nom d'un module** de la section `llm` de la config (`Llm_Anthropic`, `Llm_Ministral_ollama`…) ; vide = le module actif d'Aria. Le LLM local est refusé sans le droit « LLM local ». Voir « Un LLM par agent » |
+| `llm` | **nom d'un module** de la section `llm` de la config (`Llm_Anthropic`, `Llm_Ministral_ollama`…) ; vide = le module actif d'Aria. Un module local exige le droit « LLM local » sur l'agent. Voir « Un LLM par agent » |
 | `voice` | `false` : les clés de ce profil n'ont pas la voix |
 | `description` | texte affiché dans l'administration |
 | `conversation` | mots d'ouverture, de clôture et d'arrêt (voir « Conversation à mots-clés »). Absent = désactivé : l'agent répond à tout |
@@ -133,6 +133,8 @@ Chaque profil nomme son module LLM, et chaque module porte **sa propre** clé, s
 
 - `apikey`, `base_url` : écrire une balise `<NOM>` dont la valeur est dans `.env` (jamais la clé en clair). Une balise sans variable reste littérale et le moteur le signale dans les logs ; `apikey` vide = variable `LLM_ANTHROPIC_DEFAULT_APIKEY` (Anthropic seulement).
 - `model_name` : celui du module, sans repli sur un autre module.
+- **Module local** (`Llm_Llama_local`…) : le profil peut le nommer, mais seul un **agent qui a le droit « LLM local »** peut ouvrir une session avec. La sauvegarde du profil l'accepte ; sans le droit, la session est refusée avec le message « seuls les LLM distants sont autorisés pour un agent ». Dans l'onglet **Profils** de la page des agents, la colonne LLM affiche `local` et signale en rouge un agent du profil qui n'a pas le droit.
+- Un modèle local occupe la mémoire (GPU) : deux agents avec deux modèles locaux différents chargent chacun le leur.
 - Un module inconnu est refusé à la sauvegarde du profil (« LLM … inconnu »).
 
 ## Mémoire des agents

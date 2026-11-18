@@ -173,10 +173,20 @@ class ProfilsTests(unittest.TestCase):
         self.assertIn("meteo", str(cm.exception))
         self.assertEqual(self.cfg, avant)
 
-    def test_llm_local_refuse_dans_un_profil(self):
-        with self.assertRaises(ValueError) as cm:
-            self.apply({"a": {"llm": "Llm_Local"}})
-        self.assertIn("local", str(cm.exception))
+    def test_llm_local_accepte_dans_un_profil_le_droit_est_controle_a_la_session(self):
+        self.apply({"a": {"llm": "Llm_Local"}})                              # sauvegarde acceptée : le droit appartient à l'agent
+        from components.agents import profile as P
+        cfg = {**self.cfg, "agents": {"profiles": {"a": {"llm": "Llm_Local"}}}}
+        pr = P.ConfigProfiles(lambda: cfg)
+        with self.assertRaises(P.ProfileError):
+            pr.load("a")                                                     # un agent sans le droit « LLM local » est refusé au démarrage de sa session
+        self.assertEqual(pr.load("a", allow_local=True)["llm"], "Llm_Local")
+        self.assertTrue(pr.describe("a")["llm_local"])
+
+    def test_l_aide_liste_les_modules_llm_avec_leur_type(self):
+        aide = settings.profiles_help(self.cfg)
+        self.assertIn("Llm_Local (local)", aide)
+        self.assertIn("Llm_Anthropic (distant)", aide)
 
     def test_message_d_erreur_lisible_et_complet(self):
         with self.assertRaises(ValueError) as cm:
