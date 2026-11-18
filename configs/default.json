@@ -162,7 +162,7 @@
       "params": {
         "backend_type": "anthropic",
         "base_url": "<LLM_ANTHROPIC_DEFAULT_URL>",
-        "apikey": "",
+        "apikey": "<LLM_ANTHROPIC_DEFAULT_APIKEY>",
         "model_name": "claude-haiku-5-5",
         "max_tokens": 2048,
         "streaming_output": true,
@@ -174,7 +174,7 @@
       "params": {
         "backend_type": "anthropic",
         "base_url": "<LLM_ANTHROPIC_DEFAULT_URL>",
-        "apikey": "",
+        "apikey": "<LLM_ANTHROPIC_DEFAULT_APIKEY>",
         "model_name": "claude-haiku-5-5",
         "max_tokens": 2048,
         "streaming_output": true,
