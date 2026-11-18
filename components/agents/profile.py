@@ -281,6 +281,12 @@ class ConfigProfiles:
     def names(self):
         return sorted(n for n in self._profiles() if valid_name(n))
 
+    def aria_profile(self, config):
+        """Profil de l'agent par défaut `aria` quand l'administrateur n'en a pas écrit : il suit la configuration d'Aria (LLM actif, conversation à mots-clés) et
+        référence TOUS les serveurs MCP (le droit « tous les serveurs » les lui donne de toute façon). Le message système est celui du LLM actif."""
+        return {"description": "Agent par défaut : Aria", "llm": "", "voice": True, "servers": [], "conversation": config.get("conversation")
+                if isinstance(config.get("conversation"), dict) else None}
+
     def load(self, name, allow_local=False, allow_private=False, all_servers=False):
         """Profil résolu : {name, description, system_message, llm, voice, mcp: {servers: {nom: configuration}}}. Lève ProfileError.
         Les trois options viennent des DROITS de l'agent (rights.py), jamais du profil : LLM local autorisé, serveurs privés autorisés dans la liste du profil,
@@ -289,6 +295,8 @@ class ConfigProfiles:
             raise ProfileError("nom de profil invalide")
         config = self.get_config() or {}
         raw = self._profiles().get(name)
+        if raw is None and name == "aria":
+            raw = {k: v for k, v in self.aria_profile(config).items() if v is not None}       # profil par défaut d'Aria (voir aria_profile)
         if raw is None:
             raise ProfileError(f"profil « {name} » introuvable")
         errors = validate_profiles({name: raw}, config, allow_local=allow_local, allow_private=allow_private or all_servers)

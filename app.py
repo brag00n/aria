@@ -70,6 +70,8 @@ utils.log_info("app","Stt, Llm, Tts chargés")
 DEBUG_SAVE_WAV = False
 _TMP_DIR = utils.aria_path("tmp", "tts")
 _CONFIG_FILE = "configs/default.json"
+from components.agents import bridge as agents_bridge
+_boucle_interface = agents_bridge.LoopHolder()      # boucle de l'interface (Gradio), lue par le pont de l'agent par défaut `aria`
 _boucle_mcp = {}          # boucle asyncio qui porte les sessions MCP (posée au démarrage de l'application)
 agents_srv = None          # serveur de l'API des agents (components/agents/server.py), None si la fonction est désactivée
 
@@ -894,6 +896,7 @@ if __name__ == "__main__":
         (ex. gestion de la mémoire) sont disponibles tout de suite, et le premier échange ne paie plus ce démarrage."""
         manager = getattr(llm.engine, "mcp_manager", None)
         _boucle_mcp["loop"] = asyncio.get_running_loop()
+        _boucle_interface.set(_boucle_mcp["loop"])                      # pont de l'agent `aria` (components/agents/bridge.py) : ses tours s'exécutent ici
 
         async def connecter():
             try:
@@ -926,7 +929,10 @@ if __name__ == "__main__":
     # Agents (applications ou appareils qui dialoguent avec Aria par clé API ; config "agents", désactivé par défaut) : API sur un port dédié
     try:
         from components.agents import server as agents_server
-        agents_srv = agents_server.start(config, stt, tts, _https_args, language=language, effacer_traces=_effacer_traces_memoire)
+        # Les agents sont TOUJOURS assemblés (l'agent par défaut `aria` sert le chat) ; le port 7861 n'est ouvert que si `agents.enabled`.
+        # `shared_engine` : l'agent `aria` réutilise le Llm et le MCP globaux d'Aria (interlocuteur global, mémoire du foyer).
+        agents_srv = agents_server.start(config, stt, tts, _https_args, language=language, effacer_traces=_effacer_traces_memoire,
+                                         shared_engine=lambda: (llm, getattr(llm.engine, "mcp_manager", None)), loop_holder=_boucle_interface)
     except Exception as e:                          # jamais empêcher Aria de démarrer à cause de cette option
         utils.log_info("AGENTS", f"❌ API des agents non démarrée : {type(e).__name__}: {e}")
     # Purge automatique du journal d'audit (au démarrage puis toutes les 6 h) : durée par défaut et durée de chaque accès relues à chaque passage

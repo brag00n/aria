@@ -28,6 +28,7 @@ class Session:
         self.app_prompt = app_prompt          # consignes de l'application, fixées à la création de la session
         self.user = sid                       # clé de l'historique dans le moteur
         self.speaker = None                   # interlocuteur courant {"id", "nom"} (clé qui publie les informations de son interlocuteur), relu auprès de la mémoire
+        self.owned = True                     # False : moteur et MCP PARTAGÉS (agent par défaut `aria`) ; la session ne les ferme jamais
         self.conv = None                      # mots d'ouverture / clôture / arrêt de CETTE session (option `conversation` du profil), None = désactivé
         self.epoch = 1                        # change à chaque reset : deux conversations successives d'une même session ont deux identifiants
         self.lock = asyncio.Lock()            # un seul tour à la fois dans une session
@@ -62,8 +63,9 @@ class SessionRegistry:
     """`factory(profile, identity) -> (engine, mcp)` construit le moteur d'une session (injectable : les tests passent un moteur factice).
     `identity` : (clé interne de l'accès, nom de l'accès, option « publier ses liens », [interlocuteur fourni, identifiant de session]), que le serveur mémoire utilise pour retrouver la personne système."""
 
-    def __init__(self, profiles, factory, max_sessions=8, ttl_s=900, clock=time.monotonic):
+    def __init__(self, profiles, factory, max_sessions=8, ttl_s=900, clock=time.monotonic, shared_engine=None):
         self.profiles, self.factory = profiles, factory
+        self.shared_engine = shared_engine           # () -> (Llm, Mcp) GLOBAUX d'Aria, pour l'agent par défaut `aria` ; None = il construit son moteur comme les autres
         self.max_sessions, self.ttl_s, self.clock = max_sessions, ttl_s, clock
         self.sessions = {}
         self._lock = None
@@ -110,13 +112,18 @@ class SessionRegistry:
                     identity = (key_rec["id"], key_rec.get("label", ""), bool(key_rec.get("publish_links")), dict(speaker or {}), sid)
                 else:
                     identity = (key_rec["id"], key_rec.get("label", ""), bool(key_rec.get("publish_links")))
-                engine, mcp = self.factory(profile, identity)
+                if key_rec.get("system") and self.shared_engine is not None:
+                    engine, mcp = self.shared_engine()                  # le même Llm et le même MCP que l'interface : interlocuteur global, mémoire du foyer
+                else:
+                    engine, mcp = self.factory(profile, identity)
             except Exception as e:
                 utils.log_info("AGENTS", f"❌ Session impossible pour la clé {key_rec['id']} : {type(e).__name__}: {str(e)[:200]}")
                 raise SessionError(500, "configuration du profil invalide")
             s = Session(sid, key_rec["id"], profile, engine, mcp, app_prompt)
+            s.owned = not (key_rec.get("system") and self.shared_engine is not None)
             s.conv = make_conversation(profile.get("conversation"))
-            s.watch_speaker = bool(key_rec.get("publish_speaker")) and mcp is not None
+            # `watch_speaker` : relecture de l'interlocuteur de session auprès de la mémoire (canal /mcp-i). Jamais pour un MCP PARTAGÉ : son interlocuteur est celui d'Aria.
+            s.watch_speaker = bool(key_rec.get("publish_speaker")) and mcp is not None and s.owned
             if s.watch_speaker:
                 mcp.on_tool_done = lambda name, s=s: self._tool_done(s, name)
             s.task = asyncio.create_task(self._own(s))
@@ -131,7 +138,7 @@ class SessionRegistry:
     async def _own(self, s):
         """Tâche propriétaire : connexion MCP, attente de la fermeture, déconnexion, dans la même tâche."""
         try:
-            if s.mcp is not None:
+            if s.mcp is not None and s.owned:
                 try:
                     await s.mcp.ensure_connected()
                 except Exception as e:
@@ -143,7 +150,7 @@ class SessionRegistry:
             await s.closed.wait()
         finally:
             s.ready.set()
-            if s.mcp is not None:
+            if s.mcp is not None and s.owned:
                 try:
                     await s.mcp.close()
                 except Exception as e:

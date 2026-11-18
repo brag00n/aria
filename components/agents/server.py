@@ -42,30 +42,44 @@ def make_decoder():
     return decode
 
 
-def build(config, stt, tts, language=None):
-    """Assemble les dépendances réelles. Retourne (app Starlette, deps, store de clés, profils)."""
+def build(config, stt, tts, language=None, shared_engine=None, loop_holder=None):
+    """Assemble les dépendances réelles. Retourne (app Starlette, deps, store de clés, profils).
+    `shared_engine` : `() -> (Llm, Mcp)` GLOBAUX d'Aria, utilisés par l'agent par défaut `aria` (sans lui, `aria` construit son moteur comme les autres agents)."""
     from . import api, compat, keys, profile, sessions
     s = settings(config)
     store = keys.KeyStore(compat.data_dir(utils.aria_path(), s["data_dir"]))
     profiles = profile.ConfigProfiles(lambda: config)          # config VIVANTE : les profils modifiés dans l'onglet Paramètres valent tout de suite
     registry = sessions.SessionRegistry(profiles, lambda prof, identity=None: sessions.build_engine(prof, config, language, identity),
-                                        max_sessions=s["max_sessions"], ttl_s=s["session_ttl_s"])
+                                        max_sessions=s["max_sessions"], ttl_s=s["session_ttl_s"], shared_engine=shared_engine)
 
     def audit(event, **fields):
         utils.log_info("AGENTS", f"{event} " + " ".join(f"{k}={v}" for k, v in fields.items()))
 
     deps = api.Deps(keys=store, sessions=registry, stt=stt, tts=tts, decode_audio=make_decoder(), on_audit=audit,
-                    static_dir=utils.aria_path("static"))
+                    static_dir=utils.aria_path("static"), loop_holder=loop_holder)
     return api.create_app(deps), deps, store, profiles
 
 
-def start(config, stt, tts, https_args, language=None, effacer_traces=None):
-    """Lance l'API dans un thread démon si `access.enabled`. Retourne l'objet serveur uvicorn (ou None)."""
+class Agents:
+    """Ce que l'application garde des agents : les dépendances (clés, registre de sessions), la page d'administration et, si le port est ouvert, le serveur uvicorn.
+    Existe TOUJOURS (même si `agents.enabled` est faux) : l'agent par défaut `aria` sert le chat de l'interface, qui n'a pas besoin du port 7861."""
+
+    def __init__(self, deps, store, profiles, app, server=None, admin=None):
+        self.deps, self.store, self.profiles, self.app, self.server, self.admin = deps, store, profiles, app, server, admin
+
+    @property
+    def agents_deps(self):                           # nom lu par close_sessions_for_profiles, keys_using_profiles et _reglages_audit
+        return self.deps
+
+
+def start(config, stt, tts, https_args, language=None, effacer_traces=None, shared_engine=None, loop_holder=None):
+    """Assemble les agents (toujours) et ouvre leur API sur le port 7861 + la page d'administration si `agents.enabled`. Retourne un objet `Agents`.
+    Sans `enabled`, rien n'est ouvert : seuls le registre et le magasin de clés existent (pour l'agent par défaut `aria`, utilisé en interne)."""
     s = settings(config)
+    app, deps, store, profiles = build(config, stt, tts, language, shared_engine=shared_engine, loop_holder=loop_holder)
     if not s["enabled"]:
-        return None
+        return Agents(deps, store, profiles, app)
     import uvicorn
-    app, deps, store, profiles = build(config, stt, tts, language)
     admin = None
     if s["admin_port"]:
         from . import admin_ui
@@ -92,7 +106,7 @@ def start(config, stt, tts, https_args, language=None, effacer_traces=None):
     utils.log_info("AGENTS", f"API des agents sur {scheme}://0.0.0.0:{s['port']}/v1/")
     server.admin = admin
     server.agents_deps = deps          # registre des sessions et clés, pour l'onglet Paramètres (fermeture des sessions d'un profil modifié)
-    return server
+    return Agents(deps, store, profiles, app, server=server, admin=admin)
 
 
 def close_sessions_for_profiles(server, names):

@@ -24,7 +24,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from . import security
-from . import rights, turn
+from . import bridge, rights, turn
 from .profile import AppPromptError, clean_app_prompt, clean_speaker
 
 # Fichiers publics : nom d'URL -> (chemin relatif à static/, type MIME). Rien d'autre n'est jamais servi.
@@ -48,6 +48,7 @@ class Deps:
     rate_per_ip: int = 120           # requêtes par minute et par IP
     max_audio_s: float = 30.0
     static_dir: str = ""             # dossier `static/` d'Aria : aria-client.js et le modèle du VAD y sont servis (liste fermée)
+    loop_holder: object = None       # bridge.LoopHolder : boucle de l'interface, où s'exécutent les tours de l'agent par défaut `aria` (moteur et MCP globaux)
     extra: dict = field(default_factory=dict)
 
 
@@ -249,7 +250,15 @@ def create_app(deps):
 async def _stream_turn(deps, session, rec, text, audio, speak, audit, ignored=False):
     """Flux SSE d'un tour : formate les événements de `turn.run_turn` (le cœur du tour, partagé avec le chat de l'interface d'Aria).
     Seul l'événement `audio` change : son fichier wav est lu, encodé en base64 et supprimé ici (le chat de l'interface lit le fichier lui-même)."""
-    async for nom, donnees in turn.run_turn(deps, session, rec, text, audio, speak, audit, ignored):
+    def tour():
+        return turn.run_turn(deps, session, rec, text, audio, speak, audit, ignored)
+    # L'agent système utilise le moteur et le MCP GLOBAUX d'Aria, connectés dans la boucle de l'interface : son tour s'y exécute, les événements reviennent ici.
+    # Les autres agents ont leur propre moteur, ouvert dans CETTE boucle : ils ne passent jamais par le pont.
+    if rec.get("system") and deps.loop_holder is not None and not session.owned:
+        flux = bridge.run_in_loop(deps.loop_holder, tour)
+    else:
+        flux = tour()
+    async for nom, donnees in flux:
         if nom == "audio":
             data = await asyncio.get_running_loop().run_in_executor(None, _read_and_remove, donnees["path"])
             if not data:
