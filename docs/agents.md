@@ -73,6 +73,49 @@ Un profil décide de ce qu'un agent peut utiliser. Les profils sont dans `config
 - **Granularité.** On choisit des **serveurs**, pas des outils : un serveur qui expose seize outils les donne tous. Pour n'exposer qu'une partie, déclarer un
   serveur MCP dédié.
 
+## Droits des agents et agent par défaut « Aria »
+
+Un **droit** est une capacité qu'Aria a toujours eue et qu'un agent n'a pas par défaut. Ils s'accordent un par un dans la fiche d'un agent (page d'administration, onglet **🤖 Agents**).
+
+| Droit | Ce qu'il permet |
+|---|---|
+| **LLM local** | utiliser un moteur de langage local (llama-cpp), en plus des LLM distants. Le profil seul ne suffit pas : c'est l'agent qui doit avoir le droit |
+| **Tous les serveurs MCP** | disposer de **tous** les serveurs MCP de la configuration, **serveurs privés compris**, au lieu de ceux de son profil |
+| **Interlocuteur global et mémoire d'Aria** | parler « comme Aria » : interlocuteur global (la liste déroulante), mémoire du foyer, souvenirs partagés, fiches créées sans validation |
+| **Sans limite de débit ni de quota** | aucune limite de requêtes par minute ni de tours par jour |
+| **Publier ses propres liens** | (existant) ses liens avec une personne deviennent publics |
+| **Publier les informations de son interlocuteur** | (existant) agit au nom de la personne qui lui parle |
+
+Aucun droit n'est accordé par défaut : un agent existant **ne gagne aucun privilège** à la mise à jour.
+
+**L'agent par défaut `aria`.** Au premier démarrage, Aria crée l'agent `aria` (identifiant fixe). Il représente l'assistant lui-même :
+
+- **tous ses droits sont activés et verrouillés** (cases cochées et grisées dans la page) ; ils ne se modifient pas, et ne peuvent pas être retirés par erreur ;
+- il **ne se supprime pas et ne se révoque pas** (le chat de l'interface en dépend) ; sa clé API peut être **régénérée** (pour un client externe) ;
+- il **réutilise le moteur et le serveur MCP d'Aria** (interlocuteur global, mémoire du foyer) : il ne lance aucun second processus ;
+- son profil est **implicite** : il suit la configuration d'Aria (LLM actif, conversation à mots-clés) et référence tous les serveurs. Pour le personnaliser, écrire un profil nommé `aria` dans `agents.profiles` : il l'emporte ;
+- il existe **même si `agents.enabled` est faux** : seul le port 7861 est alors fermé.
+
+Un autre agent peut avoir les **mêmes droits** qu'Aria : en cochant les quatre droits ci-dessus.
+
+> **Pas d'authentification de la personne.** Les droits « interlocuteur global » et « publier les informations de son interlocuteur » reposent sur ce que l'application ou l'utilisateur déclare. À réserver aux applications de confiance.
+
+### Le chat de l'interface passe par l'agent `aria`
+
+Le chat du port 7860 peut utiliser l'agent `aria` **en interne** (même processus, aucun HTTP, aucune clé exposée dans la page), avec le même cœur de tour que l'API.
+Il est piloté par un drapeau de la configuration, **désactivé par défaut** :
+
+```json
+"agents": { "chat_via_agent": true }
+```
+
+- **Désactivé** (défaut) : le chat utilise l'ancien chemin, inchangé.
+- **Activé** : texte, voix, arrêt, nouvelle conversation, mots-clés, liste d'interlocuteurs et journal d'audit passent par l'agent. Le drapeau est relu **à chaque évènement** : on peut revenir en arrière sans redémarrer.
+- Le journal d'audit garde `src = aria:Aria` et `who` = l'interlocuteur choisi dans la liste ; la conversation de l'interface est la session `aria:ui`.
+- Pour l'essayer : passer le drapeau à `true`, puis suivre la **liste de vérification** ci-dessous.
+
+**Liste de vérification (aucun test automatique de l'interface Gradio n'existe)** : texte saisi ; voix (micro, VAD) ; arrêt par le bouton et par un mot ; ouverture et clôture par mots-clés ; changement d'interlocuteur dans la liste ; souvenir écrit au nom de l'interlocuteur choisi ; voix qui se lit en continu ; « Nouvelle conversation » ; ligne d'audit (`src`, `who`, `conv`) ; `podman restart aria` puis nouvelle conversation.
+
 ## Mémoire des agents
 
 Il n'y a qu'**un seul serveur de mémoire** (`memoire`) : c'est lui qui garantit l'intégrité et la confidentialité des données. Chaque agent y est une

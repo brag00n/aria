@@ -90,6 +90,14 @@ Un essai sur une **copie** de votre configuration et de vos données réelles a 
 4. Ouvrir l'onglet **⚙️ Paramètres** puis **💾 SAUVEGARDER** : la config est alors réécrite avec la section `agents` (c'est ce qui rend la migration définitive).
 5. Si vous avez un **docker-compose** personnalisé qui montait `models/api_access`, il n'est plus nécessaire d'en parler : le dossier `models/` est monté en entier.
 
+### Nouveautés de cette version (sans effet tant que vous ne les activez pas)
+
+- **Agent par défaut `aria`** : créé automatiquement, non supprimable, tous droits verrouillés. Il n'apparaît dans la liste que pour l'administrateur ; les intégrateurs ne le voient pas.
+- **Droits par agent** (LLM local, tous les serveurs MCP, interlocuteur global, sans quota) : **aucun agent existant n'en reçoit**. Un agent d'avant la migration garde exactement ses capacités.
+- **Conversation à mots-clés** : option de profil désactivée par défaut.
+- **Chat de l'interface via l'agent** : drapeau `agents.chat_via_agent`, **désactivé** par défaut.
+- Rien ne change pour les intégrateurs : mêmes routes `/v1/*`, mêmes événements ; les nouveaux (`conversation`, `done {ignored}`) n'apparaissent que si l'administrateur active l'option.
+
 ### Retour en arrière
 
 La migration ne détruit rien : pour revenir à l'ancienne version, rendez à `models/agents/` le nom `models/api_access/`, renommez `keys.json.migre` en `keys.json`
