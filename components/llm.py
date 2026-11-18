@@ -26,8 +26,8 @@ class Llm:
             self.engine = LlmConnectLocal(self.params, all_config)
 
     async def get_answer_web(self, tts, query, user, contexte=""):
-        # `contexte` (consigne propre à la requête) n'est géré que par les moteurs à historique (Anthropic, OpenAI/LM Studio)
-        args = (tts, query, user, contexte) if contexte and self.backend_type != "local" else (tts, query, user)
+        # `contexte` (consigne propre à la requête, par exemple l'interlocuteur actuel) est géré par tous les moteurs, le moteur local compris
+        args = (tts, query, user, contexte) if contexte else (tts, query, user)
         # Journal d'audit : UNE ligne par échange, écrite ici pour tous les moteurs (voir components/echanges.py). Le `finally` couvre aussi
         # l'arrêt (le générateur est fermé) et l'erreur. L'échange courant est posé par la source (interface ou agent) avant l'appel.
         echange = echanges.current()

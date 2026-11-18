@@ -145,7 +145,7 @@
     "Llm_Ministral_lmstudio": {
       "params": {
         "backend_type": "llm_studio",
-        "base_url": "http://192.168.1.44:1234/v1",
+        "base_url": "<LLM_LMSTUDIO_DEFAULT_URL>",
         "device": "cuda:0",
         "custom_path": "",
         "model_name": "lmstudio",
@@ -161,19 +161,19 @@
     "Llm_Anthropic": {
       "params": {
         "backend_type": "anthropic",
-        "base_url": "https://api.servicesessentials.ibm.com",
+        "base_url": "<LLM_ANTHROPIC_DEFAULT_URL>",
         "apikey": "",
         "model_name": "claude-haiku-5-5",
         "max_tokens": 2048,
         "streaming_output": true,
-        "system_message": "Tu es Aria, une assistante aimable et enjouée. tu es gentille et attentionnée. Si l'utilisateur pose une question sur la météo ou la température, utilise l'outil 'get_weather' puis réponds directement avec les données. Mémoire : quand l'utilisateur dit 'retiens', 'souviens-toi' ou donne une information personnelle durable (goût, préférence, fait sur la maison ou la famille), appelle 'memoriser' avec une phrase directe et courte, sans dire 'l'utilisateur' (par exemple 'La chatte s'appelle Réglisse'). Quand il demande ce que tu sais de lui ou de ses affaires, appelle 'rechercher_souvenir' avant de répondre. Ne l'utilise pas pour une simple conversation. Ne décris jamais tes actions entre astérisques ou parenthèses. Fais des phrases fluides pour la voix, sans gras ni listes Markdown.",
+        "system_message": "Tu es Aria, une assistante aimable et enjouée. tu es gentille et attentionnée. Si l'utilisateur pose une question sur la météo ou la température, utilise l'outil 'get_weather' puis réponds directement avec les données. Mémoire : quand l'utilisateur dit 'retiens', 'souviens-toi' ou donne une information personnelle durable (goût, préférence, fait sur la maison ou la famille), appelle 'memoriser' avec une phrase directe et courte, sans dire 'l'utilisateur' (par exemple 'La chatte s'appelle Duchesse'). Quand il demande ce que tu sais de lui ou de ses affaires, appelle 'rechercher_souvenir' avant de répondre. Ne l'utilise pas pour une simple conversation. Ne décris jamais tes actions entre astérisques ou parenthèses. Fais des phrases fluides pour la voix, sans gras ni listes Markdown.",
         "verbose": false
       }
     },
     "Llm_Ministral_ollama": {
       "params": {
         "backend_type": "ollama",
-        "base_url": "http://192.168.1.44:11434",
+        "base_url": "<LLM_OLLAMA_DEFAULT_URL>",
         "device": "cuda:0",
         "custom_path": "",
         "model_name": "mistral:7b",
@@ -213,7 +213,7 @@
     "Llm_Nemotron_lmstudio": {
       "params": {
         "backend_type": "llm_studio",
-        "base_url": "http://192.168.1.44:1234/v1",
+        "base_url": "<LLM_LMSTUDIO_DEFAULT_URL>",
         "device": "cuda:0",
         "custom_path": "",
         "model_name": "nvidia/nemotron-3-nano-4b",
@@ -295,19 +295,19 @@
             "/aria/tools/weather_server.py"
           ],
           "env": {
-            "API_KEY": "12345"
+            "API_KEY": "<METEO_API_KEY>"
           }
         },
         "jeedomAlita": {
-          "url": "http://<IpDomotique>:1010/mcp",
+          "url": "<MCP_Domotique_URL>",
           "headers": {
-            "Authorization": "Bearer <TokenDomotique>"
+            "Authorization": "Bearer <MCP_Domotique_Token>"
           }
         },
         "bamboo_robot": {
-          "url": "http://192.168.1.195:8790/mcp",
+          "url": "<MCP_Bamboo_URL>",
           "headers": {
-            "Authorization": "Bearer <TokenBamboo>"
+            "Authorization": "Bearer <MCP_Bamboo_Token>"
           }
         },
         "recherche_web": {

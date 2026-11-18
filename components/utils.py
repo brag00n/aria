@@ -317,6 +317,12 @@ def expand_secrets(value, where=""):
     return value
 
 
+def expand_url(value, where=""):
+    """URL de la config : balises <NOM> résolues depuis le .env ; chaîne vide si une balise reste sans variable (jamais une URL contenant « <NOM> »)."""
+    out = expand_secrets(value or "", where)
+    return "" if (not isinstance(out, str) or SECRET_TAG.search(out)) else out
+
+
 TOOL_NOTICE_RE = re.compile(r"\n*> 🛠️ Outil utilisé : `[^`]*`\n*")
 
 

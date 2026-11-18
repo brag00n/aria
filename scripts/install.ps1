@@ -134,7 +134,7 @@ if ($Gpu) {
 
 # --- Fichier .env : créé, jamais lu ------------------------------------------------------------------------------------
 if (-not (Test-Path '.env')) {
-  Log "Création de .env (renseignez-y ANTHROPIC_API_KEY si vous utilisez Claude)."
+  Log "Création de .env (renseignez-y LLM_ANTHROPIC_DEFAULT_APIKEY si vous utilisez Claude)."
   if (Test-Path '.env.example') { if (-not $DryRun) { Copy-Item '.env.example' '.env' } else { Write-Host "  > Copy-Item .env.example .env" } }
   else { if (-not $DryRun) { New-Item -ItemType File -Path '.env' | Out-Null } else { Write-Host "  > New-Item .env" } }
 }

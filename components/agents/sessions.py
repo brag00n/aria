@@ -11,6 +11,7 @@ import time
 import components.utils as utils
 from components import echanges
 
+from . import rights
 from .profile import REMOTE_BACKENDS, ProfileError, compose_system
 
 
@@ -27,6 +28,8 @@ class Session:
         self.app_prompt = app_prompt          # consignes de l'application, fixées à la création de la session
         self.user = sid                       # clé de l'historique dans le moteur
         self.speaker = None                   # interlocuteur courant {"id", "nom"} (clé qui publie les informations de son interlocuteur), relu auprès de la mémoire
+        self.owned = True                     # False : moteur et MCP PARTAGÉS (agent par défaut `aria`) ; la session ne les ferme jamais
+        self.conv = None                      # mots d'ouverture / clôture / arrêt de CETTE session (option `conversation` du profil), None = désactivé
         self.epoch = 1                        # change à chaque reset : deux conversations successives d'une même session ont deux identifiants
         self.lock = asyncio.Lock()            # un seul tour à la fois dans une session
         self.stop = asyncio.Event()           # « stop » demandé par le client
@@ -45,12 +48,24 @@ class Session:
         self.last_used = time.monotonic()
 
 
+def make_conversation(options):
+    """`Conversation` d'une session d'après l'option `conversation` du profil, ou None si elle est absente ou désactivée. Les mots d'arrêt sont alors actifs même
+    sans sessions de conversation (comme dans l'interface d'Aria) : on ne crée donc l'objet que si l'administrateur a écrit l'option, avec `enabled` vrai OU des mots d'arrêt."""
+    if not isinstance(options, dict) or not options:
+        return None
+    from components.conversation import Conversation
+    if not options.get("enabled") and not options.get("stop_phrases"):
+        return None
+    return Conversation({k: v for k, v in options.items() if k in ("enabled", "open_phrases", "close_phrases", "stop_phrases")})
+
+
 class SessionRegistry:
     """`factory(profile, identity) -> (engine, mcp)` construit le moteur d'une session (injectable : les tests passent un moteur factice).
     `identity` : (clé interne de l'accès, nom de l'accès, option « publier ses liens », [interlocuteur fourni, identifiant de session]), que le serveur mémoire utilise pour retrouver la personne système."""
 
-    def __init__(self, profiles, factory, max_sessions=8, ttl_s=900, clock=time.monotonic):
+    def __init__(self, profiles, factory, max_sessions=8, ttl_s=900, clock=time.monotonic, shared_engine=None):
         self.profiles, self.factory = profiles, factory
+        self.shared_engine = shared_engine           # () -> (Llm, Mcp) GLOBAUX d'Aria, pour l'agent par défaut `aria` ; None = il construit son moteur comme les autres
         self.max_sessions, self.ttl_s, self.clock = max_sessions, ttl_s, clock
         self.sessions = {}
         self._lock = None
@@ -88,21 +103,27 @@ class SessionRegistry:
             if not key_rec.get("profile"):
                 raise SessionError(403, "cette clé n'a pas de profil")
             try:
-                profile = self.profiles.load(key_rec["profile"])
+                profile = self._load_profile(key_rec)
             except ProfileError as e:
                 raise SessionError(500, str(e))
-            profile = dict(profile, app_prompt=app_prompt)
+            profile = dict(profile, app_prompt=app_prompt, rights=rights.effective(key_rec))
             try:
                 if key_rec.get("publish_speaker"):
                     identity = (key_rec["id"], key_rec.get("label", ""), bool(key_rec.get("publish_links")), dict(speaker or {}), sid)
                 else:
                     identity = (key_rec["id"], key_rec.get("label", ""), bool(key_rec.get("publish_links")))
-                engine, mcp = self.factory(profile, identity)
+                if key_rec.get("system") and self.shared_engine is not None:
+                    engine, mcp = self.shared_engine()                  # le même Llm et le même MCP que l'interface : interlocuteur global, mémoire du foyer
+                else:
+                    engine, mcp = self.factory(profile, identity)
             except Exception as e:
                 utils.log_info("AGENTS", f"❌ Session impossible pour la clé {key_rec['id']} : {type(e).__name__}: {str(e)[:200]}")
                 raise SessionError(500, "configuration du profil invalide")
             s = Session(sid, key_rec["id"], profile, engine, mcp, app_prompt)
-            s.watch_speaker = bool(key_rec.get("publish_speaker")) and mcp is not None
+            s.owned = not (key_rec.get("system") and self.shared_engine is not None)
+            s.conv = make_conversation(profile.get("conversation"))
+            # `watch_speaker` : relecture de l'interlocuteur de session auprès de la mémoire (canal /mcp-i). Jamais pour un MCP PARTAGÉ : son interlocuteur est celui d'Aria.
+            s.watch_speaker = bool(key_rec.get("publish_speaker")) and mcp is not None and s.owned
             if s.watch_speaker:
                 mcp.on_tool_done = lambda name, s=s: self._tool_done(s, name)
             s.task = asyncio.create_task(self._own(s))
@@ -117,7 +138,7 @@ class SessionRegistry:
     async def _own(self, s):
         """Tâche propriétaire : connexion MCP, attente de la fermeture, déconnexion, dans la même tâche."""
         try:
-            if s.mcp is not None:
+            if s.mcp is not None and s.owned:
                 try:
                     await s.mcp.ensure_connected()
                 except Exception as e:
@@ -129,7 +150,7 @@ class SessionRegistry:
             await s.closed.wait()
         finally:
             s.ready.set()
-            if s.mcp is not None:
+            if s.mcp is not None and s.owned:
                 try:
                     await s.mcp.close()
                 except Exception as e:
@@ -200,6 +221,15 @@ class SessionRegistry:
         if loop is not None and loop.is_running():
             asyncio.run_coroutine_threadsafe(self.close_key(key_id), loop)
 
+    def _load_profile(self, key_rec):
+        """Profil de l'agent, résolu avec SES droits : un agent sans le droit « LLM local » n'obtient jamais un profil à LLM local, un agent sans « tous les
+        serveurs MCP » n'obtient que ceux de son profil. Les profils fournis par les tests (sans `rights`) se chargent comme avant."""
+        eff = rights.effective(key_rec)
+        try:
+            return self.profiles.load(key_rec["profile"], allow_local=eff["local_llm"], allow_private=eff["all_mcp"], all_servers=eff["all_mcp"])
+        except TypeError:                                           # profils injectés (tests) dont `load(name)` ne prend pas d'options
+            return self.profiles.load(key_rec["profile"])
+
     def request_close_session(self, sid):
         """Ferme UNE session (identifiant complet « clé:session ») depuis un AUTRE thread (page d'administration). Retourne True si elle existait au moment
         de la demande ; la fermeture elle-même est planifiée dans la boucle de l'API. Ne crée jamais de session et n'en touche aucune autre."""
@@ -247,7 +277,7 @@ def build_engine(profile, base_config, language=None, identity=None):
     llm_conf = base_config.get("llm", {})
     name = profile.get("llm") or base_config.get("active_modules", {}).get("llm", "")
     params = dict((llm_conf.get(name) or {}).get("params") or {})
-    if params.get("backend_type", "local") not in REMOTE_BACKENDS:
+    if params.get("backend_type", "local") not in REMOTE_BACKENDS and not (profile.get("rights") or {}).get("local_llm"):
         raise ProfileError("seuls les LLM distants sont autorisés pour un agent")
     # Message système : celui du profil (sinon celui du module LLM), puis les consignes de l'application, qui le complètent
     base = profile.get("system_message") or params.get("system_message", "")

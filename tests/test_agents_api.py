@@ -17,7 +17,7 @@ try:
 except ImportError:
     HAVE_STARLETTE = False
 
-from components.agents import api, keys, profile, sessions  # noqa: E402
+from components.agents import api, keys, profile, rights, sessions  # noqa: E402
 
 ORIGIN = "https://app.example.com"
 
@@ -67,10 +67,11 @@ class FakeTts:
 class FakeStt:
     def __init__(self):
         self.calls = 0
+        self.text = "quelle heure est-il"
 
     def transcribe_translate(self, samples):
         self.calls += 1
-        return "quelle heure est-il"
+        return self.text
 
 
 def _decode(raw):
@@ -235,6 +236,17 @@ class TourTexteTests(ApiCase):
         self.assertEqual(base64.b64decode(audio[0]["data"]), b"RIFFfakewav")
         self.assertEqual(audio[0]["format"], "wav")
         self.assertEqual([p for p in self.tmp.glob("t_*.wav")], [])
+
+    def test_un_wav_introuvable_n_emet_aucun_evenement_audio_et_le_tour_continue(self):
+        """Le cœur renvoie un chemin ; si le fichier a disparu (nettoyage, disque), le flux SSE n'émet rien pour ce bloc mais le tour va jusqu'à `done`."""
+        orig = self.tts.run_tts_to_file
+        self.tts.run_tts_to_file = lambda text, user_id="x": str(self.tmp / "inexistant.wav")
+        try:
+            ev = self.events(self.turn({"text": "salut"}))
+        finally:
+            self.tts.run_tts_to_file = orig
+        self.assertNotIn("audio", [n for n, _ in ev])
+        self.assertEqual(ev[-1][0], "done")
 
     def test_voix_coupee_pour_la_cle(self):
         v, k = self.keys.create("Muet", [ORIGIN], profile="portail", voice=False)
@@ -731,6 +743,296 @@ class InterlocuteurFourniTests(ApiCase):
         self.assertLessEqual(len(n["n"]), 60)
         self.assertNotIn("\x00", n["n"])
         self.assertEqual(n["c"], "Du pont")
+
+
+class DroitsAppliquesTests(ApiCase):
+    """Chaque droit d'un agent est appliqué par le code serveur : sans le droit = comportement d'avant ; avec = capacité accordée. Jamais par le profil seul."""
+
+    CFG = {
+        "active_modules": {"llm": "Llm_Anthropic"},
+        "llm": {"Llm_Anthropic": {"params": {"backend_type": "anthropic", "system_message": "M"}},
+                "Llm_Local": {"params": {"backend_type": "local", "system_message": "L"}}},
+        "mcp": {"params": {"servers": {"web": {"url": "http://x/mcp"}, "prive": {"url": "http://p/mcp"}, "autre": {"url": "http://a/mcp"}}}},
+        "agents": {"private_servers": ["prive"], "profiles": {"local": {"llm": "Llm_Local", "servers": ["web"]}, "normal": {"servers": ["web"]},
+                                                              "avec_prive": {"servers": ["web", "prive"]}}},
+    }
+
+    def setUp(self):
+        super().setUp()
+        import copy
+        self.config.clear()
+        self.config.update(copy.deepcopy(self.CFG))
+        self.profils = profile.ConfigProfiles(lambda: self.config)
+
+    def agent(self, droits=None, profil="normal", **kw):
+        vue, cle = self.keys.create("Robot", [ORIGIN], profile=profil, limits={"rate_per_min": 1, "daily_turns": 1}, rights_=droits or {}, **kw)
+        return vue, cle
+
+    def charge(self, vue, **kw):
+        return self.profils.load(vue["profile"], **kw)
+
+    # ---- LLM local
+    def test_un_profil_a_llm_local_est_refuse_sans_le_droit(self):
+        vue, _ = self.agent(profil="local")
+        with self.assertRaises(profile.ProfileError):
+            self.sessions._load_profile(self.keys.record(vue["id"]))
+
+    def test_un_profil_a_llm_local_est_accepte_avec_le_droit(self):
+        vue, _ = self.agent({"local_llm": True}, profil="local")
+        prof = self.sessions._load_profile(self.keys.record(vue["id"]))
+        self.assertEqual(prof["llm"], "Llm_Local")
+
+    def test_le_droit_ne_donne_pas_un_llm_local_a_un_profil_qui_n_en_a_pas(self):
+        vue, _ = self.agent({"local_llm": True}, profil="normal")
+        self.assertEqual(self.sessions._load_profile(self.keys.record(vue["id"]))["llm"], "")
+
+    def test_build_engine_refuse_un_moteur_local_sans_le_droit(self):
+        cfg = {"active_modules": {"llm": "Llm_Local"}, "llm": {"Llm_Local": {"params": {"backend_type": "local"}}}}
+        prof = {"name": "p", "system_message": "", "llm": "", "mcp": {"servers": {}}, "app_prompt": ""}
+        with self.assertRaises(profile.ProfileError):
+            sessions.build_engine(prof, cfg, None, ("k_1", "R"))
+        with self.assertRaises(profile.ProfileError):
+            sessions.build_engine({**prof, "rights": {"local_llm": False}}, cfg, None, ("k_1", "R"))
+
+    def test_l_editeur_de_profils_refuse_toujours_un_llm_local(self):
+        """Le profil seul n'accorde rien : la sauvegarde des Paramètres (sans droit d'agent) refuse un LLM local, comme avant."""
+        erreurs = profile.validate_profiles({"x": {"llm": "Llm_Local"}}, self.config)
+        self.assertTrue(erreurs and "local" in erreurs[0])
+        self.assertEqual(profile.validate_profiles({"x": {"llm": "Llm_Local"}}, self.config, allow_local=True), [])
+
+    # ---- tous les serveurs MCP
+    def test_sans_le_droit_un_agent_n_a_que_les_serveurs_de_son_profil(self):
+        vue, _ = self.agent(profil="normal")
+        self.assertEqual(sorted(self.sessions._load_profile(self.keys.record(vue["id"]))["mcp"]["servers"]), ["web"])
+
+    def test_un_profil_ne_peut_pas_donner_un_serveur_prive_a_un_agent_sans_le_droit(self):
+        vue, _ = self.agent(profil="avec_prive")
+        with self.assertRaises(profile.ProfileError):
+            self.sessions._load_profile(self.keys.record(vue["id"]))
+
+    def test_avec_le_droit_l_agent_a_tous_les_serveurs_prives_compris(self):
+        vue, _ = self.agent({"all_mcp": True}, profil="normal")
+        self.assertEqual(sorted(self.sessions._load_profile(self.keys.record(vue["id"]))["mcp"]["servers"]), ["autre", "prive", "web"])
+
+    def test_avec_le_droit_un_profil_vide_donne_aussi_tous_les_serveurs(self):
+        self.config["agents"]["profiles"]["vide"] = {}
+        vue, _ = self.agent({"all_mcp": True}, profil="vide")
+        self.assertEqual(len(self.sessions._load_profile(self.keys.record(vue["id"]))["mcp"]["servers"]), 3)
+
+    def test_les_secrets_des_serveurs_ne_sortent_pas_par_la_description_du_profil(self):
+        self.assertNotIn("http://p/mcp", json.dumps(self.profils.describe("normal")))
+
+    # ---- agent par défaut
+    def test_l_agent_aria_a_tout(self):
+        self.config["agents"]["profiles"]["aria"] = {"llm": "Llm_Local", "servers": ["web"]}
+        rec = self.keys.record("aria")
+        prof = self.sessions._load_profile(rec)
+        self.assertEqual(prof["llm"], "Llm_Local")
+        self.assertEqual(sorted(prof["mcp"]["servers"]), ["autre", "prive", "web"])
+        self.assertTrue(all(rights.effective(rec).values()))
+
+    def test_les_droits_effectifs_sont_transmis_au_moteur_de_la_session(self):
+        """`SessionRegistry.get` joint les droits effectifs au profil : c'est là que build_engine les lit (jamais dans le profil de la config)."""
+        vus = []
+        self.sessions.factory = lambda prof, identity=None: (vus.append(prof) or FakeLlm(FakeEngine(prof["name"])), None)
+        vue, cle = self.agent({"local_llm": True}, profil="normal")
+        self.turn({"text": "a", "session": "d1"}, headers=self.hdr(cle))
+        self.assertEqual([n for n, v in vus[-1]["rights"].items() if v], ["local_llm"])
+        self.config["agents"]["profiles"]["aria"] = {"servers": ["web"]}                          # profil de l'agent par défaut
+        n = len(vus)
+        r = self.turn({"text": "a", "session": "d2"}, headers=self.hdr(self.keys.system_key, origin=None))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(vus), n + 1)
+        self.assertTrue(all(vus[-1]["rights"].values()))
+
+    # ---- débit et quota
+    def test_un_agent_sans_le_droit_est_limite(self):
+        vue, cle = self.agent(profil="normal")                          # 1 requête par minute, 1 tour par jour
+        self.assertEqual(self.turn({"text": "a"}, headers=self.hdr(cle)).status_code, 200)
+        self.assertEqual(self.turn({"text": "b"}, headers=self.hdr(cle)).status_code, 429)
+
+    def test_un_agent_avec_le_droit_n_est_pas_limite(self):
+        vue, cle = self.agent({"no_limits": True}, profil="normal")
+        for i in range(6):
+            r = self.turn({"text": f"m{i}"}, headers=self.hdr(cle))
+            self.assertEqual(r.status_code, 200, i)
+
+    def test_le_droit_ne_desactive_pas_l_authentification(self):
+        vue, cle = self.agent({"no_limits": True}, profil="normal")
+        self.assertEqual(self.turn({"text": "a"}, headers=self.hdr("ak_faux")).status_code, 401)
+        self.assertEqual(self.turn({"text": "a"}, headers=self.hdr(cle, origin="https://autre.example.com")).status_code, 403)
+
+    def test_l_agent_aria_n_est_pas_limite_par_les_compteurs(self):
+        self.config["agents"]["profiles"]["aria"] = {"servers": ["web"]}
+        cle = self.keys.system_key
+        for i in range(8):
+            self.assertEqual(self.turn({"text": f"m{i}"}, headers=self.hdr(cle, origin=None)).status_code, 200, i)
+
+
+class ConversationMotsClesTests(ApiCase):
+    """Option `conversation` d'un profil : mots d'ouverture, de clôture et d'arrêt côté serveur, désactivée par défaut (le flux des clients actuels est inchangé)."""
+
+    CONV = {"enabled": True, "open_phrases": ["bonjour aria"], "close_phrases": ["merci aria"], "stop_phrases": ["stop", "tais toi"]}
+
+    def setUp(self):
+        super().setUp()
+        self.config["agents"]["profiles"]["avec"] = {"description": "A", "conversation": dict(self.CONV)}
+        self.config["agents"]["profiles"]["sans"] = {"description": "S"}
+        self.vue, self.cle = self.keys.create("Conv", [ORIGIN], profile="avec", limits={"rate_per_min": 100, "daily_turns": 100})
+
+    def tour(self, texte, session="c1", **kw):
+        r = self.turn({"text": texte, "session": session, **kw}, headers=self.hdr(self.cle))
+        return r, self.events(r)
+
+    def noms(self, ev):
+        return [n for n, _ in ev]
+
+    # ---- sans l'option : rien ne change
+    def test_sans_l_option_aucun_evenement_conversation_et_tout_est_repondu(self):
+        vue, cle = self.keys.create("Sans", [ORIGIN], profile="sans", limits={"rate_per_min": 100, "daily_turns": 100})
+        for phrase in ("bonjour", "stop", "merci aria", "bonjour aria"):
+            ev = self.events(self.turn({"text": phrase, "session": "x"}, headers=self.hdr(cle)))
+            self.assertNotIn("conversation", self.noms(ev), phrase)
+            self.assertIn("text", self.noms(ev), phrase)                       # toujours répondu, même « stop »
+            self.assertEqual(ev[-1][1].get("stopped"), None, phrase)
+
+    def test_une_option_desactivee_et_sans_mots_d_arret_ne_change_rien(self):
+        self.config["agents"]["profiles"]["off"] = {"conversation": {"enabled": False}}
+        vue, cle = self.keys.create("Off", [ORIGIN], profile="off", limits={"rate_per_min": 100, "daily_turns": 100})
+        ev = self.events(self.turn({"text": "stop", "session": "x"}, headers=self.hdr(cle)))
+        self.assertIn("text", self.noms(ev))
+
+    # ---- hors conversation (texte et voix)
+    def test_le_texte_saisi_ouvre_pas_mais_part_toujours(self):
+        r, ev = self.tour("une question")
+        self.assertIn("text", self.noms(ev))                                   # le texte part toujours, sans ouvrir de conversation
+        self.assertNotIn("conversation", self.noms(ev))
+
+    def test_une_phrase_dite_hors_conversation_est_ignoree_sans_llm(self):
+        self.stt.text = "une phrase sans mot d'ouverture"
+        r = self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v1"}, headers=self.hdr(self.cle))
+        ev = self.events(r)
+        self.assertEqual(ev[-1], ("done", {"ignored": True}))
+        self.assertNotIn("text", self.noms(ev))
+        self.assertEqual([c for e in self.engines for c in e.calls], [])                      # le moteur n'a jamais été appelé
+
+    # ---- ouverture, clôture
+    def test_une_phrase_dite_avec_un_mot_d_ouverture_ouvre_et_repond(self):
+        self.stt.text = "bonjour aria quelle heure est-il"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v2"}, headers=self.hdr(self.cle)))
+        self.assertEqual(self.noms(ev)[:3], ["state", "user_text", "conversation"])
+        self.assertEqual(ev[2][1], {"state": "open"})
+        self.assertIn("text", self.noms(ev))
+        self.assertEqual(ev[-1][0], "done")
+
+    def test_ensuite_les_phrases_suivantes_sont_repondues_puis_la_cloture_ferme(self):
+        self.stt.text = "bonjour aria"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v3"}, headers=self.hdr(self.cle)))
+        self.stt.text = "et la météo"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v3"}, headers=self.hdr(self.cle)))
+        self.assertIn("text", self.noms(ev))
+        self.assertNotIn("conversation", self.noms(ev))
+        self.stt.text = "merci aria"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v3"}, headers=self.hdr(self.cle)))
+        self.assertIn("text", self.noms(ev))                                   # la clôture est répondue...
+        self.assertEqual([d for n, d in ev if n == "conversation"], [{"state": "closed"}])
+        self.assertEqual(ev[-1][0], "done")                                    # ... et `done` arrive APRÈS l'événement de clôture
+        self.assertLess(self.noms(ev).index("conversation"), self.noms(ev).index("done"))
+        self.stt.text = "encore une phrase"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v3"}, headers=self.hdr(self.cle)))
+        self.assertEqual(ev[-1], ("done", {"ignored": True}))                  # conversation fermée : on est de nouveau hors conversation
+
+    def test_la_cloture_efface_l_historique_et_change_d_epoque(self):
+        self.stt.text = "bonjour aria"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v4"}, headers=self.hdr(self.cle)))
+        s = self.sessions.sessions[f"{self.vue['id']}:v4"]
+        epoque = s.epoch
+        self.stt.text = "merci aria"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v4"}, headers=self.hdr(self.cle)))
+        self.assertEqual(s.epoch, epoque + 1)
+
+    # ---- arrêt par mot
+    def test_un_mot_d_arret_coupe_sans_appeler_le_llm_texte_comme_voix(self):
+        r, ev = self.tour("stop")
+        self.assertEqual(ev[-1], ("done", {"stopped": True, "reason": "keyword"}))
+        self.assertNotIn("text", self.noms(ev))
+        self.stt.text = "tais-toi"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "v5"}, headers=self.hdr(self.cle)))
+        self.assertEqual(ev[-1], ("done", {"stopped": True, "reason": "keyword"}))
+
+    def test_une_phrase_longue_contenant_stop_n_est_pas_un_arret(self):
+        r, ev = self.tour("il ne faut pas s arreter de chercher, stop ou pas")
+        self.assertIn("text", self.noms(ev))
+
+    def test_le_mot_d_arret_pose_session_stop(self):
+        self.tour("stop", session="c9")
+        self.assertTrue(self.sessions.sessions[f"{self.vue['id']}:c9"].stop.is_set())
+
+    # ---- isolement
+    def test_deux_sessions_ont_chacune_leur_conversation(self):
+        self.stt.text = "bonjour aria"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "a"}, headers=self.hdr(self.cle)))
+        self.stt.text = "une phrase"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "b"}, headers=self.hdr(self.cle)))
+        self.assertEqual(ev[-1], ("done", {"ignored": True}))                  # la session b n'a pas été ouverte par a
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "a"}, headers=self.hdr(self.cle)))
+        self.assertIn("text", self.noms(ev))
+
+    def test_deux_agents_n_ont_pas_les_memes_mots(self):
+        self.config["agents"]["profiles"]["autre"] = {"conversation": {"enabled": True, "open_phrases": ["salut robot"], "stop_phrases": []}}
+        vue, cle = self.keys.create("Autre", [ORIGIN], profile="autre", limits={"rate_per_min": 100, "daily_turns": 100})
+        self.stt.text = "bonjour aria"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "z"}, headers=self.hdr(cle)))
+        self.assertEqual(ev[-1], ("done", {"ignored": True}))
+        self.stt.text = "salut robot"
+        ev = self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "z"}, headers=self.hdr(cle)))
+        self.assertIn("conversation", self.noms(ev))
+
+    def test_un_tour_ignore_ou_arrete_ne_laisse_pas_de_verrou(self):
+        self.tour("stop", session="l")
+        r, ev = self.tour("une vraie question", session="l")
+        self.assertNotIn("busy", json.dumps(ev))
+        self.assertIn("text", self.noms(ev))
+
+    # ---- audit et quota
+    def test_un_tour_ignore_n_ecrit_rien_dans_le_journal_d_audit(self):
+        from components import echanges
+        echanges.configure(self.tmp / "audit", enabled=True)
+        self.stt.text = "pas de mot d'ouverture"
+        self.events(self.turn({"audio": "data:audio/wav;base64,AAAA", "session": "j"}, headers=self.hdr(self.cle)))
+        self.assertEqual([l for _, p in echanges.files() for l in echanges.read_lines(p)], [])
+
+
+class ValidationConversationTests(unittest.TestCase):
+    def check(self, conversation):
+        return profile.validate_profiles({"a": {"conversation": conversation}}, conf())
+
+    def test_valide(self):
+        for ok in (None, {}, {"enabled": True}, {"enabled": False, "open_phrases": ["bonjour"], "close_phrases": [], "stop_phrases": ["stop"]}):
+            self.assertEqual(self.check(ok), [], ok)
+
+    def test_refus(self):
+        for mauvais in ("oui", [], 3, {"enabled": "oui"}, {"enabled": 1}, {"open_phrases": "bonjour"}, {"open_phrases": [1]}, {"open_phrases": [""]},
+                        {"open_phrases": ["  "]}, {"stop_phrases": ["x" * 61]}, {"close_phrases": ["a"] * 41}, {"inconnue": True}, {"stop_phrases": None}):
+            self.assertTrue(self.check(mauvais), repr(mauvais))
+
+    def test_la_cle_est_connue_des_profils(self):
+        self.assertIn("conversation", profile.PROFILE_KEYS)
+
+    def test_le_profil_charge_garde_l_option(self):
+        cfg = conf({"a": {"conversation": {"enabled": True, "open_phrases": ["x y"]}}, "b": {}})
+        cfg["agents"]["profiles"]["c"] = {"conversation": "oui"}
+        p = profile.ConfigProfiles(lambda: cfg)
+        self.assertEqual(p.load("a")["conversation"], {"enabled": True, "open_phrases": ["x y"]})
+        self.assertIsNone(p.load("b")["conversation"])
+        with self.assertRaises(profile.ProfileError):
+            p.load("c")
+
+    def test_make_conversation(self):
+        for rien in (None, {}, "x", [], {"enabled": False}, {"open_phrases": ["a"]}):
+            self.assertIsNone(sessions.make_conversation(rien), repr(rien))
+        self.assertIsNotNone(sessions.make_conversation({"enabled": True}))
+        self.assertIsNotNone(sessions.make_conversation({"stop_phrases": ["stop"]}))                        # mots d'arrêt seuls : actifs sans ouverture/clôture
 
 
 class ProfilsEnDirectTests(ApiCase):

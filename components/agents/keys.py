@@ -17,7 +17,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import compat
+from . import compat, rights
 
 KEY_PREFIX = "ak_"
 DEFAULT_LIMITS = {"rate_per_min": 30, "daily_turns": 500}
@@ -88,6 +88,8 @@ class KeyStore:
         self.dir.mkdir(parents=True, exist_ok=True)
         self._secret = self._load_secret()
         self._load()
+        self.system_key = ""            # clé API en clair de l'agent « aria », seulement si elle vient d'être créée par CE démarrage (jamais relue d'un fichier)
+        self.ensure_system_agent()
 
     # ------------------------------------------------------------------ fichiers
     def _load_secret(self):
@@ -124,8 +126,10 @@ class KeyStore:
                     "profile": _clean_text(k.get("profile"), MAX_PROFILE), "limits": _clean_limits(k.get("limits")),
                     "voice": bool(k.get("voice", True)), "last_used": float(k.get("last_used") or 0),
                     "retention_days": _clean_retention(k.get("retention_days")),
-                    "publish_links": bool(k.get("publish_links", False)),
-                    "publish_speaker": bool(k.get("publish_speaker", False)),
+                    "publish_links": bool(k.get("publish_links", False)) or str(k["id"]) == rights.SYSTEM_ID,
+                    "publish_speaker": bool(k.get("publish_speaker", False)) or str(k["id"]) == rights.SYSTEM_ID,
+                    "rights": rights.clean(k.get("rights")),
+                    "system": str(k["id"]) == rights.SYSTEM_ID,        # JAMAIS lu du fichier : seul l'identifiant `aria` désigne l'agent système
                 })
 
     def _save(self):
@@ -155,20 +159,28 @@ class KeyStore:
         return {"id": k["id"], "label": k["label"], "prefix": k["prefix"], "created": _iso(k["created"]), "expires": _iso(k["expires"]),
                 "revoked": k["revoked"], "etat": etat, "origins": list(k["origins"]), "profile": k["profile"], "limits": dict(k["limits"]),
                 "voice": k["voice"], "last_used": _iso(k["last_used"]), "retention_days": k.get("retention_days", 0),
-                "publish_links": bool(k.get("publish_links", False)), "publish_speaker": bool(k.get("publish_speaker", False))}
+                "publish_links": rights.has(k, "publish_links"), "publish_speaker": rights.has(k, "publish_speaker"),
+                "system": bool(k.get("system")), "rights": rights.effective(k)}
 
     # ------------------------------------------------------------------ gestion
-    def create(self, label, origins=(), profile="", limits=None, expires_days=0, voice=True, retention_days=0, publish_links=False, publish_speaker=False):
-        """Crée une clé. Retourne (vue publique, clé EN CLAIR) : la clé en clair n'est plus jamais récupérable ensuite."""
+    def create(self, label, origins=(), profile="", limits=None, expires_days=0, voice=True, retention_days=0, publish_links=False, publish_speaker=False,
+               rights_=None, _kid=None):
+        """Crée une clé. Retourne (vue publique, clé EN CLAIR) : la clé en clair n'est plus jamais récupérable ensuite.
+        `rights_` : droits accordés (voir rights.py). Un agent créé ici n'est JAMAIS système : seul `ensure_system_agent` crée l'agent `aria` (`_kid`)."""
         label = _clean_text(label, MAX_LABEL)
         if not label:
             return None, ""
         with self.lock:
             key = KEY_PREFIX + secrets.token_urlsafe(32)
             now = self.clock()
-            kid = "k_" + secrets.token_hex(3)
-            while self._find(kid):
+            if _kid:
+                kid = _kid
+                if self._find(kid):
+                    return None, ""
+            else:
                 kid = "k_" + secrets.token_hex(3)
+                while self._find(kid) or kid == rights.SYSTEM_ID:
+                    kid = "k_" + secrets.token_hex(3)
             try:
                 days = float(expires_days or 0)
             except (TypeError, ValueError):
@@ -176,11 +188,32 @@ class KeyStore:
             rec = {"id": kid, "label": label, "prefix": key[:7], "hash": self._digest(key), "created": now,
                    "expires": now + days * 86400 if days > 0 else 0, "revoked": False, "origins": _clean_origins(origins),
                    "profile": _clean_text(profile, MAX_PROFILE), "limits": _clean_limits(limits), "voice": bool(voice), "last_used": 0,
-                   "retention_days": _clean_retention(retention_days), "publish_links": bool(publish_links),
-                   "publish_speaker": bool(publish_speaker)}
+                   "retention_days": _clean_retention(retention_days), "publish_links": bool(publish_links) or kid == rights.SYSTEM_ID,
+                   "publish_speaker": bool(publish_speaker) or kid == rights.SYSTEM_ID, "rights": rights.clean(rights_), "system": kid == rights.SYSTEM_ID}
             self.items.append(rec)
             self._save()
             return self.view(rec, now), key
+
+    def ensure_system_agent(self):
+        """Crée l'agent par défaut `aria` s'il n'existe pas (idempotent) : sa clé API est générée ici, côté serveur, et n'est conservée en clair que dans
+        `self.system_key` pour CE démarrage ; l'administrateur peut la régénérer (`regenerate`) pour un client externe. Retourne True si l'agent vient d'être créé."""
+        with self.lock:
+            if self._find(rights.SYSTEM_ID):
+                return False
+            vue, cle = self.create("Aria", profile="aria", limits={"rate_per_min": 1_000_000, "daily_turns": 1_000_000}, _kid=rights.SYSTEM_ID)
+            if vue:
+                self.system_key = cle
+            return bool(vue)
+
+    def record(self, kid):
+        """Copie de l'enregistrement brut d'un agent (avec `system`, `rights`, `limits`… mais sans le hash), pour le code serveur ; None si absent."""
+        with self.lock:
+            k = self._find(kid)
+            if not k:
+                return None
+            copie = {n: v for n, v in k.items() if n != "hash"}
+            copie["rights_effective"] = rights.effective(k)
+            return copie
 
     def list(self):
         with self.lock:
@@ -193,11 +226,14 @@ class KeyStore:
             return self.view(k, self.clock()) if k else None
 
     def update(self, kid, **changes):
-        """label, origins, profile, limits, voice, retention_days, publish_links, publish_speaker, expires_days (0 = sans expiration, calculée depuis maintenant). Retourne la vue ou None."""
+        """label, origins, profile, limits, voice, retention_days, publish_links, publish_speaker, rights, expires_days (0 = sans expiration, calculée depuis maintenant).
+        Retourne la vue ou None. Sur l'agent SYSTÈME (`aria`) : ses droits, son profil et son expiration sont verrouillés (ignorés) ; ni `id` ni `system` ne se modifient jamais."""
         with self.lock:
             k = self._find(kid)
             if not k:
                 return None
+            if k.get("system"):
+                changes = {n: v for n, v in changes.items() if n not in ("rights", "publish_links", "publish_speaker", "profile", "expires_days", "revoked")}
             if "label" in changes:
                 label = _clean_text(changes["label"], MAX_LABEL)
                 if not label:
@@ -217,6 +253,8 @@ class KeyStore:
                 k["publish_links"] = bool(changes["publish_links"])
             if "publish_speaker" in changes:
                 k["publish_speaker"] = bool(changes["publish_speaker"])
+            if "rights" in changes:
+                k["rights"] = rights.clean(changes["rights"])
             if "expires_days" in changes:
                 try:
                     days = float(changes["expires_days"] or 0)
@@ -245,12 +283,16 @@ class KeyStore:
             k = self._find(kid)
             if not k:
                 return False
+            if k.get("system") and revoked:
+                return False                                    # l'agent par défaut ne se révoque pas : le chat de l'interface en dépend
             k["revoked"] = bool(revoked)
             self._save()
             return True
 
     def delete(self, kid):
         with self.lock:
+            if any(k["id"] == kid and k.get("system") for k in self.items):
+                return False                                    # l'agent par défaut n'est jamais supprimable
             before = len(self.items)
             self.items = [k for k in self.items if k["id"] != kid]
             if len(self.items) != before:

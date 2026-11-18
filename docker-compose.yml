@@ -18,7 +18,7 @@ services:
       # Accès des applications (config "access", docs/agents.md) : API pour le réseau local, administration sur ce PC uniquement
       - "7861:7861"
       - "127.0.0.1:7871:7871"
-    # Les secrets (ANTHROPIC_API_KEY...) sont lus dans .env, jamais commités
+    # Les secrets (LLM_ANTHROPIC_DEFAULT_APIKEY...) sont lus dans .env, jamais commités
     env_file:
       - .env
     environment:

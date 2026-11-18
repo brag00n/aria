@@ -167,3 +167,5 @@ tmp/*
 history/*
 .gradio/*
 prototypes/*
+# Fichier parasite créé sous Windows par une redirection vers NUL
+NUL
