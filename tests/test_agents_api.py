@@ -1374,5 +1374,101 @@ class MoteurTests(unittest.TestCase):
             sessions.build_engine({"llm": "", "system_message": "", "mcp": {"servers": {}}}, cfg)
 
 
+class TranscriptTests(unittest.TestCase):
+    """Conversation lisible tirée de l'historique d'un moteur (formats OpenAI et Anthropic) : sans message système, sans raisonnement, outils raccourcis."""
+
+    def test_format_openai(self):
+        from components.agents import sessions as S
+        h = [{"role": "system", "content": "SECRET DU PROFIL"}, {"role": "user", "content": "Quelle météo ?"},
+             {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "meteo", "arguments": "{\"ville\": \"Lyon\"}"}}]},
+             {"role": "tool", "tool_call_id": "c1", "name": "meteo", "content": "12 degrés"}, {"role": "assistant", "content": "Il fait 12 degrés."}]
+        t = S.transcript(h)
+        self.assertEqual([m["role"] for m in t], ["user", "outil", "resultat", "assistant"])
+        self.assertNotIn("SECRET", json.dumps(t))
+        self.assertIn("meteo", t[1]["text"])
+        self.assertEqual(t[3]["text"], "Il fait 12 degrés.")
+
+    def test_format_anthropic_avec_blocs(self):
+        from components.agents import sessions as S
+
+        class Bloc:
+            def __init__(self, **kw):
+                self.__dict__.update(kw)
+        h = [{"role": "user", "content": "Salut"},
+             {"role": "assistant", "content": [Bloc(type="thinking", thinking="raisonnement privé", text="raisonnement privé (texte)"), Bloc(type="text", text="Je regarde"),
+                                               Bloc(type="tool_use", name="diagnostics", input={"a": 1})]},
+             {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "tout va bien"}]},
+             {"role": "assistant", "content": [Bloc(type="text", text="Tout va bien")]}]
+        t = S.transcript(h)
+        self.assertEqual([m["role"] for m in t], ["user", "assistant", "outil", "resultat", "assistant"])
+        self.assertNotIn("raisonnement", json.dumps(t))
+
+    def test_textes_longs_raccourcis_et_nombre_borne(self):
+        from components.agents import sessions as S
+        t = S.transcript([{"role": "user", "content": "x" * 10000}] + [{"role": "user", "content": str(i)} for i in range(500)], max_messages=200)
+        self.assertEqual(len(t), 200)
+        t = S.transcript([{"role": "user", "content": "y" * 10000}])
+        self.assertTrue(t[0]["text"].endswith("…") and len(t[0]["text"]) <= 4001)
+
+    def test_vide_ou_messages_sans_texte(self):
+        from components.agents import sessions as S
+        self.assertEqual(S.transcript(None), [])
+        self.assertEqual(S.transcript([{"role": "assistant", "content": "  "}, {"role": "system", "content": "x"}]), [])
+
+    def test_l_historique_n_est_jamais_modifie(self):
+        from components.agents import sessions as S
+        h = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
+        avant = json.loads(json.dumps(h))
+        S.transcript(h)
+        self.assertEqual(h, avant)
+
+
+class RegistreTranscriptTests(ApiCase):
+    def moteur(self, sid):
+        s = self.sessions.sessions[sid]
+        return getattr(s.engine, "engine", s.engine), s.user                  # `Llm` enveloppe le moteur réel, comme en production
+
+    def historique(self, sid, *messages):
+        """Pose dans le faux moteur de la session un historique au format des vrais moteurs (message système en tête)."""
+        m, user = self.moteur(sid)
+        m.user_aware_messages[user] = [{"role": "system", "content": "SECRET DU PROFIL"}, *messages]
+
+    def test_conversation_d_une_session_ouverte(self):
+        self.turn({"text": "Bonjour Aria", "session": "s1"})
+        sid = next(iter(self.sessions.sessions))
+        self.historique(sid, {"role": "user", "content": "Bonjour Aria"}, {"role": "assistant", "content": "Bonjour !"})
+        t = self.sessions.transcript(sid)
+        self.assertEqual(t, [{"role": "user", "text": "Bonjour Aria"}, {"role": "assistant", "text": "Bonjour !"}])
+        self.assertNotIn("SECRET", json.dumps(t))                                 # jamais le message système du profil
+
+    def test_session_inconnue(self):
+        self.assertIsNone(self.sessions.transcript("k_x:nope"))
+        self.assertIsNone(self.sessions.transcript(None))
+
+    def test_session_sans_echange(self):
+        self.turn({"text": "x", "session": "s1"})
+        sid = next(iter(self.sessions.sessions))
+        self.moteur(sid)[0].user_aware_messages.clear()
+        self.assertEqual(self.sessions.transcript(sid), [])
+
+    def test_une_session_ne_voit_pas_celle_d_une_autre(self):
+        self.turn({"text": "premier", "session": "s1"})
+        self.turn({"text": "second", "session": "s2"})
+        a, b = sorted(self.sessions.sessions)
+        self.historique(a, {"role": "user", "content": "premier"})
+        self.historique(b, {"role": "user", "content": "second"})
+        self.assertEqual([m["text"] for m in self.sessions.transcript(a)], ["premier"])
+        self.assertEqual([m["text"] for m in self.sessions.transcript(b)], ["second"])
+
+    def test_la_lecture_ne_modifie_pas_l_historique(self):
+        self.turn({"text": "x", "session": "s1"})
+        sid = next(iter(self.sessions.sessions))
+        self.historique(sid, {"role": "user", "content": "a"})
+        m, user = self.moteur(sid)
+        avant = json.loads(json.dumps(m.user_aware_messages[user]))
+        self.sessions.transcript(sid)
+        self.assertEqual(m.user_aware_messages[user], avant)
+
+
 if __name__ == "__main__":
     unittest.main()

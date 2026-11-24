@@ -40,6 +40,11 @@ class FakeSessions:
     def stats(self):
         return [{"id": "k_1:s", "key": "k_1", "profile": "portail", "idle_s": 3}]
 
+    def transcript(self, sid):
+        if sid not in self.open:
+            return None
+        return [{"role": "user", "text": "Bonjour"}, {"role": "assistant", "text": "Salut"}]
+
 
 class AdminCase(unittest.TestCase):
     def setUp(self):
@@ -388,6 +393,30 @@ class EditionProfilsTests(AdminCase):
         p = {x["name"]: x for x in self.call("GET", "/api/profils")[1]}["portail"]
         self.assertEqual(p["raw"]["servers"], ["web"])
         self.assertEqual(p["conversation"], None)
+
+
+class ConversationEnCoursTests(AdminCase):
+    def test_conversation_d_une_session(self):
+        code, r = self.call("GET", "/api/sessions/conversation?id=k_1:s")
+        self.assertEqual(code, 200)
+        self.assertEqual(r["messages"], [{"role": "user", "text": "Bonjour"}, {"role": "assistant", "text": "Salut"}])
+
+    def test_session_inconnue_ou_fermee(self):
+        for sid in ("k_9:x", "", "../../etc"):
+            code, r = self.call("GET", "/api/sessions/conversation?id=" + sid)
+            self.assertEqual((code, r["ok"]), (404, False), sid)
+
+    def test_la_consultation_est_tracee(self):
+        self.call("GET", "/api/sessions/conversation?id=k_1:s")
+        self.assertIn(("session_viewed", {"id": "k_1:s", "messages": 2}), self.audit)
+
+    def test_jeton_obligatoire_et_hote_controle(self):
+        self.assertEqual(self.call("GET", "/api/sessions/conversation?id=k_1:s", token=None)[0], 401)
+        self.assertEqual(self.call("GET", "/api/sessions/conversation?id=k_1:s", host="evil.example.com")[0], 403)
+
+    def test_la_page_a_le_bouton_et_la_modale(self):
+        for mot in ("voirConversation", "/api/sessions/conversation", "Afficher la conversation en cours", "Actualiser"):
+            self.assertIn(mot, admin_ui.PAGE)
 
 
 class JournalTests(AdminCase):

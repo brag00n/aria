@@ -10,7 +10,7 @@ import json
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from components import audit_retention, echanges
 from components.agents import profile as profile_mod
@@ -107,6 +107,14 @@ def make_handler(store, profiles, sessions, token, audit=None, extra_hosts=(), e
                 return self._json(profiles.options())
             if url.path == "/api/sessions":
                 return self._json(sessions.stats() if sessions else [])
+            if url.path == "/api/sessions/conversation":
+                sid = (parse_qs(url.query).get("id") or [""])[0][:120]
+                lire = getattr(sessions, "transcript", None)
+                messages = lire(sid) if lire else None
+                if messages is None:
+                    return self._json({"ok": False, "erreur": "session inconnue ou déjà fermée"}, 404)
+                log("session_viewed", id=sid, messages=len(messages))     # la consultation d'une conversation est tracée
+                return self._json({"ok": True, "id": sid, "messages": messages})
             if url.path == "/api/journal":
                 # Volumes et journal des purges seulement : cette page ne lit JAMAIS le contenu des conversations
                 return self._json({"actif": echanges._settings["enabled"], "defaut_jours": echanges._settings["retention_days"],
@@ -269,6 +277,9 @@ code,.secret{font-family:ui-monospace,Consolas,monospace}
 #modal .err{color:var(--warn);margin-top:8px;min-height:1em}
 #modal .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:6px;flex-wrap:wrap}#modal .tabs button{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:none}#modal .tabs button.on{border-color:var(--acc);color:var(--acc)}
 #modal textarea.big{min-height:180px}#modal .liste{max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+#modal .card.wide{width:760px}#modal .conv{max-height:55vh;overflow:auto;margin:10px 0;display:flex;flex-direction:column;gap:6px}
+#modal .msg{border:1px solid var(--line);border-radius:8px;padding:6px 10px}#modal .msg.user{border-color:var(--acc)}#modal .msg.outil,#modal .msg.resultat{background:var(--bg);font-size:12px}
+#modal .msg .who{font-size:11px;color:var(--mut);margin-bottom:2px}#modal .msg .txt{white-space:pre-wrap;word-break:break-word}
 #modal .chk{display:flex;align-items:center;gap:6px;margin-top:10px}#modal .chk input{width:auto}
 </style></head><body>
 <header><h1>🤖 Agents</h1>
@@ -435,12 +446,30 @@ async function renderProfils(main){
           el('button',{title:ag.length?'Utilisé par un agent : changez d\\u2019abord son profil':'Supprimer',disabled:ag.length>0,onclick:async()=>{if(!confirm('Supprimer le profil « '+p.name+' » ?'))return;const r=await post('/api/profils/delete',{name:p.name});if(r.ok)render();else say(r.erreur||'Impossible')}},'🗑')))})));
   if(!PROFILS.length)main.append(el('p',{className:'ko'},'Aucun profil. Créez-en un avec « + Nouveau profil ».'));
 }
+const ROLES={user:'Interlocuteur',assistant:'Agent',outil:'Outil appelé',resultat:'Résultat de l\u2019outil'};
+async function voirConversation(s){
+  const zone=el('div',{className:'conv'});
+  const charger=async()=>{
+    const r=await get('/api/sessions/conversation?id='+encodeURIComponent(s.id));
+    zone.replaceChildren();
+    if(!r.ok){zone.append(el('p',{className:'ko'},r.erreur||'Impossible'));return}
+    if(!r.messages.length)zone.append(el('p',{className:'mut'},'Aucun échange dans cette session pour le moment.'));
+    r.messages.forEach(m=>zone.append(el('div',{className:'msg '+m.role},el('div',{className:'who'},ROLES[m.role]||m.role),el('div',{className:'txt'},m.text))));
+    zone.scrollTop=zone.scrollHeight;
+  };
+  closeModal();
+  const box=el('div',{id:'modal',onclick:e=>{if(e.target===box)closeModal()}},el('div',{className:'card wide'},
+    el('h2',{},'Conversation : '+s.id),el('div',{className:'mut'},'Agent '+s.key+' · profil '+s.profile+' · le message système du profil n\u2019est pas affiché'),
+    zone,el('div',{className:'btns'},el('button',{onclick:charger},'Actualiser'),el('button',{onclick:closeModal},'Fermer'))));
+  document.body.append(box);
+  await charger();
+}
 async function renderSessions(main){
   const rows=await get('/api/sessions');
   main.append(el('table',{},el('tr',{},...['Session','Clé','Profil','Interlocuteur','Inactive depuis',''].map(h=>el('th',{},h))),
     ...rows.map(s=>el('tr',{},el('td',{},s.id),el('td',{},s.key),el('td',{},s.profile),
       el('td',{className:s.speaker?'':'mut'},s.speaker===null?'–':(s.speaker||'inconnu')),el('td',{className:'mut'},s.idle_s+' s'),
-      el('td',{},el('button',{title:'Fermer cette session et libérer sa place (le journal d\u2019audit et les souvenirs sont conservés)',onclick:async()=>{if(!confirm('Fermer la session « '+s.id+' » ?'))return;const r=await post('/api/sessions/close',{id:s.id});say(r.ok?'Session fermée':(r.erreur||'Impossible'));setTimeout(render,400)}},'🗑'))))));
+      el('td',{},el('button',{title:'Afficher la conversation en cours',onclick:()=>voirConversation(s)},'👁'),' ',el('button',{title:'Fermer cette session et libérer sa place (le journal d\u2019audit et les souvenirs sont conservés)',onclick:async()=>{if(!confirm('Fermer la session « '+s.id+' » ?'))return;const r=await post('/api/sessions/close',{id:s.id});say(r.ok?'Session fermée':(r.erreur||'Impossible'));setTimeout(render,400)}},'🗑'))))));
   if(!rows.length)main.append(el('p',{className:'mut'},'Aucune session ouverte.'));
 }
 async function renderJournal(main){

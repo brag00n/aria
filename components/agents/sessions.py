@@ -48,6 +48,48 @@ class Session:
         self.last_used = time.monotonic()
 
 
+def _get(obj, name, default=None):
+    return obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
+
+
+def _cut(text, limit):
+    text = str(text or "")
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def transcript(messages, max_messages=200, max_text=4000, max_tool=500):
+    """Conversation lisible à partir de l'historique d'un moteur (formats OpenAI et Anthropic), pour la page d'administration : liste de
+    {"role": "user" | "assistant" | "outil" | "resultat", "text"}. Le message système (le profil) n'en fait jamais partie, les blocs de raisonnement non plus ;
+    les appels d'outils et leurs résultats sont raccourcis. Lecture seule : l'historique n'est jamais modifié."""
+    out = []
+    for m in list(messages or []):
+        role, content = _get(m, "role"), _get(m, "content")
+        if role == "system":
+            continue
+        if role == "tool":                                           # OpenAI : résultat d'un outil
+            out.append({"role": "resultat", "text": _cut(f"{_get(m, 'name', '')} : {content}", max_tool)})
+            continue
+        if isinstance(content, str):
+            if content.strip():
+                out.append({"role": role, "text": _cut(content, max_text)})
+        else:                                                        # Anthropic : liste de blocs
+            for b in content or []:
+                kind = _get(b, "type")
+                if kind == "text" and str(_get(b, "text", "")).strip():
+                    out.append({"role": role, "text": _cut(_get(b, "text"), max_text)})
+                elif kind == "tool_use":
+                    out.append({"role": "outil", "text": _cut(f"{_get(b, 'name', '')}({_get(b, 'input', '')})", max_tool)})
+                elif kind == "tool_result":
+                    res = _get(b, "content", "")
+                    if isinstance(res, list):
+                        res = " ".join(str(_get(x, "text", "")) for x in res)
+                    out.append({"role": "resultat", "text": _cut(res, max_tool)})
+        for call in (_get(m, "tool_calls") or []):                   # OpenAI : appels d'outils de l'assistant
+            f = _get(call, "function") or {}
+            out.append({"role": "outil", "text": _cut(f"{_get(f, 'name', '')}({_get(f, 'arguments', '')})", max_tool)})
+    return out[-max_messages:]
+
+
 def make_conversation(options):
     """`Conversation` d'une session d'après l'option `conversation` du profil, ou None si elle est absente ou désactivée. Les mots d'arrêt sont alors actifs même
     sans sessions de conversation (comme dans l'interface d'Aria) : on ne crée donc l'objet que si l'administrateur a écrit l'option, avec `enabled` vrai OU des mots d'arrêt."""
@@ -261,6 +303,16 @@ class SessionRegistry:
                 async with self._guard():
                     self._evict_expired_locked()
         self._reaper = asyncio.create_task(loop())
+
+    def transcript(self, sid):
+        """Conversation en cours d'une session (liste de messages lisibles, voir `transcript`), ou None si la session n'existe pas. Lecture seule, depuis un
+        AUTRE thread (page d'administration) : la liste est copiée, jamais modifiée."""
+        s = self.sessions.get(str(sid or ""))
+        if s is None:
+            return None
+        moteur = getattr(s.engine, "engine", s.engine)               # `Llm` enveloppe le moteur réel
+        store = getattr(moteur, "user_aware_messages", None)
+        return transcript(list(store.get(s.user, [])) if isinstance(store, dict) else [])
 
     def stats(self):
         return [{"id": s.sid, "key": s.key_id, "profile": s.profile["name"], "idle_s": int(self.clock() - s.last_used),
